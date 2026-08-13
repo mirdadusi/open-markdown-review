@@ -1,4 +1,5 @@
 import mermaid from "mermaid";
+import type { LiveSyncStatus } from "../liveSync";
 
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void; setState(value: unknown): void; getState(): unknown };
 
@@ -6,6 +7,23 @@ const vscode = acquireVsCodeApi();
 const renderedDiagrams: Record<string, string> = {};
 const diagramErrors: Record<string, string> = {};
 let selectedTarget: HTMLElement | undefined;
+
+interface PersistedViewState {
+  document?: string;
+  windowScrollY?: number;
+  leftScrollTop?: number;
+  rightScrollTop?: number;
+  activeThreadId?: string;
+  lastNotificationToken?: string;
+}
+
+function viewState(): PersistedViewState {
+  return (vscode.getState() as PersistedViewState | undefined) ?? {};
+}
+
+function saveViewState(update: Partial<PersistedViewState>): void {
+  vscode.setState({ ...viewState(), ...update });
+}
 
 function post(command: string, data: Record<string, unknown> = {}): void {
   vscode.postMessage({ command, ...data });
@@ -19,10 +37,10 @@ function showToast(message: string): void {
   window.setTimeout(() => toast.classList.remove("visible"), 2200);
 }
 
-function activateDocument(path: string): void {
+function activateDocument(path: string, persist = true): void {
   document.querySelectorAll(".document").forEach((item) => item.classList.toggle("active", item.getAttribute("data-document") === path));
   document.querySelectorAll(".document-button").forEach((item) => item.classList.toggle("active", item.getAttribute("data-document") === path));
-  vscode.setState({ document: path });
+  if (persist) saveViewState({ document: path });
 }
 
 function threadIds(element: HTMLElement): string[] {
@@ -36,6 +54,32 @@ function focusComment(threadId: string): void {
   thread.classList.add("active");
   thread.scrollIntoView({ behavior: "smooth", block: "center" });
   thread.focus({ preventScroll: true });
+  saveViewState({ activeThreadId: threadId });
+}
+
+function updateSyncStatus(status: LiveSyncStatus): void {
+  const element = document.querySelector<HTMLElement>("#live-sync-status");
+  if (!element) return;
+  element.className = `live-sync ${status.phase}`;
+  element.dataset.phase = status.phase;
+  element.dataset.label = status.label;
+  element.dataset.detail = status.detail;
+  element.title = status.detail;
+  const label = element.querySelector<HTMLElement>("[data-live-sync-label]");
+  if (label) label.textContent = status.label;
+  const newCount = status.newEventCount ?? 0;
+  const newLabel = element.querySelector<HTMLElement>("[data-live-sync-new]");
+  if (newLabel) {
+    newLabel.textContent = newCount ? `${newCount} new` : "";
+    newLabel.classList.toggle("visible", newCount > 0);
+  }
+  if (status.notificationToken && status.notificationToken !== viewState().lastNotificationToken) {
+    const comments = status.newCommentCount ?? 0;
+    showToast(comments
+      ? `${comments} new comment${comments === 1 ? "" : "s"} synchronized.`
+      : `${newCount} new review update${newCount === 1 ? "" : "s"} synchronized.`);
+    saveViewState({ lastNotificationToken: status.notificationToken });
+  }
 }
 
 function revealCommentedContent(threadId: string): void {
@@ -221,16 +265,53 @@ document.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("message", (event) => {
-  const message = event.data as { command?: string; threadId?: string };
+  const message = event.data as { command?: string; threadId?: string; status?: LiveSyncStatus };
   if (message.command === "collectRenderData") post("renderData", { diagrams: renderedDiagrams, diagramErrors });
   if (message.command === "refresh") post("refresh");
+  if (message.command === "syncStatus" && message.status) updateSyncStatus(message.status);
   if (message.command === "revealThread" && message.threadId) {
     revealCommentedContent(message.threadId);
     focusComment(message.threadId);
   }
 });
 
-const saved = vscode.getState() as { document?: string } | undefined;
+let scrollSaveTimer: number | undefined;
+function persistScrollPosition(): void {
+  if (scrollSaveTimer !== undefined) window.clearTimeout(scrollSaveTimer);
+  scrollSaveTimer = window.setTimeout(() => {
+    scrollSaveTimer = undefined;
+    saveViewState({
+      windowScrollY: window.scrollY,
+      leftScrollTop: document.querySelector<HTMLElement>(".sidebar.left")?.scrollTop ?? 0,
+      rightScrollTop: document.querySelector<HTMLElement>(".sidebar.right")?.scrollTop ?? 0,
+    });
+  }, 100);
+}
+
+window.addEventListener("scroll", persistScrollPosition, { passive: true });
+document.querySelectorAll<HTMLElement>(".sidebar").forEach((sidebar) => sidebar.addEventListener("scroll", persistScrollPosition, { passive: true }));
+
+const saved = viewState();
 const firstDocument = saved?.document ?? document.querySelector<HTMLElement>(".document-button")?.dataset.document;
-if (firstDocument) activateDocument(firstDocument);
-void renderMermaid();
+if (firstDocument) activateDocument(firstDocument, false);
+const initialSync = document.querySelector<HTMLElement>("#live-sync-status");
+if (initialSync) {
+  updateSyncStatus({
+    phase: (initialSync.dataset.phase as LiveSyncStatus["phase"]) ?? "checking",
+    label: initialSync.dataset.label ?? "Synchronizing",
+    detail: initialSync.dataset.detail ?? "",
+    newEventCount: Number(initialSync.dataset.newEvents ?? 0),
+    newCommentCount: Number(initialSync.dataset.newComments ?? 0),
+    notificationToken: initialSync.dataset.notificationToken || undefined,
+  });
+}
+void renderMermaid().finally(() => {
+  window.requestAnimationFrame(() => {
+    window.scrollTo({ top: saved.windowScrollY ?? 0 });
+    const left = document.querySelector<HTMLElement>(".sidebar.left");
+    const right = document.querySelector<HTMLElement>(".sidebar.right");
+    if (left) left.scrollTop = saved.leftScrollTop ?? 0;
+    if (right) right.scrollTop = saved.rightScrollTop ?? 0;
+    if (saved.activeThreadId) document.getElementById(`thread-${saved.activeThreadId}`)?.classList.add("active");
+  });
+});

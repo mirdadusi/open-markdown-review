@@ -232,6 +232,8 @@ An implementation MUST produce the same semantic state for every permutation of 
 
 Invalid or partially synchronized files MUST be ignored with a warning and MUST NOT trigger mutation of valid files. SharePoint, OneDrive, SMB, Syncthing, Dropbox, and Git normally merge the protocol as a union of independently named immutable files.
 
+A live client SHOULD combine filesystem notifications with a bounded polling fallback because mounted and synchronized filesystems may coalesce or omit notifications. Refresh work MUST be serialized or otherwise produce the same result as a serialized fold. A client observing incomplete files, dangling children, disappearance of previously admitted events, or mutation of an admitted event ID SHOULD retain its last known-good state, retry after a bounded delay, and expose delayed or integrity-failure synchronization rather than presenting regressed data as current. “Live” means near-real-time observation after files reach the local filesystem; the protocol does not promise network delivery latency or perform Git fetch/pull operations.
+
 Plain local filesystems and mounted network shares require no provider-specific integration. For Git storage, clients SHOULD ensure that line-ending or clean/smudge filters do not alter package bytes. The reference client creates a package-local `.gitattributes` rule that marks review contents `-text`; repositories SHOULD commit it with the complete review package.
 
 ## Audit export

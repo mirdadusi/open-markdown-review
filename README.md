@@ -2,7 +2,7 @@
 
 Open Markdown Review is a serverless, local-first review system for technical Markdown. Each review is a self-contained folder. Its default name is `.review`, but it can be named `.architecture-review`, `safety-approval`, or anything else and stored inside the source repository or anywhere on a normal local disk, mounted SMB/NFS/NAS share, mapped network drive, Syncthing folder, removable disk, or cloud-synchronized folder. No OneDrive, SharePoint, or hosted service is required.
 
-Client 0.4.3 is a limited-pilot client, not merely a schema demonstration. Its VS Code extension has a dedicated Review icon in the Activity Bar, manages multiple review packages per Markdown workspace, provides a visual setup flow, selective document scope, an immutable rendered review, GFM tables, Mermaid diagrams, local and external images, explicit Markdown attachments, visibly anchored threaded comments, comment decisions, suggested edits, approval or rejection, and auditable client-side PDF export.
+Client 0.4.4 is a limited-pilot client, not merely a schema demonstration. Its VS Code extension has a dedicated Review icon in the Activity Bar, manages multiple review packages per Markdown workspace, provides a visual setup flow, selective document scope, an immutable rendered review, GFM tables, Mermaid diagrams, local and external images, explicit Markdown attachments, visibly anchored threaded comments, live local-first synchronization, comment decisions, suggested edits, approval or rejection, and auditable client-side PDF export.
 
 ## What the client does
 
@@ -11,6 +11,8 @@ Client 0.4.3 is a limited-pilot client, not merely a schema demonstration. Its V
 - Opens a visual setup panel that lists Markdown by folder with search, folder/file checkboxes, selected count, start-document choice, and review-package location.
 - Stores a review in a freely named package folder inside Git or on any ordinary local/shared drive.
 - Initializes a portable review without a server or database.
+- Watches the exact active review package—even outside the workspace—and normally shows synchronized comments and replies within seconds.
+- Uses filesystem notifications plus a lightweight polling fallback, serialized refreshes, and bounded retry for partially synchronized files.
 - Creates an immutable revision containing only the selected Markdown documents.
 - Freezes embedded local, data-URI, and HTTPS images into SHA-256-addressed blobs.
 - Freezes explicitly attached Markdown links into the same blob store.
@@ -75,6 +77,14 @@ For a Git-backed review, keep the package inside the repository and commit the c
 
 For disk/shared-drive operation, select or create a folder on any filesystem visible to VS Code. A plain local directory or mounted SMB/NFS/NAS share works directly; SharePoint and OneDrive are only optional synchronization choices. The extension remembers external package locations for the current workspace. If a synchronized drive is temporarily unavailable, its registration is retained and becomes usable again after the drive returns and the view is refreshed.
 
+### Live synchronization
+
+With live synchronization enabled (the default), the active package is watched directly even when it is outside the opened workspace. The rendered review, sidebar, source highlights, decisions, and counters update after another participant's immutable event file reaches the local filesystem. A polling fallback runs every 3 seconds while the rendered review is visible and every 15 seconds in the background; both intervals are configurable under **Open Markdown Review › Live Sync**.
+
+Synchronization is intentionally eventual rather than server-mediated. Local disk is usually immediate; SMB, NFS, Syncthing, OneDrive, or SharePoint adds provider/network latency. The client keeps the last validated review visible, quarantines incomplete or out-of-order files, detects the disappearance or rewrite of previously validated events during the session, retries with bounded backoff, and shows a visible **Live**, **Waiting**, or **Delayed** status. A manual **Refresh** remains available. Git-backed reviews update only after the new files are fetched/merged into the local checkout; this client does not automatically pull or push Git.
+
+The rendered client marks newly synchronized discussions, reports new comments without stealing focus, and preserves the current document, scroll positions, and focused thread when it rebuilds annotations. Existing events are never rewritten as part of synchronization.
+
 One source workspace can have several review packages—for example `.architecture-review` in Git and `safety-approval` on a shared drive. The sidebar marks one review as active. Commands never combine their event logs.
 
 To read a review received from someone else, choose **Connect Existing Review** and select either the package folder containing `manifest.json` or a parent folder containing one or more review packages. The client discovers packages and asks which one to open when needed. If no workspace is open, the extension can open the selected package as the VS Code folder. Frozen documents, images, Mermaid, tables, comments, replies, decisions, approvals/rejections, attachments, and PDF export remain available without the sender's original source checkout. Source editing and applying suggestions naturally require the matching source workspace.
@@ -112,7 +122,7 @@ Attached links are frozen, hashed, and opened from the local blob in the rendere
 
 ## Install the packaged extension
 
-In VS Code, run **Extensions: Install from VSIX…** and select the supplied `open-markdown-review-0.4.3.vsix`.
+In VS Code, run **Extensions: Install from VSIX…** and select the supplied `open-markdown-review-0.4.4.vsix`.
 
 To build it yourself, use Node.js 22 or newer and VS Code 1.90 or newer:
 
@@ -177,4 +187,9 @@ See [PILOT.md](PILOT.md) for the test plan, [SECURITY.md](SECURITY.md) for the t
 
 ## License
 
-MIT
+Open Markdown Review is dual-licensed. You may use it under either:
+
+- the standard [MIT License](LICENSE); or
+- [M.I.R.D.A. philosophy](PHILOSOPHY.md).
+
+The package metadata expresses this choice as `MIT`.

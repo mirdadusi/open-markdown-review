@@ -3,6 +3,14 @@ import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import * as vscode from "vscode";
 import { CommentDecorations } from "./commentDecorations";
+import {
+  detectEventRegression,
+  LiveSyncStatus,
+  retryDelay,
+  reviewPackageFingerprint,
+  SerializedCoalescingRunner,
+  semanticEventFingerprint,
+} from "./liveSync";
 import { exportAuditPdf } from "./pdfExport";
 import { createId } from "./protocol/ids";
 import { discoverReviewPackages } from "./protocol/discovery";
@@ -63,15 +71,51 @@ interface ActiveReview {
   state: ReviewState;
 }
 
+type RefreshTrigger = "manual" | "startup" | "write" | "filesystem" | "poll" | "retry";
+
+interface RefreshRequest {
+  document?: vscode.TextDocument;
+  trigger: RefreshTrigger;
+}
+
+const REFRESH_PRIORITY: Record<RefreshTrigger, number> = { retry: 0, startup: 0, poll: 1, filesystem: 2, write: 3, manual: 3 };
+
+function isBackgroundRefresh(trigger: RefreshTrigger): boolean {
+  return trigger === "startup" || trigger === "filesystem" || trigger === "poll" || trigger === "retry";
+}
+
 class ReviewController implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
+  private readonly workspaceWatchers: vscode.FileSystemWatcher[] = [];
+  private readonly packageWatchers: vscode.FileSystemWatcher[] = [];
   private readonly output = vscode.window.createOutputChannel("Open Markdown Review");
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+  private disposed = false;
   private currentSourceRoot?: string;
   private currentStorageRoot?: string;
   private currentManifest?: ReviewManifest;
   private currentRevision?: ReviewRevision;
   private loadedEvents = [] as Awaited<ReturnType<typeof loadEvents>>["events"];
+  private currentSemanticFingerprint?: string;
+  private observedPackageFingerprint?: string;
+  private watchedPackageKey?: string;
+  private refreshTimer?: NodeJS.Timeout;
+  private pollTimer?: NodeJS.Timeout;
+  private retryTimer?: NodeJS.Timeout;
+  private retryFingerprint?: string;
+  private retryAttempt = 0;
+  private syncStatus: LiveSyncStatus = {
+    phase: "checking",
+    label: "Starting live sync",
+    detail: "Connecting to the active review package.",
+  };
+  private readonly refreshQueue = new SerializedCoalescingRunner<RefreshRequest>(
+    (request) => this.performRefresh(request.document, request.trigger),
+    (current, next) => ({
+      document: next.document ?? current?.document,
+      trigger: !current || REFRESH_PRIORITY[next.trigger] >= REFRESH_PRIORITY[current.trigger] ? next.trigger : current.trigger,
+    }),
+  );
   private reviewPanel?: RenderedReviewPanel;
   private readonly commentDecorations: CommentDecorations;
 
@@ -83,19 +127,145 @@ class ReviewController implements vscode.Disposable {
     this.commentDecorations = new CommentDecorations(context);
     this.status.command = "openMarkdownReview.openReview";
     this.disposables.push(this.output, this.status, this.commentDecorations);
-    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    this.configureWorkspaceWatchers();
+    this.disposables.push(
+      vscode.workspace.onDidChangeWorkspaceFolders(() => this.configureWorkspaceWatchers()),
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (!event.affectsConfiguration("openMarkdownReview.liveSync")) return;
+        this.configureWorkspaceWatchers();
+        this.watchedPackageKey = undefined;
+        if (this.currentStorageRoot && this.currentManifest) this.configurePackageWatchers(this.currentStorageRoot, this.currentManifest);
+        this.scheduleNextPoll(0);
+      }),
+    );
+    this.scheduleNextPoll();
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.disposeWatchers(this.workspaceWatchers);
+    this.disposeWatchers(this.packageWatchers);
+    for (const disposable of this.disposables) disposable.dispose();
+  }
+
+  private liveSyncConfiguration(folder?: vscode.WorkspaceFolder): {
+    enabled: boolean;
+    activeIntervalMs: number;
+    backgroundIntervalMs: number;
+    debounceMs: number;
+  } {
+    const configuration = vscode.workspace.getConfiguration("openMarkdownReview", folder?.uri);
+    return {
+      enabled: configuration.get<boolean>("liveSync.enabled", true),
+      activeIntervalMs: configuration.get<number>("liveSync.activeIntervalSeconds", 3) * 1_000,
+      backgroundIntervalMs: configuration.get<number>("liveSync.backgroundIntervalSeconds", 15) * 1_000,
+      debounceMs: configuration.get<number>("liveSync.debounceMilliseconds", 350),
+    };
+  }
+
+  private disposeWatchers(watchers: vscode.FileSystemWatcher[]): void {
+    while (watchers.length) watchers.pop()?.dispose();
+  }
+
+  private attachWatcher(watcher: vscode.FileSystemWatcher, target: vscode.FileSystemWatcher[]): void {
+    const changed = () => this.scheduleRefresh("filesystem");
+    watcher.onDidCreate(changed);
+    watcher.onDidChange(changed);
+    watcher.onDidDelete(changed);
+    target.push(watcher);
+  }
+
+  private configureWorkspaceWatchers(): void {
+    this.disposeWatchers(this.workspaceWatchers);
+    const folder = this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document);
+    if (!this.liveSyncConfiguration(folder).enabled) return;
+    for (const workspace of vscode.workspace.workspaceFolders ?? []) {
       for (const pattern of ["**/manifest.json", "**/events/*.json", "**/revisions/*.json"]) {
-        const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, pattern));
-        watcher.onDidCreate(() => void this.refresh());
-        watcher.onDidChange(() => void this.refresh());
-        watcher.onDidDelete(() => void this.refresh());
-        this.disposables.push(watcher);
+        this.attachWatcher(
+          vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(workspace, pattern)),
+          this.workspaceWatchers,
+        );
       }
     }
   }
 
-  dispose(): void {
-    for (const disposable of this.disposables) disposable.dispose();
+  private configurePackageWatchers(storageRoot: string, manifest: ReviewManifest): void {
+    const folder = this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document);
+    const configuration = this.liveSyncConfiguration(folder);
+    const key = configuration.enabled
+      ? [storageRoot, manifest.eventDirectory, manifest.revisionDirectory, manifest.blobDirectory].join("\u0000")
+      : "disabled";
+    if (key === this.watchedPackageKey) return;
+    this.disposeWatchers(this.packageWatchers);
+    this.watchedPackageKey = key;
+    if (!configuration.enabled) {
+      this.setSyncStatus({ phase: "disabled", label: "Live sync disabled", detail: "Use Refresh to read shared changes." });
+      return;
+    }
+    const base = vscode.Uri.file(storageRoot);
+    const packageRelative = (directory: string) => directory.startsWith(".review/") ? directory.slice(".review/".length) : directory;
+    for (const pattern of [
+      "manifest.json",
+      `${packageRelative(manifest.eventDirectory)}/*.json`,
+      `${packageRelative(manifest.revisionDirectory)}/*.json`,
+      `${packageRelative(manifest.blobDirectory)}/**/*`,
+    ]) {
+      this.attachWatcher(
+        vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(base, pattern)),
+        this.packageWatchers,
+      );
+    }
+  }
+
+  private scheduleRefresh(trigger: RefreshTrigger, delay?: number): void {
+    const folder = this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document);
+    if (isBackgroundRefresh(trigger) && !this.liveSyncConfiguration(folder).enabled) return;
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    const wait = delay ?? this.liveSyncConfiguration(folder).debounceMs;
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = undefined;
+      void this.refresh(undefined, trigger);
+    }, wait);
+  }
+
+  private scheduleNextPoll(delay?: number): void {
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+    if (this.disposed) return;
+    const folder = this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document);
+    const configuration = this.liveSyncConfiguration(folder);
+    const interval = delay ?? (this.reviewPanel?.isVisible ? configuration.activeIntervalMs : configuration.backgroundIntervalMs);
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = undefined;
+      void this.pollForSharedChanges().finally(() => this.scheduleNextPoll());
+    }, Math.max(0, interval));
+  }
+
+  private async pollForSharedChanges(): Promise<void> {
+    const folder = this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document);
+    if (!this.liveSyncConfiguration(folder).enabled || !this.currentStorageRoot || !this.currentManifest) return;
+    try {
+      const fingerprint = await reviewPackageFingerprint(this.currentStorageRoot, this.currentManifest);
+      if (this.observedPackageFingerprint === undefined) {
+        this.observedPackageFingerprint = fingerprint;
+      } else if (fingerprint !== this.observedPackageFingerprint) {
+        this.observedPackageFingerprint = fingerprint;
+        this.retryFingerprint = undefined;
+        this.retryAttempt = 0;
+        await this.refresh(undefined, "poll");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.setSyncStatus({
+        phase: "delayed",
+        label: "Shared storage unavailable",
+        detail: message,
+        lastUpdated: this.syncStatus.lastUpdated,
+      });
+      this.output.appendLine(`[live sync] Poll delayed: ${message}`);
+    }
   }
 
   private workspaceFolderForDocument(document?: vscode.TextDocument): vscode.WorkspaceFolder | undefined {
@@ -185,16 +355,79 @@ class ReviewController implements vscode.Disposable {
     return actor;
   }
 
-  async refresh(document?: vscode.TextDocument): Promise<void> {
+  private setSyncStatus(status: LiveSyncStatus): void {
+    this.syncStatus = status;
+    const state = this.threads.getState();
+    if (state) this.updateStatus(state, this.currentRevision);
+    void this.reviewPanel?.setSyncStatus(status);
+  }
+
+  private clearSyncRetry(): void {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    this.retryFingerprint = undefined;
+    this.retryAttempt = 0;
+  }
+
+  private scheduleSyncRetry(reason: string): void {
+    const folder = this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document);
+    if (!this.liveSyncConfiguration(folder).enabled) return;
+    const fingerprint = this.observedPackageFingerprint ?? this.currentSemanticFingerprint ?? "unavailable";
+    if (this.retryFingerprint !== fingerprint) {
+      this.retryFingerprint = fingerprint;
+      this.retryAttempt = 0;
+    }
+    const delay = retryDelay(this.retryAttempt);
+    if (delay === undefined) {
+      this.output.appendLine(`[live sync] Automatic retries exhausted: ${reason}`);
+      return;
+    }
+    this.retryAttempt += 1;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      void this.refresh(undefined, "retry");
+    }, delay);
+    this.output.appendLine(`[live sync] Retrying in ${delay} ms: ${reason}`);
+  }
+
+  private async updateObservedFingerprint(storageRoot: string, manifest: ReviewManifest): Promise<void> {
+    try {
+      const fingerprint = await reviewPackageFingerprint(storageRoot, manifest);
+      if (this.observedPackageFingerprint !== undefined && fingerprint !== this.observedPackageFingerprint) {
+        this.retryFingerprint = undefined;
+        this.retryAttempt = 0;
+      }
+      this.observedPackageFingerprint = fingerprint;
+    } catch (error) {
+      this.output.appendLine(`[live sync] Could not fingerprint package: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  async refresh(document?: vscode.TextDocument, trigger: RefreshTrigger = "manual"): Promise<void> {
+    await this.refreshQueue.request({ document, trigger });
+  }
+
+  private async performRefresh(document: vscode.TextDocument | undefined, trigger: RefreshTrigger): Promise<void> {
     const folder = this.workspaceFolderForDocument(document ?? vscode.window.activeTextEditor?.document);
     if (!folder) return this.clearState();
+    this.setSyncStatus({
+      phase: "checking",
+      label: trigger === "manual" ? "Refreshing review" : "Synchronizing changes",
+      detail: "Reading and validating the active review package.",
+      lastUpdated: this.syncStatus.lastUpdated,
+    });
+    let storageRoot: string | undefined;
     try {
-      const storageRoot = await this.activeStorageRootFor(folder);
+      storageRoot = await this.activeStorageRootFor(folder);
       const manifest = await loadManifest(storageRoot);
       this.currentSourceRoot = folder.uri.fsPath;
       this.currentStorageRoot = storageRoot;
-      this.currentManifest = manifest;
       if (!manifest) return this.clearState(false);
+      const sameReview = this.currentManifest?.reviewId === manifest.reviewId;
+      const previousEventIds = sameReview ? new Set(this.loadedEvents.map((event) => event.id)) : new Set<string>();
+      this.currentManifest = manifest;
+      this.configurePackageWatchers(storageRoot, manifest);
       const loaded = await loadEvents(storageRoot, manifest.reviewId);
       const contextualWarnings: string[] = [];
       let acceptedEvents = loaded.events.filter((event) => {
@@ -230,20 +463,81 @@ class ReviewController implements vscode.Disposable {
         });
         state = buildReviewState(acceptedEvents);
       }
+      if (sameReview) {
+        const regression = detectEventRegression(this.loadedEvents, acceptedEvents);
+        if (regression.missing.length) {
+          throw new ReviewStoreError(`${regression.missing.length} previously validated event file${regression.missing.length === 1 ? " is" : "s are"} missing or invalid after synchronization.`);
+        }
+        if (regression.rewritten.length) {
+          throw new ReviewStoreError(`${regression.rewritten.length} immutable event file${regression.rewritten.length === 1 ? " appears" : "s appear"} to have been rewritten after validation.`);
+        }
+      }
+      const semanticFingerprint = semanticEventFingerprint(acceptedEvents, revision?.id);
+      const semanticChanged = semanticFingerprint !== this.currentSemanticFingerprint || !sameReview;
+      const newEvents = sameReview ? acceptedEvents.filter((event) => !previousEventIds.has(event.id)) : [];
+      const announcedEvents = isBackgroundRefresh(trigger) ? newEvents : [];
+      const announcedEventIds = announcedEvents.map((event) => event.id);
+      const newCommentCount = announcedEvents.filter((event) => event.type === "comment.created" || event.type === "comment.replied").length;
       this.loadedEvents = acceptedEvents;
       this.currentRevision = revision;
+      this.currentSemanticFingerprint = semanticFingerprint;
       this.threads.setState(state);
       this.commentDecorations.setReview(folder.uri.fsPath, revision, state);
       await this.setContext(true, Boolean(revision), state.unresolvedThreads.length > 0 || state.openSuggestions.length > 0);
-      this.updateStatus(state, revision);
       for (const warning of loaded.warnings) this.output.appendLine(`[ignored] ${warning}`);
       for (const warning of contextualWarnings) this.output.appendLine(`[ignored] ${warning}`);
       if (state.danglingEvents.length) this.output.appendLine(`${state.danglingEvents.length} event(s) await related files from synchronization.`);
+      await this.updateObservedFingerprint(storageRoot, manifest);
+      const pendingFiles = loaded.warnings.length + contextualWarnings.length + state.danglingEvents.length;
+      const now = new Date();
+      const lastUpdated = now.toISOString();
+      const liveSyncEnabled = this.liveSyncConfiguration(folder).enabled;
+      const syncStatus: LiveSyncStatus = !liveSyncEnabled
+        ? {
+            phase: "disabled",
+            label: "Live sync disabled",
+            detail: "Use Refresh to read shared changes.",
+            lastUpdated,
+          }
+        : pendingFiles
+        ? {
+            phase: "delayed",
+            label: `Waiting for ${pendingFiles} synchronized file${pendingFiles === 1 ? "" : "s"}`,
+            detail: "The last valid review remains visible while incomplete or out-of-order files are retried.",
+            lastUpdated,
+            newEventCount: announcedEvents.length,
+            newCommentCount,
+            ...(announcedEventIds.length ? { notificationToken: sha256(announcedEventIds.sort().join("\n")) } : {}),
+          }
+        : {
+            phase: "ready",
+            label: `Live · updated ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`,
+            detail: "Watching the active package with polling fallback for shared and synchronized drives.",
+            lastUpdated,
+            newEventCount: announcedEvents.length,
+            newCommentCount,
+            ...(announcedEventIds.length ? { notificationToken: sha256(announcedEventIds.sort().join("\n")) } : {}),
+          };
+      this.setSyncStatus(syncStatus);
       if (this.reviewPanel?.isDisposed) this.reviewPanel = undefined;
-      if (this.reviewPanel && revision) await this.reviewPanel.update(manifest, revision, state);
+      if (this.reviewPanel && revision) {
+        if (semanticChanged) await this.reviewPanel.update(manifest, revision, state, syncStatus, announcedEventIds);
+        else await this.reviewPanel.setSyncStatus(syncStatus);
+      }
+      if (liveSyncEnabled && pendingFiles) this.scheduleSyncRetry(`${pendingFiles} file(s) are incomplete, invalid, or awaiting related events.`);
+      else this.clearSyncRetry();
     } catch (error) {
-      this.clearState(false);
-      this.reportError(error);
+      const message = error instanceof Error ? error.message : String(error);
+      if (storageRoot && this.currentManifest) await this.updateObservedFingerprint(storageRoot, this.currentManifest);
+      this.setSyncStatus({
+        phase: "delayed",
+        label: "Synchronization delayed",
+        detail: `${message} The last valid review remains visible and will be retried.`,
+        lastUpdated: this.syncStatus.lastUpdated,
+      });
+      this.output.appendLine(`[live sync] ${message}`);
+      this.scheduleSyncRetry(message);
+      if (!isBackgroundRefresh(trigger)) this.reportError(error);
     }
   }
 
@@ -252,9 +546,13 @@ class ReviewController implements vscode.Disposable {
       this.currentSourceRoot = undefined;
       this.currentStorageRoot = undefined;
       this.reviews.setReviews([], undefined, "");
+      this.disposeWatchers(this.packageWatchers);
+      this.watchedPackageKey = undefined;
+      this.observedPackageFingerprint = undefined;
     }
     this.currentManifest = undefined;
     this.currentRevision = undefined;
+    this.currentSemanticFingerprint = undefined;
     this.loadedEvents = [];
     this.threads.setState(undefined);
     this.commentDecorations.clear();
@@ -272,10 +570,17 @@ class ReviewController implements vscode.Disposable {
 
   private updateStatus(state: ReviewState, revision?: ReviewRevision): void {
     if (!this.currentManifest) return this.status.hide();
+    const syncIcon = this.syncStatus.phase === "checking"
+      ? "$(sync~spin)"
+      : this.syncStatus.phase === "ready"
+        ? "$(sync)"
+        : this.syncStatus.phase === "delayed"
+          ? "$(warning)"
+          : "$(circle-slash)";
     this.status.text = revision
-      ? `$(comment-discussion) ${this.currentManifest.title}: ${state.unresolvedThreads.length} comments · ${state.openSuggestions.length} suggestions`
-      : `$(archive) ${this.currentManifest.title}: create revision`;
-    this.status.tooltip = revision ? "Open the immutable rendered review" : "Create the first auditable revision";
+      ? `${syncIcon} ${this.currentManifest.title}: ${state.unresolvedThreads.length} comments · ${state.openSuggestions.length} suggestions`
+      : `${syncIcon} ${this.currentManifest.title}: create revision`;
+    this.status.tooltip = `${this.syncStatus.label}\n${this.syncStatus.detail}\n\n${revision ? "Open the immutable rendered review" : "Create the first auditable revision"}`;
     this.status.command = revision ? "openMarkdownReview.openReview" : "openMarkdownReview.setup";
     this.status.show();
   }
@@ -512,7 +817,9 @@ class ReviewController implements vscode.Disposable {
         openAttachment: (resourceId) => this.openAttachment(resourceId),
         refresh: () => this.refresh(),
       },
+      this.syncStatus,
     );
+    this.scheduleNextPoll(0);
     return this.reviewPanel;
   }
 
@@ -1057,7 +1364,7 @@ export function activate(context: vscode.ExtensionContext): void {
   register("openMarkdownReview.refresh", () => controller.refresh());
   register("openMarkdownReview.openThread", (argument) => controller.openThread(argument as ThreadArgument));
   register("openMarkdownReview.showThread", (argument) => controller.showThread(argument as ThreadArgument));
-  void controller.refresh();
+  void controller.refresh(undefined, "startup");
 }
 
 export function deactivate(): void {}

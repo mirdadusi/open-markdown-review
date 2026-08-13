@@ -2,7 +2,7 @@
   "name": "open-markdown-review",
   "displayName": "Open Markdown Review",
   "description": "A serverless, local-first Markdown review protocol and usable VS Code pilot client.",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "private": true,
   "license": "MIT",
   "publisher": "mirdadusi",
@@ -306,6 +306,32 @@
           "type": "boolean",
           "default": false,
           "description": "Allow capturing resources over plain HTTP. Disabled by default."
+        },
+        "openMarkdownReview.liveSync.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically show review events arriving through local, shared, or synchronized storage."
+        },
+        "openMarkdownReview.liveSync.activeIntervalSeconds": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 60,
+          "description": "Polling fallback interval while the rendered review is visible. Filesystem notifications usually update sooner."
+        },
+        "openMarkdownReview.liveSync.backgroundIntervalSeconds": {
+          "type": "number",
+          "default": 15,
+          "minimum": 3,
+          "maximum": 300,
+          "description": "Polling fallback interval while the rendered review is closed or hidden."
+        },
+        "openMarkdownReview.liveSync.debounceMilliseconds": {
+          "type": "number",
+          "default": 350,
+          "minimum": 100,
+          "maximum": 5000,
+          "description": "Time allowed for a burst of synchronized file notifications to settle before one validated refresh."
         }
       }
     }

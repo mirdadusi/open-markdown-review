@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.4
+
+- Added near-real-time local-first synchronization for simultaneous reviewers using exact active-package watchers plus a configurable polling fallback.
+- Added live watching for customized review package folders outside the VS Code workspace, including mounted and synchronized drives.
+- Coalesced bursty filesystem notifications into serialized refreshes so concurrent arrivals cannot race or repeatedly rebuild the client.
+- Kept the last known-good review visible while partial, invalid, or out-of-order synchronized files are quarantined and retried with bounded backoff.
+- Added visible live/delayed/disabled synchronization status and notifications for newly synchronized comments and replies.
+- Preserved the active document, scroll positions, and focused thread across rendered-review updates.
+- Added M.I.R.D.A. as a non-binding project philosophy alongside the sole MIT license and declared the dual-license choice in package metadata.
+
 ## 0.4.3
 
 - Closed protocol interoperability gaps with normative wire-format, path, ID, timestamp, publication, anchor, semantic-ID, lifecycle, conflict, and conformance rules.

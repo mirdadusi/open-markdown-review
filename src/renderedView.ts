@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import MarkdownIt from "markdown-it";
 import type Token from "markdown-it/lib/token.mjs";
 import * as vscode from "vscode";
+import { LiveSyncStatus } from "./liveSync";
 import { resourceIdFor, tableIdFor } from "./protocol/snapshot";
 import { resolveInsideReview } from "./protocol/store";
 import {
@@ -287,17 +288,24 @@ async function buildDocuments(
   );
 }
 
-export function threadHtml(thread: ReviewThread): string {
+export function threadHtml(thread: ReviewThread, newEventIds: ReadonlySet<string> = new Set()): string {
   const author = thread.root.actor.displayName ?? thread.root.actor.id;
   const status = thread.decisionConflicts.length ? "conflict" : thread.decision?.decision ?? (thread.resolved ? "resolved" : "open");
   const location = `${thread.root.anchor.document}:${thread.root.anchor.range.start.line + 1}`;
+  const isNew = [
+    thread.root.id,
+    ...thread.replies.map((reply) => reply.id),
+    thread.resolved?.id,
+    thread.decision?.id,
+    ...thread.decisionConflicts.map((decision) => decision.id),
+  ].some((id) => Boolean(id && newEventIds.has(id)));
   const replies = thread.replies.length
     ? `<ol class="reply-list">${thread.replies.map((reply) => `<li><strong>${escapeHtml(reply.actor.displayName ?? reply.actor.id)}</strong><span>${escapeHtml(reply.body.text)}</span></li>`).join("")}</ol>`
     : "";
-  return `<li id="thread-${escapeHtml(thread.id)}" class="thread${thread.resolved || thread.decision ? " resolved" : ""}" data-thread-id="${escapeHtml(thread.id)}" data-document="${escapeHtml(thread.root.anchor.document)}" tabindex="0"><div class="thread-head"><span>${escapeHtml(author)}</span><span class="badge${status === "accepted" || status === "resolved" ? " ok" : ""}">${escapeHtml(status)}</span></div><button class="thread-location" data-command="navigateThread" data-thread-id="${escapeHtml(thread.id)}" title="Show highlighted content">${escapeHtml(location)} · “${escapeHtml(thread.root.anchor.quote.exact.replace(/\s+/g, " ").slice(0, 72))}”</button><p>${escapeHtml(thread.root.body.text)}</p>${replies}<div class="inline-actions"><button data-command="replyThread" data-thread-id="${escapeHtml(thread.id)}">Reply</button><button data-command="decideThread" data-thread-id="${escapeHtml(thread.id)}">Decide</button><button data-command="openThread" data-thread-id="${escapeHtml(thread.id)}">Open source</button></div></li>`;
+  return `<li id="thread-${escapeHtml(thread.id)}" class="thread${thread.resolved || thread.decision ? " resolved" : ""}${isNew ? " live-new-item" : ""}" data-thread-id="${escapeHtml(thread.id)}" data-document="${escapeHtml(thread.root.anchor.document)}" tabindex="0"><div class="thread-head"><span>${escapeHtml(author)}</span><span class="thread-badges">${isNew ? `<span class="live-new">New</span>` : ""}<span class="badge${status === "accepted" || status === "resolved" ? " ok" : ""}">${escapeHtml(status)}</span></span></div><button class="thread-location" data-command="navigateThread" data-thread-id="${escapeHtml(thread.id)}" title="Show highlighted content">${escapeHtml(location)} · “${escapeHtml(thread.root.anchor.quote.exact.replace(/\s+/g, " ").slice(0, 72))}”</button><p>${escapeHtml(thread.root.body.text)}</p>${replies}<div class="inline-actions"><button data-command="replyThread" data-thread-id="${escapeHtml(thread.id)}">Reply</button><button data-command="decideThread" data-thread-id="${escapeHtml(thread.id)}">Decide</button><button data-command="openThread" data-thread-id="${escapeHtml(thread.id)}">Open source</button></div></li>`;
 }
 
-function suggestionHtml(suggestion: ReviewSuggestion): string {
+function suggestionHtml(suggestion: ReviewSuggestion, newEventIds: ReadonlySet<string>): string {
   const operation = suggestion.created.operation;
   const oldText = suggestion.created.anchor.quote.exact;
   const replacement = operation.kind === "delete" ? "" : operation.replacement;
@@ -309,7 +317,18 @@ function suggestionHtml(suggestion: ReviewSuggestion): string {
     : suggestion.status === "accepted"
       ? `<button data-command="applySuggestion" data-suggestion-id="${escapeHtml(suggestion.id)}">Apply to source</button>`
       : "";
-  return `<li class="suggestion"><div class="thread-head"><span>${escapeHtml(suggestion.created.anchor.document)}:${suggestion.created.anchor.range.start.line + 1}</span><span class="badge ${suggestion.status === "accepted" || suggestion.status === "applied" ? "ok" : ""}">${escapeHtml(suggestion.status)}</span></div><div class="change-preview">${preview}</div><p>${escapeHtml(suggestion.created.rationale.text)}</p><div class="inline-actions">${actions}</div></li>`;
+  const isNew = [
+    suggestion.created.id,
+    suggestion.accepted?.id,
+    suggestion.rejected?.id,
+    suggestion.applied?.id,
+    ...suggestion.decisionConflicts.map((decision) => decision.id),
+  ].some((id) => Boolean(id && newEventIds.has(id)));
+  return `<li class="suggestion${isNew ? " live-new-item" : ""}"><div class="thread-head"><span>${escapeHtml(suggestion.created.anchor.document)}:${suggestion.created.anchor.range.start.line + 1}</span><span class="thread-badges">${isNew ? `<span class="live-new">New</span>` : ""}<span class="badge ${suggestion.status === "accepted" || suggestion.status === "applied" ? "ok" : ""}">${escapeHtml(suggestion.status)}</span></span></div><div class="change-preview">${preview}</div><p>${escapeHtml(suggestion.created.rationale.text)}</p><div class="inline-actions">${actions}</div></li>`;
+}
+
+function syncStatusHtml(status: LiveSyncStatus): string {
+  return `<div id="live-sync-status" class="live-sync ${escapeHtml(status.phase)}" role="status" aria-live="polite" title="${escapeHtml(status.detail)}" data-phase="${escapeHtml(status.phase)}" data-label="${escapeHtml(status.label)}" data-detail="${escapeHtml(status.detail)}" data-new-events="${status.newEventCount ?? 0}" data-new-comments="${status.newCommentCount ?? 0}" data-notification-token="${escapeHtml(status.notificationToken ?? "")}"><span class="live-sync-dot"></span><span data-live-sync-label>${escapeHtml(status.label)}</span><span class="live-sync-new${status.newEventCount ? " visible" : ""}" data-live-sync-new>${status.newEventCount ? `${status.newEventCount} new` : ""}</span></div>`;
 }
 
 async function buildHtml(
@@ -319,6 +338,8 @@ async function buildHtml(
   manifest: ReviewManifest,
   revision: ReviewRevision,
   state: ReviewState,
+  syncStatus: LiveSyncStatus,
+  newEventIds: readonly string[],
 ): Promise<string> {
   const documents = await buildDocuments(revision, state, panel.webview, reviewRoot);
   const nonce = randomBytes(18).toString("base64");
@@ -335,14 +356,15 @@ async function buildHtml(
   const documentBodies = documents
     .map((document) => `<article class="document" data-document="${escapeHtml(document.path)}"><div class="document-path">Frozen document · ${escapeHtml(document.path)}</div><div class="markdown-body">${document.html}</div></article>`)
     .join("");
-  const threads = revisionThreads.length ? revisionThreads.map(threadHtml).join("") : `<li class="empty">No comments on this revision.</li>`;
-  const suggestions = revisionSuggestions.length ? revisionSuggestions.map(suggestionHtml).join("") : `<li class="empty">No suggested edits on this revision.</li>`;
+  const newEvents = new Set(newEventIds);
+  const threads = revisionThreads.length ? revisionThreads.map((thread) => threadHtml(thread, newEvents)).join("") : `<li class="empty">No comments on this revision.</li>`;
+  const suggestions = revisionSuggestions.length ? revisionSuggestions.map((suggestion) => suggestionHtml(suggestion, newEvents)).join("") : `<li class="empty">No suggested edits on this revision.</li>`;
 
   return `<!doctype html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${panel.webview.cspSource} data:; style-src ${panel.webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; font-src ${panel.webview.cspSource};">
 <link rel="stylesheet" href="${styleUri}"><title>${escapeHtml(manifest.title)}</title></head>
-<body><div class="app"><header class="topbar"><div class="brand"><strong>${escapeHtml(manifest.title)}</strong><span>Revision ${escapeHtml(revision.id)} · immutable snapshot</span></div><div class="actions"><button class="button" data-command="refresh">Refresh</button><button class="button" data-command="addComment">Comment</button><button class="button" data-command="addSuggestion">Suggest edit</button><button class="button" data-command="approve">Approve</button><button class="button" data-command="reject">Reject</button><button class="button primary" data-command="export">Export audit PDF</button></div></header>
+<body><div class="app"><header class="topbar"><div class="brand"><strong>${escapeHtml(manifest.title)}</strong><span>Revision ${escapeHtml(revision.id)} · immutable snapshot</span>${syncStatusHtml(syncStatus)}</div><div class="actions"><button class="button" data-command="refresh">Refresh</button><button class="button" data-command="addComment">Comment</button><button class="button" data-command="addSuggestion">Suggest edit</button><button class="button" data-command="approve">Approve</button><button class="button" data-command="reject">Reject</button><button class="button primary" data-command="export">Export audit PDF</button></div></header>
 <div class="layout"><nav class="sidebar left"><section class="sidebar-section"><h2 class="sidebar-title">Documents</h2><ul class="document-list">${documentButtons}</ul></section><section class="sidebar-section"><h2 class="sidebar-title">Revision status</h2><div class="status"><span>Open threads</span><strong>${unresolved}</strong><span>Open suggestions</span><strong>${state.openSuggestions.filter((item) => item.revisionId === revision.id).length}</strong><span>Approvals</span><strong>${approvals}</strong><span>Rejections</span><strong>${rejections}</strong><span>Images</span><strong>${revision.resources.filter((item) => item.role === "image").length}</strong><span>Attachments</span><strong>${revision.resources.filter((item) => item.role === "attachment").length}</strong><span>Mermaid</span><strong>${revision.mermaidDiagrams.length}</strong><span>External links</span><strong>${revision.externalReferences.length}</strong></div></section><section class="sidebar-section"><div id="selection-hint" class="selection-hint">Select text to comment or suggest an edit.</div></section></nav>
 <main class="content">${documentBodies}</main><aside class="sidebar right"><section class="sidebar-section"><h2 class="sidebar-title">Review threads</h2><ul class="thread-list">${threads}</ul></section><section class="sidebar-section"><h2 class="sidebar-title">Suggested edits</h2><ul class="thread-list">${suggestions}</ul></section></aside></div></div><div id="toast" class="toast"></div><script nonce="${nonce}" src="${scriptUri}"></script></body></html>`;
 }
@@ -357,6 +379,10 @@ export class RenderedReviewPanel implements vscode.Disposable {
 
   get isDisposed(): boolean {
     return this.disposed;
+  }
+
+  get isVisible(): boolean {
+    return this.panel.visible;
   }
 
   private constructor(
@@ -381,6 +407,7 @@ export class RenderedReviewPanel implements vscode.Disposable {
     revision: ReviewRevision,
     state: ReviewState,
     handlers: RenderedViewHandlers,
+    syncStatus: LiveSyncStatus,
   ): Promise<RenderedReviewPanel> {
     if (this.current && this.current.reviewRoot !== reviewRoot) {
       this.current.panel.dispose();
@@ -388,7 +415,7 @@ export class RenderedReviewPanel implements vscode.Disposable {
     }
     if (this.current) {
       this.current.panel.reveal(vscode.ViewColumn.Beside);
-      await this.current.update(manifest, revision, state);
+      await this.current.update(manifest, revision, state, syncStatus);
       return this.current;
     }
     const panel = vscode.window.createWebviewPanel("openMarkdownReview.rendered", "Rendered Markdown Review", vscode.ViewColumn.Beside, {
@@ -400,18 +427,29 @@ export class RenderedReviewPanel implements vscode.Disposable {
       ],
     });
     this.current = new RenderedReviewPanel(context, panel, reviewRoot, manifest, revision, state, handlers);
-    await this.current.update(manifest, revision, state);
+    await this.current.update(manifest, revision, state, syncStatus);
     return this.current;
   }
 
-  async update(manifest: ReviewManifest, revision: ReviewRevision, state: ReviewState): Promise<void> {
+  async update(
+    manifest: ReviewManifest,
+    revision: ReviewRevision,
+    state: ReviewState,
+    syncStatus: LiveSyncStatus,
+    newEventIds: readonly string[] = [],
+  ): Promise<void> {
     if (this.disposed) return;
     this.manifest = manifest;
     this.revision = revision;
     this.state = state;
     this.renderData = undefined;
     this.panel.title = `${manifest.title} · Review`;
-    this.panel.webview.html = await buildHtml(this.context, this.panel, this.reviewRoot, manifest, revision, state);
+    this.panel.webview.html = await buildHtml(this.context, this.panel, this.reviewRoot, manifest, revision, state, syncStatus, newEventIds);
+  }
+
+  async setSyncStatus(status: LiveSyncStatus): Promise<void> {
+    if (this.disposed) return;
+    await this.panel.webview.postMessage({ command: "syncStatus", status });
   }
 
   async collectRenderData(timeoutMs = 20_000): Promise<RenderData> {

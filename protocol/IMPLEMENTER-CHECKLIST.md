@@ -28,6 +28,8 @@ This checklist is an implementation map for the normative requirements in [`READ
 - Resolve roots before children so arrival order cannot affect results.
 - Require every event to reference a published revision and every anchor digest to match its revision document.
 - Keep unmatched children dangling and retry when new files arrive.
+- Combine exact-package filesystem watching with bounded polling where near-real-time shared-folder updates are offered.
+- Serialize/coalesce refreshes, retain the last known-good state during partial synchronization, and expose delayed state to the user.
 - Order replies and presentation lists by timestamp instant then ASCII ID.
 - Treat different thread decisions or accept/reject suggestion assertions as visible conflicts.
 - Never infer an organization-wide approval from one actor assertion.

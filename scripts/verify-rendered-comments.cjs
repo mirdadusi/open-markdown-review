@@ -30,3 +30,6 @@ assert.match(card, /id="thread-thread_highlight"/);
 assert.match(card, /Clarify ownership\./);
 assert.match(card, /Ownership is documented\./);
 assert.match(card, /data-command="navigateThread"/);
+const liveCard = threadHtml(state.threads.get(threadId), new Set(["evt_reply_highlight"]));
+assert.match(liveCard, /live-new-item/);
+assert.match(liveCard, />New</);

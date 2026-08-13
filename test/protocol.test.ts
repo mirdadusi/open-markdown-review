@@ -7,6 +7,7 @@ import test from "node:test";
 import Ajv2020 from "ajv/dist/2020";
 import addFormats from "ajv-formats";
 import { locateQuote } from "../src/protocol/anchor";
+import { detectEventRegression, retryDelay, reviewPackageFingerprint, semanticEventFingerprint, SerializedCoalescingRunner, SYNC_RETRY_DELAYS_MS } from "../src/liveSync";
 import { discoverReviewPackages } from "../src/protocol/discovery";
 import { documentsForPatterns, validateDocumentSelection } from "../src/protocol/scope";
 import { exportAuditPdf } from "../src/pdfExport";
@@ -445,6 +446,69 @@ test("file store creates one immutable file per event and rejects collisions", a
   assert.equal(loaded.events.length, 10);
 });
 
+test("live synchronization fingerprint detects review frontier changes but ignores unrelated files", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "omr-live-sync-"));
+  t.after(async () => rm(root, { recursive: true, force: true }));
+  const reviewManifest = manifest();
+  await initializeReview(root, reviewManifest);
+  const initial = await reviewPackageFingerprint(root, reviewManifest);
+  await writeFile(path.join(root, "local-note.txt"), "not protocol state\n");
+  assert.equal(await reviewPackageFingerprint(root, reviewManifest), initial);
+  await appendEvent(root, created());
+  const afterEvent = await reviewPackageFingerprint(root, reviewManifest);
+  assert.notEqual(afterEvent, initial);
+  await writeFile(path.join(root, "revisions", "incoming.json"), "{}\n");
+  assert.notEqual(await reviewPackageFingerprint(root, reviewManifest), afterEvent);
+});
+
+test("live synchronization semantic fingerprints are order-independent and retry backoff is bounded", () => {
+  const events = [created(), replied()];
+  assert.equal(semanticEventFingerprint(events, "revision_1"), semanticEventFingerprint([...events].reverse(), "revision_1"));
+  const changed = [{ ...created(), body: { format: "markdown" as const, text: "Changed review comment" } }, replied()];
+  assert.notEqual(semanticEventFingerprint(events, "revision_1"), semanticEventFingerprint(changed, "revision_1"));
+  assert.deepEqual(SYNC_RETRY_DELAYS_MS.map((_, index) => retryDelay(index)), [...SYNC_RETRY_DELAYS_MS]);
+  assert.equal(retryDelay(SYNC_RETRY_DELAYS_MS.length), undefined);
+});
+
+test("live synchronization rejects disappearance or rewrite of previously validated events", () => {
+  const previous = [created(), replied()];
+  const missing = detectEventRegression(previous, [created()]);
+  assert.deepEqual(missing.missing.map((event) => event.id), ["evt_replied"]);
+  assert.deepEqual(missing.rewritten, []);
+  const rewrittenComment = { ...created(), body: { format: "markdown" as const, text: "Rewritten in place" } };
+  const rewritten = detectEventRegression(previous, [rewrittenComment, replied()]);
+  assert.deepEqual(rewritten.missing, []);
+  assert.deepEqual(rewritten.rewritten.map((event) => event.id), ["evt_created"]);
+});
+
+test("live synchronization serializes refresh work and coalesces notification bursts", async () => {
+  const processed: number[] = [];
+  let active = 0;
+  let maximumActive = 0;
+  let markFirstStarted: (() => void) | undefined;
+  let releaseFirst: (() => void) | undefined;
+  const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
+  const firstBlocked = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  const runner = new SerializedCoalescingRunner<number>(async (value) => {
+    active += 1;
+    maximumActive = Math.max(maximumActive, active);
+    processed.push(value);
+    if (value === 1) {
+      markFirstStarted?.();
+      await firstBlocked;
+    }
+    active -= 1;
+  });
+  const first = runner.request(1);
+  await firstStarted;
+  const second = runner.request(2);
+  const third = runner.request(3);
+  releaseFirst?.();
+  await Promise.all([first, second, third]);
+  assert.equal(maximumActive, 1);
+  assert.deepEqual(processed, [1, 3]);
+});
+
 test("custom-named review packages remain independent for multiple reviews of one workspace", async (t) => {
   const sourceRoot = await mkdtemp(path.join(os.tmpdir(), "omr-multiple-"));
   t.after(async () => rm(sourceRoot, { recursive: true, force: true }));
@@ -507,7 +571,7 @@ test("audit PDF contains frozen content, tables, images, Mermaid, comments, repl
     events: loaded.events,
     renderData: { diagrams: { [diagram.id]: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 100"><rect x="10" y="25" width="90" height="50" fill="#dce8fa"/><rect x="200" y="25" width="90" height="50" fill="#dce8fa"/><path d="M100 50 H200" stroke="#2458a6"/><text x="55" y="55" text-anchor="middle">A</text><text x="245" y="55" text-anchor="middle">B</text></svg>' }, diagramErrors: {} },
     actor,
-    clientVersion: "0.4.3-test",
+    clientVersion: "0.4.4-test",
   });
   const pdf = await readFile(result.absolutePath);
   assert.equal(pdf.subarray(0, 5).toString(), "%PDF-");

@@ -27,6 +27,14 @@ button { font: inherit; }
 .brand { min-width: 0; flex: 1; }
 .brand strong { display: block; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand span { color: var(--muted); font-size: 11px; }
+.live-sync { display: flex; align-items: center; gap: 5px; width: fit-content; margin-top: 2px; color: var(--muted); font-size: 10px; }
+.live-sync-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--muted); }
+.live-sync.ready .live-sync-dot { background: var(--ok); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok) 18%, transparent); }
+.live-sync.checking .live-sync-dot { background: var(--focus); animation: sync-pulse 1s ease-in-out infinite; }
+.live-sync.delayed .live-sync-dot { background: var(--danger); }
+.live-sync-new, .brand .live-sync-new { display: none; padding: 0 5px; border-radius: 8px; background: var(--accent); color: var(--accent-text); font-weight: 700; }
+.live-sync-new.visible { display: inline-block; }
+@keyframes sync-pulse { 50% { opacity: .35; transform: scale(.78); } }
 .actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .button {
   border: 1px solid transparent; border-radius: 4px; padding: 5px 10px; cursor: pointer;
@@ -108,6 +116,10 @@ button { font: inherit; }
 .thread.resolved { opacity: .62; }
 .thread.active { opacity: 1; border-color: var(--focus); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 35%, transparent); }
 .thread-head { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
+.thread-badges { display: inline-flex; align-items: center; gap: 4px; }
+.live-new { border-radius: 999px; padding: 1px 6px; background: var(--accent); color: var(--accent-text); font-size: 9px; font-weight: 700; }
+.live-new-item { border-color: var(--focus); animation: live-new-highlight 2.4s ease-out; }
+@keyframes live-new-highlight { from { box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 45%, transparent); } to { box-shadow: none; } }
 .thread p, .suggestion p { margin: 5px 0 0; font-size: 12px; line-height: 1.4; }
 .thread-location {
   display: block; width: 100%; margin: 6px 0 0; padding: 4px 6px; overflow: hidden; border: 0; border-radius: 3px;

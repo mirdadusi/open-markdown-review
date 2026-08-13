@@ -40,6 +40,12 @@
 20. A review package is committed and checked out on another machine; `.gitattributes` prevents exact-byte digest changes.
 21. Commented text is visibly highlighted in the rendered review; clicking it focuses the correct discussion, including its replies, and clicking the discussion location returns to the exact content.
 22. The matching source Markdown shows a comment gutter marker and highlighted range; its hover action opens the same discussion, while an unavailable sender source still leaves rendered navigation usable.
+23. A second reviewer writes a comment to an active package outside the workspace; the first client's sidebar and open rendered review update without manual refresh.
+24. A mounted drive omits a filesystem notification; polling detects the new event within the configured interval.
+25. A partial event or revision arrives before its dependencies; the client retains the last valid view, reports delayed synchronization, and shows the completed review after retry.
+26. Several events arrive in one synchronization burst; the client folds them deterministically without overlapping refresh failures or lost events.
+27. A live update preserves the selected document, main and sidebar scroll positions, and focused discussion.
+28. A synchronized provider temporarily removes or rewrites a previously validated event; the client retains the last valid state and reports synchronization delay instead of silently deleting audit history.
 
 ## Exit criteria
 
@@ -51,6 +57,8 @@
 - Participants can understand and change the reviewed document set without editing JSON, globs, or VS Code settings.
 - Participants can create, connect, identify, and switch multiple reviews without confusing which package receives an action.
 - Participants can see where every comment belongs and move reliably between highlighted content, its replies, and the original source selection.
+- Participants see shared comments and replies within the configured synchronization interval without reloading, including for review packages outside the workspace.
+- Delayed or incomplete synchronization never replaces the last valid review with partial state.
 - Custom review folder names work inside repositories and on ordinary local/shared drives.
 - Export digests verify and event inventories are complete.
 - No active Markdown, SVG, Mermaid, or attachment content executes.
