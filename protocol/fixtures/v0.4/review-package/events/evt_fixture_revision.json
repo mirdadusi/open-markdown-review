@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "0.3.0",
+  "id": "evt_fixture_revision",
+  "type": "revision.created",
+  "reviewId": "review_fixture_v04",
+  "revisionId": "revision_fixture_v04",
+  "occurredAt": "2026-08-13T17:00:01.000Z",
+  "actor": { "id": "implementer", "displayName": "Protocol Implementer" },
+  "revisionPath": "revisions/revision_fixture_v04.json",
+  "revisionDigest": "sha256:d0ed164588b3a39486ead4fafe4dc5db29fa13c1167485225c8d1ebbaf6bf079"
+}

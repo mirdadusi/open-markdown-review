@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 180">
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#2458a6"/></marker></defs>
+  <g font-family="Arial, sans-serif" text-anchor="middle" fill="#172033">
+    <rect x="20" y="55" width="170" height="70" rx="8" fill="#dce8fa" stroke="#2458a6"/>
+    <rect x="275" y="55" width="170" height="70" rx="8" fill="#dce8fa" stroke="#2458a6"/>
+    <rect x="530" y="55" width="170" height="70" rx="8" fill="#dce8fa" stroke="#2458a6"/>
+    <text x="105" y="96" font-size="15">Markdown workspace</text>
+    <text x="360" y="96" font-size="15">Immutable revision</text>
+    <text x="615" y="96" font-size="15">Audit PDF</text>
+    <path d="M190 90 H275" stroke="#2458a6" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M445 90 H530" stroke="#2458a6" stroke-width="3" marker-end="url(#arrow)"/>
+  </g>
+</svg>

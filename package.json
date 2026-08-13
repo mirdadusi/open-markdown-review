@@ -1,0 +1,343 @@
+{
+  "name": "open-markdown-review",
+  "displayName": "Open Markdown Review",
+  "description": "A serverless, local-first Markdown review protocol and usable VS Code pilot client.",
+  "version": "0.4.3",
+  "private": true,
+  "license": "MIT",
+  "publisher": "mirdadusi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mirdadusi/open-markdown-review.git"
+  },
+  "homepage": "https://github.com/mirdadusi/open-markdown-review#readme",
+  "bugs": {
+    "url": "https://github.com/mirdadusi/open-markdown-review/issues"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onView:openMarkdownReview.reviews",
+    "onView:openMarkdownReview.threads",
+    "onCommand:openMarkdownReview.initialize",
+    "onCommand:openMarkdownReview.connectReview",
+    "onCommand:openMarkdownReview.switchReview",
+    "onCommand:openMarkdownReview.setup",
+    "onCommand:openMarkdownReview.createRevision",
+    "onCommand:openMarkdownReview.openReview",
+    "onCommand:openMarkdownReview.addComment",
+    "onCommand:openMarkdownReview.addSuggestion",
+    "onCommand:openMarkdownReview.reply",
+    "onCommand:openMarkdownReview.resolveThread",
+    "onCommand:openMarkdownReview.decideThread",
+    "onCommand:openMarkdownReview.approveReview",
+    "onCommand:openMarkdownReview.rejectReview",
+    "onCommand:openMarkdownReview.acceptSuggestion",
+    "onCommand:openMarkdownReview.rejectSuggestion",
+    "onCommand:openMarkdownReview.applySuggestion",
+    "onCommand:openMarkdownReview.exportPdf",
+    "onCommand:openMarkdownReview.refresh",
+    "onCommand:openMarkdownReview.openThread",
+    "onCommand:openMarkdownReview.showThread"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "openMarkdownReview.initialize",
+        "title": "Markdown Review: Create New Review",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "openMarkdownReview.connectReview",
+        "title": "Markdown Review: Connect Existing Review",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "openMarkdownReview.switchReview",
+        "title": "Markdown Review: Switch Active Review",
+        "icon": "$(list-selection)"
+      },
+      {
+        "command": "openMarkdownReview.setup",
+        "title": "Markdown Review: Review Setup and Documents",
+        "icon": "$(list-selection)"
+      },
+      {
+        "command": "openMarkdownReview.createRevision",
+        "title": "Markdown Review: Choose Documents and Create Revision",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "openMarkdownReview.openReview",
+        "title": "Markdown Review: Open Rendered Review",
+        "icon": "$(preview)"
+      },
+      {
+        "command": "openMarkdownReview.addComment",
+        "title": "Markdown Review: Comment on Selection",
+        "icon": "$(comment-add)"
+      },
+      {
+        "command": "openMarkdownReview.addSuggestion",
+        "title": "Markdown Review: Suggest Edit on Selection",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "openMarkdownReview.reply",
+        "title": "Markdown Review: Reply to Thread",
+        "icon": "$(reply)"
+      },
+      {
+        "command": "openMarkdownReview.resolveThread",
+        "title": "Markdown Review: Resolve Thread",
+        "icon": "$(check)"
+      },
+      {
+        "command": "openMarkdownReview.decideThread",
+        "title": "Markdown Review: Decide Comment",
+        "icon": "$(law)"
+      },
+      {
+        "command": "openMarkdownReview.approveReview",
+        "title": "Markdown Review: Approve Review",
+        "icon": "$(verified)"
+      },
+      {
+        "command": "openMarkdownReview.rejectReview",
+        "title": "Markdown Review: Reject Review",
+        "icon": "$(error)"
+      },
+      {
+        "command": "openMarkdownReview.acceptSuggestion",
+        "title": "Markdown Review: Accept Suggested Edit",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "openMarkdownReview.rejectSuggestion",
+        "title": "Markdown Review: Reject Suggested Edit",
+        "icon": "$(close)"
+      },
+      {
+        "command": "openMarkdownReview.applySuggestion",
+        "title": "Markdown Review: Apply Accepted Edit",
+        "icon": "$(replace-all)"
+      },
+      {
+        "command": "openMarkdownReview.exportPdf",
+        "title": "Markdown Review: Export Audit PDF",
+        "icon": "$(file-pdf)"
+      },
+      {
+        "command": "openMarkdownReview.refresh",
+        "title": "Markdown Review: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "openMarkdownReview.openThread",
+        "title": "Markdown Review: Open Thread"
+      },
+      {
+        "command": "openMarkdownReview.showThread",
+        "title": "Markdown Review: Show Comment in Rendered Review",
+        "icon": "$(comment-discussion)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "openMarkdownReview",
+          "title": "Markdown Review",
+          "icon": "media/review-activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "openMarkdownReview": [
+        {
+          "id": "openMarkdownReview.reviews",
+          "name": "Reviews"
+        },
+        {
+          "id": "openMarkdownReview.threads",
+          "name": "Active Review"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "openMarkdownReview.reviews",
+        "contents": "Create a review package or connect one from a local/shared drive.\n[Create new review](command:openMarkdownReview.initialize)\n[Connect existing review](command:openMarkdownReview.connectReview)"
+      },
+      {
+        "view": "openMarkdownReview.threads",
+        "contents": "Choose which Markdown files or folders should be reviewed.\n[Open visual review setup](command:openMarkdownReview.initialize)",
+        "when": "!openMarkdownReview.initialized"
+      },
+      {
+        "view": "openMarkdownReview.threads",
+        "contents": "The review is initialized but has no immutable revision.\n[Choose documents and create revision](command:openMarkdownReview.setup)",
+        "when": "openMarkdownReview.initialized && !openMarkdownReview.hasRevision"
+      },
+      {
+        "view": "openMarkdownReview.threads",
+        "contents": "There are no unresolved threads.\n[Open rendered review](command:openMarkdownReview.openReview)\n[Export audit PDF](command:openMarkdownReview.exportPdf)",
+        "when": "openMarkdownReview.hasRevision && !openMarkdownReview.hasUnresolved"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "openMarkdownReview.addComment",
+          "when": "resourceExtname == .md && editorHasSelection",
+          "group": "navigation@50"
+        },
+        {
+          "command": "openMarkdownReview.addSuggestion",
+          "when": "resourceExtname == .md && editorHasSelection",
+          "group": "navigation@51"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "openMarkdownReview.initialize",
+          "when": "view == openMarkdownReview.reviews",
+          "group": "navigation@1"
+        },
+        {
+          "command": "openMarkdownReview.connectReview",
+          "when": "view == openMarkdownReview.reviews",
+          "group": "navigation@2"
+        },
+        {
+          "command": "openMarkdownReview.openReview",
+          "when": "view == openMarkdownReview.threads && openMarkdownReview.hasRevision",
+          "group": "navigation@1"
+        },
+        {
+          "command": "openMarkdownReview.setup",
+          "when": "view == openMarkdownReview.threads && openMarkdownReview.initialized",
+          "group": "navigation@2"
+        },
+        {
+          "command": "openMarkdownReview.exportPdf",
+          "when": "view == openMarkdownReview.threads && openMarkdownReview.hasRevision",
+          "group": "navigation@3"
+        },
+        {
+          "command": "openMarkdownReview.refresh",
+          "when": "view == openMarkdownReview.threads || view == openMarkdownReview.reviews",
+          "group": "navigation"
+        },
+        {
+          "command": "openMarkdownReview.approveReview",
+          "when": "view == openMarkdownReview.threads && openMarkdownReview.hasRevision",
+          "group": "navigation"
+        },
+        {
+          "command": "openMarkdownReview.rejectReview",
+          "when": "view == openMarkdownReview.threads && openMarkdownReview.hasRevision",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "openMarkdownReview.switchReview",
+          "when": "view == openMarkdownReview.reviews && viewItem == markdownReviewInactive",
+          "group": "inline"
+        },
+        {
+          "command": "openMarkdownReview.reply",
+          "when": "view == openMarkdownReview.threads && viewItem == reviewThread",
+          "group": "inline"
+        },
+        {
+          "command": "openMarkdownReview.resolveThread",
+          "when": "view == openMarkdownReview.threads && viewItem == reviewThread",
+          "group": "inline"
+        },
+        {
+          "command": "openMarkdownReview.decideThread",
+          "when": "view == openMarkdownReview.threads && viewItem == reviewThread",
+          "group": "inline"
+        },
+        {
+          "command": "openMarkdownReview.acceptSuggestion",
+          "when": "view == openMarkdownReview.threads && viewItem == reviewSuggestionOpen",
+          "group": "inline"
+        },
+        {
+          "command": "openMarkdownReview.rejectSuggestion",
+          "when": "view == openMarkdownReview.threads && viewItem == reviewSuggestionOpen",
+          "group": "inline"
+        },
+        {
+          "command": "openMarkdownReview.applySuggestion",
+          "when": "view == openMarkdownReview.threads && viewItem == reviewSuggestionAccepted",
+          "group": "inline"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Open Markdown Review",
+      "properties": {
+        "openMarkdownReview.actorId": {
+          "type": "string",
+          "default": "",
+          "description": "Stable author identifier written to review events. If empty, the extension asks once per workspace."
+        },
+        "openMarkdownReview.actorName": {
+          "type": "string",
+          "default": "",
+          "description": "Human-readable author name written to review events."
+        },
+        "openMarkdownReview.remoteResourceLimitMb": {
+          "type": "number",
+          "default": 15,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum size of one captured external resource."
+        },
+        "openMarkdownReview.allowInsecureHttp": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow capturing resources over plain HTTP. Disabled by default."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "clean": "node ./scripts/clean.mjs",
+    "build:webview": "esbuild src/webview/review.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=media/review.js --minify && esbuild src/webview/setup.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=media/setup.js --minify",
+    "build:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/extension.js --external:vscode --external:sharp --minify && node scripts/copy-pdfkit-assets.mjs",
+    "compile": "npm run build:webview && tsc -p tsconfig.json && npm run build:extension",
+    "watch": "tsc -w -p tsconfig.json",
+    "test": "npm run compile && node --test out/test/*.test.js",
+    "check": "npm run test",
+    "sample:pdf": "npm run compile && node scripts/export-example.mjs",
+    "package:vsix": "npm run compile && vsce package --no-rewrite-relative-links"
+  },
+  "dependencies": {
+    "@img/sharp-wasm32": "0.35.3",
+    "markdown-it": "^14.1.0",
+    "pdfkit": "^0.17.2",
+    "sharp": "^0.35.3",
+    "svg-to-pdfkit": "^0.1.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/markdown-it": "^14.1.2",
+    "@vscode/vsce": "^3.9.2",
+    "@types/pdfkit": "^0.17.3",
+    "@types/vscode": "^1.90.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "esbuild": "^0.25.9",
+    "mermaid": "^11.10.1",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "0.2.0",
+  "reviewId": "review_example_architecture",
+  "revisionId": "revision_20260813T122955204Z_77c4c21ccab549a6bec195810779ca31",
+  "actor": {
+    "id": "mirek",
+    "displayName": "Mirek"
+  },
+  "id": "evt_example_comment_created",
+  "type": "comment.created",
+  "occurredAt": "2026-08-13T13:01:00.000Z",
+  "threadId": "thread_global_state",
+  "commentId": "comment_global_state_root",
+  "anchor": {
+    "document": "architecture.md",
+    "range": {
+      "start": {
+        "line": 2,
+        "character": 0
+      },
+      "end": {
+        "line": 2,
+        "character": 39
+      }
+    },
+    "quote": {
+      "exact": "The orchestrator owns the global state.",
+      "prefix": "# Architecture\n\n",
+      "suffix": "\n\nWorker agents"
+    },
+    "documentDigest": "sha256:c6f542da2618e36672b48c7e07a2cb6553cef11d9fa5e5ae4b223d1ac7c62a1e",
+    "target": {
+      "kind": "text"
+    }
+  },
+  "body": {
+    "format": "markdown",
+    "text": "Should this ownership live in the runtime layer?"
+  }
+}

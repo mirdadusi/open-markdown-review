@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "0.2.0",
+  "id": "evt_20260813T122955204Z_7f7f7add7cdb476ea692caffc05c0c97",
+  "type": "revision.created",
+  "reviewId": "review_example_architecture",
+  "occurredAt": "2026-08-13T12:29:55.204Z",
+  "actor": {
+    "id": "mirek",
+    "displayName": "Mirek"
+  },
+  "revisionId": "revision_20260813T122955204Z_77c4c21ccab549a6bec195810779ca31",
+  "revisionPath": ".review/revisions/revision_20260813T122955204Z_77c4c21ccab549a6bec195810779ca31.json",
+  "revisionDigest": "sha256:3505ff665ad316d6c42ce0ec1140e3c6b98ba3b94cb13c51131347adc908816d"
+}

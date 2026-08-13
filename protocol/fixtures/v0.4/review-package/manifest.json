@@ -1,0 +1,28 @@
+{
+  "protocol": "open-markdown-review",
+  "protocolVersion": "0.4.0",
+  "reviewId": "review_fixture_v04",
+  "title": "Protocol 0.4 conformance fixture",
+  "createdAt": "2026-08-13T17:00:00.000Z",
+  "createdBy": {
+    "id": "implementer",
+    "displayName": "Protocol Implementer"
+  },
+  "documents": [
+    "architecture.md"
+  ],
+  "eventDirectory": "events",
+  "revisionDirectory": "revisions",
+  "blobDirectory": "blobs/sha256",
+  "exportDirectory": "exports",
+  "capabilities": [
+    "quote-anchor-v1",
+    "range-anchor-v1",
+    "semantic-anchor-v1",
+    "content-addressed-resources-v1",
+    "audit-export-v1",
+    "thread-decision-v1",
+    "suggested-edit-v1",
+    "review-rejection-v1"
+  ]
+}

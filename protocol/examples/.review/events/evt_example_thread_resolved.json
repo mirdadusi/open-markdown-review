@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "0.2.0",
+  "reviewId": "review_example_architecture",
+  "revisionId": "revision_20260813T122955204Z_77c4c21ccab549a6bec195810779ca31",
+  "actor": {
+    "id": "mirek",
+    "displayName": "Mirek"
+  },
+  "id": "evt_example_thread_resolved",
+  "type": "thread.resolved",
+  "occurredAt": "2026-08-13T13:03:00.000Z",
+  "threadId": "thread_global_state",
+  "note": "Clarification accepted for the pilot example."
+}

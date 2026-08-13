@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "0.3.0",
+  "id": "evt_fixture_suggestion_applied",
+  "type": "suggestion.applied",
+  "reviewId": "review_fixture_v04",
+  "revisionId": "revision_fixture_v04",
+  "occurredAt": "2026-08-13T17:06:00.000Z",
+  "actor": { "id": "author", "displayName": "Author" },
+  "suggestionId": "suggestion_fixture_wording",
+  "document": "architecture.md",
+  "sourceDigestBefore": "sha256:183632058b50fad04ace6b55c901f9f2cf98722a1e00c0267bafb81fd0c7e04a",
+  "sourceDigestAfter": "sha256:ef3eda3a1fb0974e07812e5fafd4bde25156458b0fdb8933adf458012b6e47de"
+}

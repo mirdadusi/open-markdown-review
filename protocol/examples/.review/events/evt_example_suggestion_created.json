@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "0.3.0",
+  "reviewId": "review_example_architecture",
+  "revisionId": "revision_20260813T122955204Z_77c4c21ccab549a6bec195810779ca31",
+  "actor": {
+    "id": "reviewer",
+    "displayName": "Pilot Reviewer"
+  },
+  "id": "evt_example_suggestion_created",
+  "type": "suggestion.created",
+  "occurredAt": "2026-08-13T13:03:10.000Z",
+  "suggestionId": "suggestion_tables_wording",
+  "anchor": {
+    "document": "architecture.md",
+    "range": {
+      "start": { "line": 21, "character": 2 },
+      "end": { "line": 21, "character": 8 }
+    },
+    "quote": {
+      "exact": "Tables",
+      "prefix": "blob store |\n| ",
+      "suffix": " | Required | Rendered"
+    },
+    "documentDigest": "sha256:c6f542da2618e36672b48c7e07a2cb6553cef11d9fa5e5ae4b223d1ac7c62a1e",
+    "target": { "kind": "text" }
+  },
+  "operation": {
+    "kind": "replace",
+    "replacement": "GFM tables"
+  },
+  "rationale": {
+    "format": "markdown",
+    "text": "Name the supported table profile explicitly."
+  }
+}

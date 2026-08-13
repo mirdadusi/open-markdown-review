@@ -1,0 +1,3 @@
+# Preserve auditable review package bytes exactly.
+* -text
+**/* -text

@@ -1,0 +1,58 @@
+:root { color-scheme: light dark; --surface: var(--vscode-editorWidget-background); --surface2: var(--vscode-sideBar-background); --text: var(--vscode-editor-foreground); --muted: var(--vscode-descriptionForeground); --border: var(--vscode-widget-border, rgba(127,127,127,.35)); --accent: var(--vscode-button-background); --accentText: var(--vscode-button-foreground); --focus: var(--vscode-focusBorder); }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--vscode-editor-background); color: var(--text); font: 13px/1.5 var(--vscode-font-family); }
+button, input, select { font: inherit; }
+.setup-shell { width: min(960px, calc(100% - 40px)); margin: 0 auto; padding: 34px 0 64px; }
+.hero { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 24px; }
+.eyebrow { color: var(--vscode-textLink-foreground); font-size: 10px; font-weight: 700; letter-spacing: .12em; }
+h1 { margin: 5px 0 6px; font-size: 26px; line-height: 1.2; }
+.hero p, .picker-heading p { margin: 0; color: var(--muted); max-width: 680px; }
+.step-badge { white-space: nowrap; border: 1px solid var(--border); border-radius: 999px; padding: 5px 10px; color: var(--muted); background: var(--surface2); }
+.card { margin-bottom: 14px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); padding: 18px; }
+.details-card, .root-card, .storage-card { display: grid; grid-template-columns: 160px minmax(220px, 1fr); gap: 5px 16px; align-items: center; }
+.details-card label, .root-card label, .storage-card label { display: block; font-weight: 600; }
+.field-help { grid-column: 2; color: var(--muted); font-size: 11px; }
+.field-help code { font-family: var(--vscode-editor-font-family); }
+.storage-control { display: flex; gap: 7px; }
+.storage-control input { min-width: 0; }
+.storage-control button { white-space: nowrap; }
+.storage-mode { display: block; margin-top: 2px; color: var(--vscode-testing-iconPassed, #3b8f52); font-size: 10px; }
+.storage-mode.external { color: var(--vscode-textLink-foreground); }
+input[type="text"], input[type="search"], select { width: 100%; height: 32px; border: 1px solid var(--vscode-input-border, var(--border)); border-radius: 4px; padding: 5px 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); outline: 0; }
+input:focus, select:focus { border-color: var(--focus); }
+input:disabled { opacity: .72; }
+.picker-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+h2 { margin: 0 0 3px; font-size: 16px; }
+.summary { min-width: 78px; text-align: center; border-left: 1px solid var(--border); }
+.summary strong { display: block; font-size: 22px; line-height: 1.1; }
+.summary span { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+.toolbar { display: flex; gap: 7px; margin: 16px 0 10px; }
+.search-wrap { position: relative; flex: 1; }
+.search-wrap span { position: absolute; left: 9px; top: 5px; color: var(--muted); }
+.search-wrap input { padding-left: 27px; }
+button { border: 1px solid transparent; border-radius: 4px; padding: 5px 11px; cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accentText); }
+button.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+button:hover { filter: brightness(1.08); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+.document-tree { max-height: 430px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; padding: 6px; background: var(--vscode-editor-background); }
+details summary { display: flex; align-items: center; gap: 7px; min-height: 29px; padding: 3px 6px; border-radius: 4px; cursor: pointer; list-style: none; user-select: none; }
+details summary:hover, .tree-file:hover { background: var(--vscode-list-hoverBackground); }
+details summary::-webkit-details-marker { display: none; }
+.folder-icon { display: inline-block; width: 13px; color: var(--muted); transition: transform .1s; }
+details[open] > summary .folder-icon { transform: rotate(90deg); }
+.tree-children { margin-left: 18px; padding-left: 8px; border-left: 1px solid var(--border); }
+.tree-file { display: grid; grid-template-columns: auto 22px minmax(120px, auto) 1fr; align-items: center; gap: 5px; min-height: 29px; padding: 3px 6px; border-radius: 4px; cursor: pointer; }
+input[type="checkbox"] { accent-color: var(--accent); }
+.file-icon { color: var(--vscode-textLink-foreground); font: 9px var(--vscode-editor-font-family); }
+.node-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-count { margin-left: auto; color: var(--muted); font-size: 10px; }
+.file-path { color: var(--muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.empty-state { padding: 32px; text-align: center; color: var(--muted); border: 1px dashed var(--border); border-radius: 6px; }
+.validation { margin-bottom: 14px; border: 1px solid var(--vscode-inputValidation-errorBorder); border-radius: 5px; padding: 9px 12px; background: var(--vscode-inputValidation-errorBackground); color: var(--vscode-inputValidation-errorForeground); }
+footer { display: flex; justify-content: space-between; gap: 20px; align-items: center; margin-top: 20px; }
+.scope-note { max-width: 560px; color: var(--muted); font-size: 11px; }
+.scope-note span { display: block; color: var(--text); font-weight: 600; }
+.footer-actions { display: flex; gap: 8px; }
+[hidden] { display: none !important; }
+@media (max-width: 620px) { .setup-shell { width: calc(100% - 24px); padding-top: 20px; } .hero { display: block; } .step-badge { display: inline-block; margin-top: 12px; } .details-card, .root-card, .storage-card { grid-template-columns: 1fr; } .field-help { grid-column: 1; } .file-path { display: none; } footer { align-items: stretch; flex-direction: column; } .footer-actions { justify-content: flex-end; } }

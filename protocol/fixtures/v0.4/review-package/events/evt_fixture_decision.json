@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "0.3.0",
+  "id": "evt_fixture_decision",
+  "type": "thread.decided",
+  "reviewId": "review_fixture_v04",
+  "revisionId": "revision_fixture_v04",
+  "occurredAt": "2026-08-13T17:03:00.000Z",
+  "actor": { "id": "reviewer", "displayName": "Reviewer" },
+  "threadId": "thread_fixture_state",
+  "decision": "accepted",
+  "reason": "The suggestion captures the requested clarification."
+}

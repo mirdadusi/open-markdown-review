@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "0.2.0",
+  "id": "revision_fixture_v04",
+  "reviewId": "review_fixture_v04",
+  "createdAt": "2026-08-13T17:00:00.000Z",
+  "createdBy": {
+    "id": "implementer",
+    "displayName": "Protocol Implementer"
+  },
+  "rootDocument": "architecture.md",
+  "documents": [
+    {
+      "digest": "sha256:183632058b50fad04ace6b55c901f9f2cf98722a1e00c0267bafb81fd0c7e04a",
+      "blobPath": "blobs/sha256/18/183632058b50fad04ace6b55c901f9f2cf98722a1e00c0267bafb81fd0c7e04a",
+      "mediaType": "text/markdown",
+      "byteLength": 259,
+      "path": "architecture.md"
+    }
+  ],
+  "resources": [
+    {
+      "digest": "sha256:574d1ca77542f519a0cd1f6e8f441a253395c5aefe997987b8cbffc4ba93bd56",
+      "blobPath": "blobs/sha256/57/574d1ca77542f519a0cd1f6e8f441a253395c5aefe997987b8cbffc4ba93bd56",
+      "mediaType": "image/svg+xml",
+      "byteLength": 251,
+      "id": "resource_d31b13f025a3d1deeb91f616",
+      "document": "architecture.md",
+      "originalReference": "assets/context.svg",
+      "sourceKind": "workspace",
+      "role": "image",
+      "alt": "Context",
+      "capturedAt": "2026-08-13T17:00:00.000Z"
+    }
+  ],
+  "externalReferences": [
+    {
+      "id": "reference_89ed070fcd2d002773e5e67f",
+      "document": "architecture.md",
+      "uri": "https://spec.commonmark.org/0.31.2/",
+      "label": "CommonMark",
+      "relation": "link"
+    }
+  ],
+  "mermaidDiagrams": [
+    {
+      "id": "diagram_78bf2240548c8ebb057354c1",
+      "document": "architecture.md",
+      "ordinal": 0,
+      "sourceDigest": "sha256:5cf46898423fa0e5d625ebd0115d77648e29580cc87878ed4bb18b5faba735fb",
+      "source": "flowchart LR\n    Author --> Review"
+    }
+  ],
+  "diagnostics": [],
+  "renderer": {
+    "markdownProfile": "commonmark-gfm",
+    "mermaidVersion": "11.10.1"
+  }
+}

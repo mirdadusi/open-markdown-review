@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "0.3.0",
+  "reviewId": "review_example_architecture",
+  "revisionId": "revision_20260813T122955204Z_77c4c21ccab549a6bec195810779ca31",
+  "actor": {
+    "id": "compliance-reviewer",
+    "displayName": "Compliance Reviewer"
+  },
+  "id": "evt_example_review_rejected",
+  "type": "review.rejected",
+  "occurredAt": "2026-08-13T13:04:10.000Z",
+  "reason": "Approval is pending incorporation of the accepted wording change in a new revision."
+}

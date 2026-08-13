@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "0.2.0",
+  "id": "evt_20260813T124647400Z_4e3816d674ef405dbe045d8f6d6183db",
+  "type": "export.created",
+  "reviewId": "review_example_architecture",
+  "revisionId": "revision_20260813T122955204Z_77c4c21ccab549a6bec195810779ca31",
+  "occurredAt": "2026-08-13T12:46:47.400Z",
+  "actor": {
+    "id": "mirek",
+    "displayName": "Mirek"
+  },
+  "exportId": "export_20260813T124647400Z_da19a6a6997c43ffbfb2023f40a1a407",
+  "format": "application/pdf",
+  "exportPath": ".review/exports/architecture-review-95810779ca31-40a1a407.pdf",
+  "exportDigest": "sha256:64fcc97f738367a5a01595ed0298a20ae81ec5f18fa40aaa08c0ac8592fd1662",
+  "includedEventIds": [
+    "evt_20260813T122955204Z_7f7f7add7cdb476ea692caffc05c0c97",
+    "evt_example_comment_replied",
+    "evt_example_comment_created",
+    "evt_example_thread_resolved",
+    "evt_example_review_approved"
+  ],
+  "renderer": {
+    "client": "open-markdown-review-vscode",
+    "clientVersion": "0.2.0",
+    "pdfEngine": "PDFKit 0.17.2",
+    "mermaidVersion": "11.10.1"
+  },
+  "renderedDiagramDigests": {
+    "diagram_4415674329b1049104f07315": "sha256:641f79b94354b15c2a25267518db4604fe985c620fabed271a3837c7b4d0484e"
+  }
+}

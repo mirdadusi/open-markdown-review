@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "0.3.0",
+  "id": "evt_fixture_suggestion",
+  "type": "suggestion.created",
+  "reviewId": "review_fixture_v04",
+  "revisionId": "revision_fixture_v04",
+  "occurredAt": "2026-08-13T17:04:00.000Z",
+  "actor": { "id": "reviewer", "displayName": "Reviewer" },
+  "suggestionId": "suggestion_fixture_wording",
+  "anchor": {
+    "document": "architecture.md",
+    "range": { "start": { "line": 2, "character": 21 }, "end": { "line": 2, "character": 43 } },
+    "quote": { "exact": "immutable review state", "prefix": "The runtime owns the ", "suffix": ".\n\n![Context]" },
+    "documentDigest": "sha256:183632058b50fad04ace6b55c901f9f2cf98722a1e00c0267bafb81fd0c7e04a",
+    "target": { "kind": "text" }
+  },
+  "operation": { "kind": "replace", "replacement": "append-only review state" },
+  "rationale": { "format": "markdown", "text": "Use the protocol's exact state model." }
+}

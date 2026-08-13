@@ -1,0 +1,28 @@
+{
+  "protocol": "open-markdown-review",
+  "protocolVersion": "0.3.0",
+  "reviewId": "review_example_architecture",
+  "title": "Architecture review",
+  "createdAt": "2026-08-13T11:00:00.000Z",
+  "createdBy": {
+    "id": "mirek",
+    "displayName": "Mirek"
+  },
+  "documents": [
+    "**/*.md"
+  ],
+  "eventDirectory": ".review/events",
+  "revisionDirectory": ".review/revisions",
+  "blobDirectory": ".review/blobs/sha256",
+  "exportDirectory": ".review/exports",
+  "capabilities": [
+    "quote-anchor-v1",
+    "range-anchor-v1",
+    "semantic-anchor-v1",
+    "content-addressed-resources-v1",
+    "audit-export-v1",
+    "thread-decision-v1",
+    "suggested-edit-v1",
+    "review-rejection-v1"
+  ]
+}

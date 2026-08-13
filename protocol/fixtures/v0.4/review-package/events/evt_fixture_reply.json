@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "0.3.0",
+  "id": "evt_fixture_reply",
+  "type": "comment.replied",
+  "reviewId": "review_fixture_v04",
+  "revisionId": "revision_fixture_v04",
+  "occurredAt": "2026-08-13T17:02:00.000Z",
+  "actor": { "id": "author", "displayName": "Author" },
+  "threadId": "thread_fixture_state",
+  "commentId": "comment_fixture_reply",
+  "inReplyTo": "comment_fixture_root",
+  "body": { "format": "markdown", "text": "The proposed wording now states that explicitly." }
+}

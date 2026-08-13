@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "0.3.0",
+  "id": "evt_fixture_approval",
+  "type": "review.approved",
+  "reviewId": "review_fixture_v04",
+  "revisionId": "revision_fixture_v04",
+  "occurredAt": "2026-08-13T17:07:00.000Z",
+  "actor": { "id": "approver", "displayName": "Approver" },
+  "note": "Fixture approved after deterministic validation."
+}

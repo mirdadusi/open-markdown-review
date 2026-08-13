@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "0.3.0",
+  "id": "evt_fixture_comment",
+  "type": "comment.created",
+  "reviewId": "review_fixture_v04",
+  "revisionId": "revision_fixture_v04",
+  "occurredAt": "2026-08-13T17:01:00.000Z",
+  "actor": { "id": "reviewer", "displayName": "Reviewer" },
+  "threadId": "thread_fixture_state",
+  "commentId": "comment_fixture_root",
+  "anchor": {
+    "document": "architecture.md",
+    "range": { "start": { "line": 2, "character": 0 }, "end": { "line": 2, "character": 44 } },
+    "quote": { "exact": "The runtime owns the immutable review state.", "prefix": "# Protocol 0.4 fixture\n\n", "suffix": "\n\n![Context]" },
+    "documentDigest": "sha256:183632058b50fad04ace6b55c901f9f2cf98722a1e00c0267bafb81fd0c7e04a",
+    "target": { "kind": "text" }
+  },
+  "body": { "format": "markdown", "text": "Please make the append-only ownership explicit." }
+}

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "0.3.0",
+  "reviewId": "review_example_architecture",
+  "revisionId": "revision_20260813T122955204Z_77c4c21ccab549a6bec195810779ca31",
+  "actor": {
+    "id": "mirek",
+    "displayName": "Mirek"
+  },
+  "id": "evt_example_thread_decided",
+  "type": "thread.decided",
+  "occurredAt": "2026-08-13T13:02:30.000Z",
+  "threadId": "thread_global_state",
+  "decision": "accepted",
+  "reason": "The next revision will move ownership to the runtime layer."
+}

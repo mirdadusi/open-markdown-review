@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-markdown-review:schema:manifest:0.4",
+  "title": "Open Markdown Review manifest 0.4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "protocolVersion", "reviewId", "title", "createdAt", "createdBy", "documents", "eventDirectory", "revisionDirectory", "blobDirectory", "exportDirectory", "capabilities"],
+  "properties": {
+    "protocol": { "const": "open-markdown-review" },
+    "protocolVersion": { "enum": ["0.2.0", "0.3.0", "0.4.0"] },
+    "reviewId": { "$ref": "#/$defs/id" },
+    "title": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "createdBy": { "$ref": "#/$defs/actor" },
+    "documents": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "eventDirectory": { "enum": ["events", ".review/events"] },
+    "revisionDirectory": { "enum": ["revisions", ".review/revisions"] },
+    "blobDirectory": { "enum": ["blobs/sha256", ".review/blobs/sha256"] },
+    "exportDirectory": { "enum": ["exports", ".review/exports"] },
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["quote-anchor-v1", "range-anchor-v1", "semantic-anchor-v1", "content-addressed-resources-v1", "audit-export-v1", "thread-decision-v1", "suggested-edit-v1", "review-rejection-v1"] }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "protocolVersion": { "const": "0.4.0" } } },
+      "then": { "properties": { "eventDirectory": { "const": "events" }, "revisionDirectory": { "const": "revisions" }, "blobDirectory": { "const": "blobs/sha256" }, "exportDirectory": { "const": "exports" } } },
+      "else": { "properties": { "eventDirectory": { "const": ".review/events" }, "revisionDirectory": { "const": ".review/revisions" }, "blobDirectory": { "const": ".review/blobs/sha256" }, "exportDirectory": { "const": ".review/exports" } } }
+    }
+  ],
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "displayName": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

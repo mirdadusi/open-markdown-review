@@ -1,0 +1,11 @@
+node_modules/
+out/
+dist/
+output/
+coverage/
+tmp/
+media/review.js
+media/setup.js
+*.vsix
+*.vsix.sha256
+.DS_Store

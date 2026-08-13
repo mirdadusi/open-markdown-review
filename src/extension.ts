@@ -1,0 +1,1063 @@
+import os from "node:os";
+import { access, readFile, readdir } from "node:fs/promises";
+import path from "node:path";
+import * as vscode from "vscode";
+import { CommentDecorations } from "./commentDecorations";
+import { exportAuditPdf } from "./pdfExport";
+import { createId } from "./protocol/ids";
+import { discoverReviewPackages } from "./protocol/discovery";
+import { locateQuote, offsetAtLine, pointAtOffset } from "./protocol/anchor";
+import { createSnapshot, findMarkdownFiles } from "./protocol/snapshot";
+import { documentsForPatterns } from "./protocol/scope";
+import { buildReviewState } from "./protocol/state";
+import { validateEventAgainstRevision, validateEventCapabilities, validateEventGraph, validatePublishedRevision } from "./protocol/validation";
+import {
+  appendEvent,
+  initializeReview,
+  loadEvents,
+  loadManifest,
+  loadRevision,
+  resolveInsideReview,
+  resolveInsideWorkspace,
+  ReviewStoreError,
+  sha256,
+  verifyRevisionContent,
+} from "./protocol/store";
+import {
+  ActorRef,
+  CommentCreatedEvent,
+  CommentRepliedEvent,
+  EVENT_SCHEMA_VERSION,
+  MarkdownAnchor,
+  PROTOCOL_ID,
+  PROTOCOL_VERSION,
+  ReviewApprovedEvent,
+  ReviewRejectedEvent,
+  ReviewManifest,
+  ReviewRevision,
+  ReviewSuggestion,
+  ReviewState,
+  ReviewThread,
+  SemanticTarget,
+  SuggestedEditOperation,
+  SuggestionAcceptedEvent,
+  SuggestionAppliedEvent,
+  SuggestionCreatedEvent,
+  SuggestionRejectedEvent,
+  ThreadDecidedEvent,
+  ThreadDecision,
+  ThreadResolvedEvent,
+} from "./protocol/types";
+import { RenderedCommentRequest, RenderedReviewPanel } from "./renderedView";
+import { RegisteredReview, ReviewArgument, ReviewsProvider } from "./reviewsView";
+import { ReviewSetupPanel, ReviewSetupResult } from "./setupView";
+import { SuggestionArgument, ThreadArgument, ThreadsProvider } from "./threadsView";
+import { createAnchor, revealThread } from "./vscodeAnchor";
+
+interface ActiveReview {
+  folder: vscode.WorkspaceFolder;
+  sourceRoot: string;
+  storageRoot: string;
+  manifest: ReviewManifest;
+  revision: ReviewRevision;
+  state: ReviewState;
+}
+
+class ReviewController implements vscode.Disposable {
+  private readonly disposables: vscode.Disposable[] = [];
+  private readonly output = vscode.window.createOutputChannel("Open Markdown Review");
+  private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+  private currentSourceRoot?: string;
+  private currentStorageRoot?: string;
+  private currentManifest?: ReviewManifest;
+  private currentRevision?: ReviewRevision;
+  private loadedEvents = [] as Awaited<ReturnType<typeof loadEvents>>["events"];
+  private reviewPanel?: RenderedReviewPanel;
+  private readonly commentDecorations: CommentDecorations;
+
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly threads: ThreadsProvider,
+    private readonly reviews: ReviewsProvider,
+  ) {
+    this.commentDecorations = new CommentDecorations(context);
+    this.status.command = "openMarkdownReview.openReview";
+    this.disposables.push(this.output, this.status, this.commentDecorations);
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      for (const pattern of ["**/manifest.json", "**/events/*.json", "**/revisions/*.json"]) {
+        const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, pattern));
+        watcher.onDidCreate(() => void this.refresh());
+        watcher.onDidChange(() => void this.refresh());
+        watcher.onDidDelete(() => void this.refresh());
+        this.disposables.push(watcher);
+      }
+    }
+  }
+
+  dispose(): void {
+    for (const disposable of this.disposables) disposable.dispose();
+  }
+
+  private workspaceFolderForDocument(document?: vscode.TextDocument): vscode.WorkspaceFolder | undefined {
+    return (document && vscode.workspace.getWorkspaceFolder(document.uri)) ?? vscode.workspace.workspaceFolders?.[0];
+  }
+
+  private rootsStateKey(folder: vscode.WorkspaceFolder): string {
+    return `reviewRoots:${folder.uri.toString()}`;
+  }
+
+  private activeStateKey(folder: vscode.WorkspaceFolder): string {
+    return `activeReview:${folder.uri.toString()}`;
+  }
+
+  private async registeredReviews(folder: vscode.WorkspaceFolder): Promise<RegisteredReview[]> {
+    const savedRoots = new Set((this.context.workspaceState.get<string[]>(this.rootsStateKey(folder)) ?? []).map((item) => path.resolve(item)));
+    const legacyParent = this.context.workspaceState.get<string>(`reviewStorage:${folder.uri.toString()}`);
+    if (legacyParent) {
+      const legacyPackage = await loadManifest(path.join(legacyParent, ".review")).catch(() => undefined);
+      savedRoots.add(path.resolve(legacyPackage ? path.join(legacyParent, ".review") : legacyParent));
+    }
+    const roots = new Set(savedRoots);
+    // Opening a received review package as the VS Code folder should work directly.
+    roots.add(folder.uri.fsPath);
+    roots.add(path.join(folder.uri.fsPath, ".review"));
+    const manifests = await vscode.workspace.findFiles(
+      new vscode.RelativePattern(folder, "**/manifest.json"),
+      "**/{.git,node_modules,out,dist}/**",
+      50,
+    );
+    for (const manifest of manifests) roots.add(path.dirname(manifest.fsPath));
+    const result: RegisteredReview[] = [];
+    for (const reviewRoot of roots) {
+      try {
+        const manifest = await loadManifest(reviewRoot);
+        if (manifest) result.push({ reviewRoot, manifest });
+      } catch (error) {
+        this.output.appendLine(`[ignored review candidate] ${reviewRoot}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    result.sort((left, right) => left.manifest.title.localeCompare(right.manifest.title) || left.reviewRoot.localeCompare(right.reviewRoot));
+    for (const item of result) savedRoots.add(item.reviewRoot);
+    await this.context.workspaceState.update(this.rootsStateKey(folder), [...savedRoots]);
+    return result;
+  }
+
+  private async activeStorageRootFor(folder: vscode.WorkspaceFolder): Promise<string> {
+    const registered = await this.registeredReviews(folder);
+    const saved = this.context.workspaceState.get<string>(this.activeStateKey(folder));
+    const active = registered.find((item) => item.reviewRoot === saved)?.reviewRoot ?? registered[0]?.reviewRoot;
+    this.reviews.setReviews(registered, active, folder.uri.fsPath);
+    return active ?? path.join(folder.uri.fsPath, ".review");
+  }
+
+  private async registerReview(folder: vscode.WorkspaceFolder, storageRoot: string, makeActive = true): Promise<void> {
+    const normalized = path.resolve(storageRoot);
+    const roots = new Set(this.context.workspaceState.get<string[]>(this.rootsStateKey(folder)) ?? []);
+    roots.add(normalized);
+    await this.context.workspaceState.update(this.rootsStateKey(folder), [...roots]);
+    if (makeActive) await this.context.workspaceState.update(this.activeStateKey(folder), normalized);
+  }
+
+  private async actorFor(folder: vscode.WorkspaceFolder): Promise<ActorRef | undefined> {
+    const configuration = vscode.workspace.getConfiguration("openMarkdownReview", folder.uri);
+    const configuredId = configuration.get<string>("actorId", "").trim();
+    const configuredName = configuration.get<string>("actorName", "").trim();
+    if (configuredId) return { id: configuredId, ...(configuredName ? { displayName: configuredName } : {}) };
+    const stateKey = `actor:${folder.uri.toString()}`;
+    const saved = this.context.globalState.get<ActorRef>(stateKey);
+    if (saved?.id) return saved;
+    const id = await vscode.window.showInputBox({
+      title: "Review identity",
+      prompt: "Choose the stable author ID written into review events",
+      value: os.userInfo().username,
+      ignoreFocusOut: true,
+      validateInput: (value) => (value.trim() ? undefined : "Author ID is required"),
+    });
+    if (!id) return undefined;
+    const displayName = await vscode.window.showInputBox({
+      title: "Review identity",
+      prompt: "Display name (optional)",
+      value: id,
+      ignoreFocusOut: true,
+    });
+    const actor = { id: id.trim(), ...(displayName?.trim() ? { displayName: displayName.trim() } : {}) };
+    await this.context.globalState.update(stateKey, actor);
+    return actor;
+  }
+
+  async refresh(document?: vscode.TextDocument): Promise<void> {
+    const folder = this.workspaceFolderForDocument(document ?? vscode.window.activeTextEditor?.document);
+    if (!folder) return this.clearState();
+    try {
+      const storageRoot = await this.activeStorageRootFor(folder);
+      const manifest = await loadManifest(storageRoot);
+      this.currentSourceRoot = folder.uri.fsPath;
+      this.currentStorageRoot = storageRoot;
+      this.currentManifest = manifest;
+      if (!manifest) return this.clearState(false);
+      const loaded = await loadEvents(storageRoot, manifest.reviewId);
+      const contextualWarnings: string[] = [];
+      let acceptedEvents = loaded.events.filter((event) => {
+        const errors = validateEventCapabilities(manifest, event);
+        if (!errors.length) return true;
+        contextualWarnings.push(`${event.id}: ${errors.join("; ")}`);
+        return false;
+      });
+      const graphErrors = validateEventGraph(acceptedEvents);
+      if (graphErrors.size) {
+        acceptedEvents = acceptedEvents.filter((event) => {
+          const errors = graphErrors.get(event.id);
+          if (!errors?.length) return true;
+          contextualWarnings.push(`${event.id}: ${errors.join("; ")}`);
+          return false;
+        });
+      }
+      let state = buildReviewState(acceptedEvents);
+      const revisionEvent = state.revisionEvents.at(-1);
+      let revision: ReviewRevision | undefined;
+      if (revisionEvent) {
+        revision = await loadRevision(storageRoot, revisionEvent.revisionPath, revisionEvent.revisionDigest);
+        const publicationErrors = validatePublishedRevision(manifest, revisionEvent, revision);
+        if (publicationErrors.length) throw new ReviewStoreError(`Published revision is inconsistent:\n${publicationErrors.join("\n")}`);
+        const integrityErrors = await verifyRevisionContent(storageRoot, revision);
+        if (integrityErrors.length) throw new ReviewStoreError(`Frozen revision content failed verification:\n${integrityErrors.join("\n")}`);
+        acceptedEvents = acceptedEvents.filter((event) => {
+          if (event.revisionId !== revision!.id) return true;
+          const errors = validateEventAgainstRevision(event, revision!);
+          if (!errors.length) return true;
+          contextualWarnings.push(`${event.id}: ${errors.join("; ")}`);
+          return false;
+        });
+        state = buildReviewState(acceptedEvents);
+      }
+      this.loadedEvents = acceptedEvents;
+      this.currentRevision = revision;
+      this.threads.setState(state);
+      this.commentDecorations.setReview(folder.uri.fsPath, revision, state);
+      await this.setContext(true, Boolean(revision), state.unresolvedThreads.length > 0 || state.openSuggestions.length > 0);
+      this.updateStatus(state, revision);
+      for (const warning of loaded.warnings) this.output.appendLine(`[ignored] ${warning}`);
+      for (const warning of contextualWarnings) this.output.appendLine(`[ignored] ${warning}`);
+      if (state.danglingEvents.length) this.output.appendLine(`${state.danglingEvents.length} event(s) await related files from synchronization.`);
+      if (this.reviewPanel?.isDisposed) this.reviewPanel = undefined;
+      if (this.reviewPanel && revision) await this.reviewPanel.update(manifest, revision, state);
+    } catch (error) {
+      this.clearState(false);
+      this.reportError(error);
+    }
+  }
+
+  private clearState(clearRoot = true): void {
+    if (clearRoot) {
+      this.currentSourceRoot = undefined;
+      this.currentStorageRoot = undefined;
+      this.reviews.setReviews([], undefined, "");
+    }
+    this.currentManifest = undefined;
+    this.currentRevision = undefined;
+    this.loadedEvents = [];
+    this.threads.setState(undefined);
+    this.commentDecorations.clear();
+    this.status.hide();
+    void this.setContext(false, false, false);
+  }
+
+  private async setContext(initialized: boolean, hasRevision: boolean, hasUnresolved: boolean): Promise<void> {
+    await Promise.all([
+      vscode.commands.executeCommand("setContext", "openMarkdownReview.initialized", initialized),
+      vscode.commands.executeCommand("setContext", "openMarkdownReview.hasRevision", hasRevision),
+      vscode.commands.executeCommand("setContext", "openMarkdownReview.hasUnresolved", hasUnresolved),
+    ]);
+  }
+
+  private updateStatus(state: ReviewState, revision?: ReviewRevision): void {
+    if (!this.currentManifest) return this.status.hide();
+    this.status.text = revision
+      ? `$(comment-discussion) ${this.currentManifest.title}: ${state.unresolvedThreads.length} comments · ${state.openSuggestions.length} suggestions`
+      : `$(archive) ${this.currentManifest.title}: create revision`;
+    this.status.tooltip = revision ? "Open the immutable rendered review" : "Create the first auditable revision";
+    this.status.command = revision ? "openMarkdownReview.openReview" : "openMarkdownReview.setup";
+    this.status.show();
+  }
+
+  async initialize(): Promise<void> {
+    await this.setupReview(true);
+  }
+
+  async setupReview(createNew = false): Promise<void> {
+    const folder = this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document);
+    if (!folder) return void vscode.window.showErrorMessage("Open a folder or workspace first.");
+    const existing = await this.registeredReviews(folder);
+    let storageRoot = createNew
+      ? path.join(folder.uri.fsPath, existing.length ? `.review-${existing.length + 1}` : ".review")
+      : await this.activeStorageRootFor(folder);
+    let manifest = createNew ? undefined : await loadManifest(storageRoot);
+    if (manifest) await this.refresh();
+    const availableDocuments = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Window, title: "Finding Markdown documents" },
+      () => findMarkdownFiles(folder.uri.fsPath),
+    );
+    if (!availableDocuments.length) return void vscode.window.showErrorMessage("No Markdown documents were found in this workspace.");
+    const active = vscode.window.activeTextEditor?.document;
+    const activeRelative = active && vscode.workspace.getWorkspaceFolder(active.uri)?.uri.toString() === folder.uri.toString() && /\.md$/i.test(active.fileName)
+      ? path.relative(folder.uri.fsPath, active.uri.fsPath).split(path.sep).join("/")
+      : undefined;
+    const previousDocuments = manifest
+      ? this.currentRevision?.documents.map((item) => item.path) ?? documentsForPatterns(availableDocuments, manifest.documents)
+      : availableDocuments;
+    const selectedDocuments = previousDocuments.length ? previousDocuments : availableDocuments;
+    const rootDocument = this.currentRevision?.rootDocument && selectedDocuments.includes(this.currentRevision.rootDocument)
+      ? this.currentRevision.rootDocument
+      : activeRelative && selectedDocuments.includes(activeRelative)
+        ? activeRelative
+        : selectedDocuments[0];
+    const selection = await ReviewSetupPanel.show(this.context, {
+      initialized: Boolean(manifest),
+      workspaceName: folder.name,
+      title: manifest?.title ?? folder.name,
+      availableDocuments,
+      selectedDocuments,
+      rootDocument,
+      sourceRoot: folder.uri.fsPath,
+      storageRoot,
+      storageEditable: !manifest,
+    });
+    if (!selection) return;
+    storageRoot = path.resolve(selection.storageRoot);
+    const selectedManifest = await loadManifest(storageRoot);
+    if (createNew && selectedManifest) throw new ReviewStoreError("The selected folder already contains a review. Use Connect Existing Review instead.");
+    if (!manifest && selectedManifest) manifest = selectedManifest;
+    const actor = await this.actorFor(folder);
+    if (!actor) return;
+    if (!manifest) {
+      let names: string[] = [];
+      try {
+        names = await readdir(storageRoot);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      if (names.length) {
+        const choice = await vscode.window.showWarningMessage(
+          "The selected review package folder is not empty. Protocol files will be added without removing existing files.",
+          { modal: true },
+          "Use folder",
+        );
+        if (choice !== "Use folder") return;
+      }
+      manifest = {
+        protocol: PROTOCOL_ID,
+        protocolVersion: PROTOCOL_VERSION,
+        reviewId: createId("review"),
+        title: selection.title,
+        createdAt: new Date().toISOString(),
+        createdBy: actor,
+        documents: selection.documentPaths,
+        eventDirectory: "events",
+        revisionDirectory: "revisions",
+        blobDirectory: "blobs/sha256",
+        exportDirectory: "exports",
+        capabilities: [
+          "quote-anchor-v1", "range-anchor-v1", "semantic-anchor-v1",
+          "content-addressed-resources-v1", "audit-export-v1", "thread-decision-v1",
+          "suggested-edit-v1", "review-rejection-v1",
+        ],
+      };
+      await initializeReview(storageRoot, manifest);
+    }
+    await this.registerReview(folder, storageRoot);
+    await this.createRevisionFromSelection(folder, storageRoot, manifest, actor, selection);
+  }
+
+  async connectReview(): Promise<void> {
+    const selected = await vscode.window.showOpenDialog({
+      title: "Open a shared Markdown review package",
+      defaultUri: this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document)?.uri,
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: "Open review",
+    });
+    const selectedRoot = selected?.[0]?.fsPath;
+    if (!selectedRoot) return;
+    const packages = await discoverReviewPackages(selectedRoot);
+    if (!packages.length) return void vscode.window.showErrorMessage("No Open Markdown Review package was found in that folder.");
+    const selectedPackage = packages.length === 1
+      ? packages[0]
+      : (await vscode.window.showQuickPick(packages.map((item) => ({ label: item.manifest.title, description: item.reviewRoot, item })), {
+        title: "Choose a review package",
+        ignoreFocusOut: true,
+      }))?.item;
+    if (!selectedPackage) return;
+    const { reviewRoot: storageRoot, manifest } = selectedPackage;
+    const folder = this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document);
+    if (!folder) {
+      const choice = await vscode.window.showInformationMessage(
+        `Open “${manifest.title}” as a frozen review? Source files are not required for reading, replying, decisions, approval, or PDF export.`,
+        { modal: true },
+        "Open review folder",
+      );
+      if (choice === "Open review folder") {
+        await vscode.commands.executeCommand("vscode.openFolder", vscode.Uri.file(storageRoot), { forceNewWindow: false });
+      }
+      return;
+    }
+    await this.registerReview(folder, storageRoot);
+    await this.refresh();
+    const choice = await vscode.window.showInformationMessage(`Active review: ${manifest.title}`, "Open frozen review");
+    if (choice === "Open frozen review") await this.openReview();
+  }
+
+  async switchReview(argument?: ReviewArgument): Promise<void> {
+    const folder = this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document);
+    if (!folder) return void vscode.window.showErrorMessage("Open a Markdown workspace first.");
+    const registered = await this.registeredReviews(folder);
+    let review = this.reviews.reviewFromArgument(argument);
+    if (!review) {
+      review = (await vscode.window.showQuickPick(registered.map((item) => ({
+        label: item.manifest.title,
+        description: item.reviewRoot,
+        review: item,
+      })), { title: "Choose active Markdown review", ignoreFocusOut: true }))?.review;
+    }
+    if (!review) return;
+    await this.registerReview(folder, review.reviewRoot);
+    this.reviewPanel?.dispose();
+    this.reviewPanel = undefined;
+    await this.refresh();
+  }
+
+  private async initializedReview(): Promise<{ folder: vscode.WorkspaceFolder; sourceRoot: string; storageRoot: string; manifest: ReviewManifest } | undefined> {
+    const folder = this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document);
+    if (!folder) {
+      void vscode.window.showErrorMessage("Open a Markdown workspace first.");
+      return undefined;
+    }
+    const storageRoot = await this.activeStorageRootFor(folder);
+    const manifest = await loadManifest(storageRoot);
+    if (!manifest) {
+      const choice = await vscode.window.showInformationMessage("This workspace has no Markdown review.", "Open review setup");
+      if (choice !== "Open review setup") return undefined;
+      await this.setupReview(true);
+      const createdRoot = await this.activeStorageRootFor(folder);
+      const created = await loadManifest(createdRoot);
+      return created ? { folder, sourceRoot: folder.uri.fsPath, storageRoot: createdRoot, manifest: created } : undefined;
+    }
+    return { folder, sourceRoot: folder.uri.fsPath, storageRoot, manifest };
+  }
+
+  private async activeReview(): Promise<ActiveReview | undefined> {
+    const initialized = await this.initializedReview();
+    if (!initialized) return undefined;
+    await this.refresh();
+    const state = this.threads.getState();
+    if (!this.currentRevision || !state) {
+      const choice = await vscode.window.showInformationMessage("Create an immutable revision before reviewing.", "Create revision");
+      if (choice === "Create revision") await this.createRevision();
+      return undefined;
+    }
+    return { ...initialized, revision: this.currentRevision, state };
+  }
+
+  async createRevision(): Promise<void> {
+    await this.setupReview(false);
+  }
+
+  private async createRevisionFromSelection(
+    folder: vscode.WorkspaceFolder,
+    storageRoot: string,
+    manifest: ReviewManifest,
+    actor: ActorRef,
+    selection: ReviewSetupResult,
+  ): Promise<void> {
+    const configuration = vscode.workspace.getConfiguration("openMarkdownReview", folder.uri);
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Freezing ${selection.documentPaths.length} selected Markdown document${selection.documentPaths.length === 1 ? "" : "s"}`, cancellable: false },
+      async () => {
+        const result = await createSnapshot(folder.uri.fsPath, manifest, actor, {
+          rootDocument: selection.rootDocument,
+          documentPaths: selection.documentPaths,
+          storageRoot,
+          remoteResourceLimitBytes: configuration.get<number>("remoteResourceLimitMb", 15) * 1024 * 1024,
+          allowInsecureHttp: configuration.get<boolean>("allowInsecureHttp", false),
+        });
+        this.output.appendLine(`Created revision ${result.revision.id} with ${result.revision.documents.length} documents, ${result.revision.resources.length} frozen resources, and ${result.revision.mermaidDiagrams.length} Mermaid diagrams.`);
+      },
+    );
+    await this.refresh();
+    const choice = await vscode.window.showInformationMessage("Auditable revision created.", "Open rendered review");
+    if (choice === "Open rendered review") await this.openReview();
+  }
+
+  async openReview(): Promise<RenderedReviewPanel | undefined> {
+    const review = await this.activeReview();
+    if (!review) return undefined;
+    if (this.reviewPanel?.isDisposed) this.reviewPanel = undefined;
+    this.reviewPanel = await RenderedReviewPanel.show(
+      this.context,
+      review.storageRoot,
+      review.manifest,
+      review.revision,
+      review.state,
+      {
+        addComment: (request) => this.addRenderedComment(request),
+        addSuggestion: (request) => this.addRenderedSuggestion(request),
+        replyThread: (threadId) => this.reply(threadId),
+        decideThread: (threadId) => this.decideThread(threadId),
+        decideSuggestion: (suggestionId, decision) => this.decideSuggestion(suggestionId, decision),
+        applySuggestion: (suggestionId) => this.applySuggestion(suggestionId),
+        approve: () => this.approve(),
+        reject: () => this.rejectReview(),
+        exportPdf: () => this.exportPdf(),
+        openThread: (threadId) => this.openThread(threadId),
+        openAttachment: (resourceId) => this.openAttachment(resourceId),
+        refresh: () => this.refresh(),
+      },
+    );
+    return this.reviewPanel;
+  }
+
+  async addComment(): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || !/\.md$/i.test(editor.document.fileName) || editor.selection.isEmpty) {
+      return void vscode.window.showErrorMessage("Open a Markdown document and select text to comment on.");
+    }
+    const review = await this.activeReview();
+    if (!review) return;
+    const relative = path.relative(review.sourceRoot, editor.document.uri.fsPath).split(path.sep).join("/");
+    const frozen = review.revision.documents.find((item) => item.path === relative);
+    if (!frozen) return void vscode.window.showErrorMessage("This document is not part of the current revision.");
+    const anchor = createAnchor(editor.document, editor.selection, review.sourceRoot);
+    if (anchor.documentDigest !== frozen.digest) {
+      const choice = await vscode.window.showWarningMessage("This file changed after the current revision. Review the frozen view or create a new revision.", "Open frozen view", "Create revision");
+      if (choice === "Open frozen view") await this.openReview();
+      if (choice === "Create revision") await this.createRevision();
+      return;
+    }
+    anchor.target = { kind: "text" };
+    await this.createCommentEvent(review, anchor);
+  }
+
+  async addSuggestion(): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || !/\.md$/i.test(editor.document.fileName) || editor.selection.isEmpty) {
+      return void vscode.window.showErrorMessage("Open a Markdown document and select the exact text to change.");
+    }
+    const review = await this.activeReview();
+    if (!review) return;
+    const relative = path.relative(review.sourceRoot, editor.document.uri.fsPath).split(path.sep).join("/");
+    const frozen = review.revision.documents.find((item) => item.path === relative);
+    if (!frozen) return void vscode.window.showErrorMessage("This document is not part of the current revision.");
+    const anchor = createAnchor(editor.document, editor.selection, review.sourceRoot);
+    if (anchor.documentDigest !== frozen.digest) {
+      return void vscode.window.showWarningMessage("Suggested edits must be anchored to the frozen revision. Open the frozen review or create a new revision.");
+    }
+    anchor.target = { kind: "text" };
+    await this.createSuggestionEvent(review, anchor);
+  }
+
+  private async anchorForRendered(review: ActiveReview, request: RenderedCommentRequest): Promise<MarkdownAnchor> {
+    const frozen = review.revision.documents.find((item) => item.path === request.document);
+    if (!frozen) throw new Error(`Frozen document not found: ${request.document}`);
+    const source = await readFile(resolveInsideReview(review.storageRoot, frozen.blobPath), "utf8");
+    const quote = request.quote?.trim() || request.label?.trim() || request.kind;
+    const preferred = offsetAtLine(source, request.lineStart ?? 0);
+    const located = locateQuote(source, quote, "", "", preferred);
+    const startOffset = located?.start ?? preferred;
+    const endOffset = located?.end ?? Math.min(source.length, preferred + quote.length);
+    let target: SemanticTarget;
+    switch (request.kind) {
+      case "image": target = { kind: "image", resourceId: request.resourceId ?? "unknown", ...(request.label ? { label: request.label } : {}) }; break;
+      case "mermaid": target = { kind: "mermaid", diagramId: request.diagramId ?? "unknown", ...(request.label ? { label: request.label } : {}) }; break;
+      case "table": target = { kind: "table", tableId: request.tableId ?? "unknown", ...(request.label ? { label: request.label } : {}) }; break;
+      case "table-cell": target = { kind: "table-cell", tableId: request.tableId ?? "unknown", row: request.row ?? 0, column: request.column ?? 0, ...(request.label ? { label: request.label } : {}) }; break;
+      default: target = { kind: "text" };
+    }
+    return {
+      document: request.document,
+      range: { start: pointAtOffset(source, startOffset), end: pointAtOffset(source, endOffset) },
+      quote: {
+        exact: quote,
+        prefix: source.slice(Math.max(0, startOffset - 80), startOffset),
+        suffix: source.slice(endOffset, endOffset + 80),
+      },
+      documentDigest: frozen.digest,
+      target,
+    };
+  }
+
+  private async addRenderedComment(request: RenderedCommentRequest): Promise<void> {
+    const review = await this.activeReview();
+    if (!review) return;
+    await this.createCommentEvent(review, await this.anchorForRendered(review, request));
+  }
+
+  private async addRenderedSuggestion(request: RenderedCommentRequest): Promise<void> {
+    const review = await this.activeReview();
+    if (!review) return;
+    if (request.kind !== "text") return void vscode.window.showErrorMessage("Suggested edits require an exact text selection.");
+    const anchor = await this.anchorForRendered(review, request);
+    const frozen = review.revision.documents.find((item) => item.path === anchor.document);
+    if (!frozen) throw new Error(`Frozen document not found: ${anchor.document}`);
+    const source = await readFile(resolveInsideReview(review.storageRoot, frozen.blobPath), "utf8");
+    if (!source.includes(anchor.quote.exact)) {
+      return void vscode.window.showWarningMessage("This rendered selection crosses Markdown formatting and cannot be mapped to one exact source string. Select it in the Markdown source editor and run Suggest Edit on Selection.");
+    }
+    await this.createSuggestionEvent(review, anchor);
+  }
+
+  private async createCommentEvent(review: ActiveReview, anchor: MarkdownAnchor): Promise<void> {
+    const body = await vscode.window.showInputBox({
+      title: `Comment on ${anchor.target?.kind ?? "text"}`,
+      prompt: "Markdown is supported",
+      ignoreFocusOut: true,
+      validateInput: (value) => (value.trim() ? undefined : "A comment is required"),
+    });
+    if (!body) return;
+    const actor = await this.actorFor(review.folder);
+    if (!actor) return;
+    const now = new Date();
+    const event: CommentCreatedEvent = {
+      schemaVersion: EVENT_SCHEMA_VERSION,
+      id: createId("evt", now),
+      type: "comment.created",
+      reviewId: review.manifest.reviewId,
+      revisionId: review.revision.id,
+      occurredAt: now.toISOString(),
+      actor,
+      threadId: createId("thread", now),
+      commentId: createId("comment", now),
+      anchor,
+      body: { format: "markdown", text: body.trim() },
+    };
+    await appendEvent(review.storageRoot, event);
+    await this.refresh();
+  }
+
+  private async createSuggestionEvent(review: ActiveReview, anchor: MarkdownAnchor): Promise<void> {
+    const selected = await vscode.window.showQuickPick([
+      { label: "Replace text", operationKind: "replace" as const, description: "Strike out the selected string and propose new text" },
+      { label: "Delete text", operationKind: "delete" as const, description: "Propose removing the selected string" },
+      { label: "Insert before", operationKind: "insert-before" as const, description: "Keep the selection and insert text before it" },
+      { label: "Insert after", operationKind: "insert-after" as const, description: "Keep the selection and insert text after it" },
+    ], { title: "Suggested edit", placeHolder: `Change “${anchor.quote.exact.slice(0, 70)}”`, ignoreFocusOut: true });
+    if (!selected) return;
+    let operation: SuggestedEditOperation;
+    if (selected.operationKind === "delete") {
+      operation = { kind: "delete" };
+    } else {
+      const replacement = await vscode.window.showInputBox({
+        title: selected.label,
+        prompt: "Proposed Markdown text",
+        ignoreFocusOut: true,
+        validateInput: (value) => (value.length ? undefined : "Proposed text is required"),
+      });
+      if (replacement === undefined) return;
+      operation = selected.operationKind === "replace"
+        ? { kind: "replace", replacement }
+        : { kind: "insert", replacement, position: selected.operationKind === "insert-before" ? "before" : "after" };
+    }
+    const rationale = await vscode.window.showInputBox({
+      title: "Reason for suggested edit",
+      prompt: "Required for the audit trail; Markdown is supported",
+      ignoreFocusOut: true,
+      validateInput: (value) => (value.trim() ? undefined : "A reason is required"),
+    });
+    if (!rationale) return;
+    const actor = await this.actorFor(review.folder);
+    if (!actor) return;
+    const now = new Date();
+    const event: SuggestionCreatedEvent = {
+      schemaVersion: EVENT_SCHEMA_VERSION,
+      id: createId("evt", now),
+      type: "suggestion.created",
+      reviewId: review.manifest.reviewId,
+      revisionId: review.revision.id,
+      occurredAt: now.toISOString(),
+      actor,
+      suggestionId: createId("suggestion", now),
+      anchor,
+      operation,
+      rationale: { format: "markdown", text: rationale.trim() },
+    };
+    await appendEvent(review.storageRoot, event);
+    await this.refresh();
+  }
+
+  private async chooseThread(argument?: ThreadArgument): Promise<ReviewThread | undefined> {
+    const direct = this.threads.threadFromArgument(argument);
+    if (direct) return direct;
+    const unresolved = this.threads.getState()?.unresolvedThreads ?? [];
+    if (!unresolved.length) return void vscode.window.showInformationMessage("There are no unresolved review threads.") as undefined;
+    return (await vscode.window.showQuickPick(
+      unresolved.map((thread) => ({ label: thread.root.body.text.replace(/\s+/g, " ").slice(0, 80), description: `${thread.root.anchor.document}:${thread.root.anchor.range.start.line + 1}`, thread })),
+      { title: "Choose a review thread", ignoreFocusOut: true },
+    ))?.thread;
+  }
+
+  async reply(argument?: ThreadArgument): Promise<void> {
+    const review = await this.activeReview();
+    if (!review) return;
+    const thread = await this.chooseThread(argument);
+    if (!thread) return;
+    const text = await vscode.window.showInputBox({ title: "Reply to review thread", prompt: "Markdown is supported", ignoreFocusOut: true, validateInput: (value) => (value.trim() ? undefined : "A reply is required") });
+    if (!text) return;
+    const actor = await this.actorFor(review.folder);
+    if (!actor) return;
+    const now = new Date();
+    const event: CommentRepliedEvent = {
+      schemaVersion: EVENT_SCHEMA_VERSION,
+      id: createId("evt", now),
+      type: "comment.replied",
+      reviewId: review.manifest.reviewId,
+      revisionId: thread.revisionId,
+      occurredAt: now.toISOString(),
+      actor,
+      threadId: thread.id,
+      commentId: createId("comment", now),
+      inReplyTo: thread.replies.at(-1)?.commentId ?? thread.root.commentId,
+      body: { format: "markdown", text: text.trim() },
+    };
+    await appendEvent(review.storageRoot, event);
+    await this.refresh();
+  }
+
+  async resolve(argument?: ThreadArgument): Promise<void> {
+    const review = await this.activeReview();
+    if (!review) return;
+    const thread = await this.chooseThread(argument);
+    if (!thread) return;
+    const actor = await this.actorFor(review.folder);
+    if (!actor) return;
+    const now = new Date();
+    const event: ThreadResolvedEvent = {
+      schemaVersion: EVENT_SCHEMA_VERSION,
+      id: createId("evt", now),
+      type: "thread.resolved",
+      reviewId: review.manifest.reviewId,
+      revisionId: thread.revisionId,
+      occurredAt: now.toISOString(),
+      actor,
+      threadId: thread.id,
+    };
+    await appendEvent(review.storageRoot, event);
+    await this.refresh();
+  }
+
+  async decideThread(argument?: ThreadArgument): Promise<void> {
+    const review = await this.activeReview();
+    if (!review) return;
+    const thread = await this.chooseThread(argument);
+    if (!thread) return;
+    const selected = await vscode.window.showQuickPick([
+      { label: "Accept comment", decision: "accepted" as ThreadDecision, description: "The comment is valid and will be addressed" },
+      { label: "Reject comment", decision: "rejected" as ThreadDecision, description: "The comment is not accepted" },
+      { label: "Won't fix", decision: "wont-fix" as ThreadDecision, description: "Valid concern, intentionally not changed" },
+      { label: "Duplicate", decision: "duplicate" as ThreadDecision, description: "Covered by another review thread" },
+    ], { title: "Decide review comment", ignoreFocusOut: true });
+    if (!selected) return;
+    const reason = await vscode.window.showInputBox({
+      title: selected.label,
+      prompt: selected.decision === "accepted" ? "Decision note (optional)" : "Reason required for the audit trail",
+      ignoreFocusOut: true,
+      validateInput: (value) => selected.decision !== "accepted" && !value.trim() ? "A reason is required" : undefined,
+    });
+    if (reason === undefined) return;
+    const actor = await this.actorFor(review.folder);
+    if (!actor) return;
+    const now = new Date();
+    const event: ThreadDecidedEvent = {
+      schemaVersion: EVENT_SCHEMA_VERSION,
+      id: createId("evt", now),
+      type: "thread.decided",
+      reviewId: review.manifest.reviewId,
+      revisionId: thread.revisionId,
+      occurredAt: now.toISOString(),
+      actor,
+      threadId: thread.id,
+      decision: selected.decision,
+      ...(reason.trim() ? { reason: reason.trim() } : {}),
+    };
+    await appendEvent(review.storageRoot, event);
+    await this.refresh();
+  }
+
+  async approve(): Promise<void> {
+    const review = await this.activeReview();
+    if (!review) return;
+    const unresolved = review.state.unresolvedThreads.filter((thread) => thread.revisionId === review.revision.id).length;
+    const openSuggestions = review.state.openSuggestions.filter((suggestion) => suggestion.revisionId === review.revision.id).length;
+    if (unresolved || openSuggestions) {
+      const choice = await vscode.window.showWarningMessage(`Approve revision with ${unresolved} unresolved thread${unresolved === 1 ? "" : "s"} and ${openSuggestions} open/conflicted suggestion${openSuggestions === 1 ? "" : "s"}?`, { modal: true }, "Approve anyway");
+      if (choice !== "Approve anyway") return;
+    }
+    const note = await vscode.window.showInputBox({ title: "Approve immutable revision", prompt: "Approval note (optional)", ignoreFocusOut: true });
+    if (note === undefined) return;
+    const actor = await this.actorFor(review.folder);
+    if (!actor) return;
+    const now = new Date();
+    const event: ReviewApprovedEvent = {
+      schemaVersion: EVENT_SCHEMA_VERSION,
+      id: createId("evt", now),
+      type: "review.approved",
+      reviewId: review.manifest.reviewId,
+      revisionId: review.revision.id,
+      occurredAt: now.toISOString(),
+      actor,
+      ...(note.trim() ? { note: note.trim() } : {}),
+    };
+    await appendEvent(review.storageRoot, event);
+    await this.refresh();
+  }
+
+  async rejectReview(): Promise<void> {
+    const review = await this.activeReview();
+    if (!review) return;
+    const reason = await vscode.window.showInputBox({
+      title: "Reject immutable revision",
+      prompt: "Reason required for the audit trail",
+      ignoreFocusOut: true,
+      validateInput: (value) => (value.trim() ? undefined : "A rejection reason is required"),
+    });
+    if (!reason) return;
+    const actor = await this.actorFor(review.folder);
+    if (!actor) return;
+    const now = new Date();
+    const event: ReviewRejectedEvent = {
+      schemaVersion: EVENT_SCHEMA_VERSION,
+      id: createId("evt", now),
+      type: "review.rejected",
+      reviewId: review.manifest.reviewId,
+      revisionId: review.revision.id,
+      occurredAt: now.toISOString(),
+      actor,
+      reason: reason.trim(),
+    };
+    await appendEvent(review.storageRoot, event);
+    await this.refresh();
+  }
+
+  private async chooseSuggestion(argument?: SuggestionArgument, statuses?: ReviewSuggestion["status"][]): Promise<ReviewSuggestion | undefined> {
+    const state = this.threads.getState();
+    const direct = this.threads.suggestionFromArgument(argument);
+    if (direct) return direct;
+    const candidates = [...(state?.suggestions.values() ?? [])].filter((item) =>
+      (!this.currentRevision || item.revisionId === this.currentRevision.id) && (!statuses || statuses.includes(item.status)),
+    );
+    if (!candidates.length) {
+      void vscode.window.showInformationMessage("There are no matching suggested edits.");
+      return undefined;
+    }
+    return (await vscode.window.showQuickPick(candidates.map((suggestion) => ({
+      label: suggestion.created.anchor.quote.exact.replace(/\s+/g, " ").slice(0, 70),
+      description: `${suggestion.status} · ${suggestion.created.anchor.document}:${suggestion.created.anchor.range.start.line + 1}`,
+      suggestion,
+    })), { title: "Choose a suggested edit", ignoreFocusOut: true }))?.suggestion;
+  }
+
+  async decideSuggestion(argument: SuggestionArgument, decision: "accepted" | "rejected"): Promise<void> {
+    const review = await this.activeReview();
+    if (!review) return;
+    const suggestion = await this.chooseSuggestion(argument, ["open", "conflicted"]);
+    if (!suggestion) return;
+    if (suggestion.revisionId !== review.revision.id) return void vscode.window.showErrorMessage("Open the suggestion's exact revision before deciding it.");
+    if (suggestion.status !== "open" && suggestion.status !== "conflicted") {
+      return void vscode.window.showInformationMessage(`This suggestion is already ${suggestion.status}.`);
+    }
+    const note = await vscode.window.showInputBox({
+      title: `${decision === "accepted" ? "Accept" : "Reject"} suggested edit`,
+      prompt: decision === "rejected" ? "Reason (recommended)" : "Decision note (optional)",
+      ignoreFocusOut: true,
+    });
+    if (note === undefined) return;
+    const actor = await this.actorFor(review.folder);
+    if (!actor) return;
+    const now = new Date();
+    const common = {
+      schemaVersion: EVENT_SCHEMA_VERSION,
+      id: createId("evt", now),
+      reviewId: review.manifest.reviewId,
+      revisionId: suggestion.revisionId,
+      occurredAt: now.toISOString(),
+      actor,
+      suggestionId: suggestion.id,
+    } as const;
+    const event: SuggestionAcceptedEvent | SuggestionRejectedEvent = decision === "accepted"
+      ? { ...common, type: "suggestion.accepted", ...(note.trim() ? { note: note.trim() } : {}) }
+      : { ...common, type: "suggestion.rejected", ...(note.trim() ? { reason: note.trim() } : {}) };
+    await appendEvent(review.storageRoot, event);
+    await this.refresh();
+  }
+
+  async applySuggestion(argument?: SuggestionArgument): Promise<void> {
+    const review = await this.activeReview();
+    if (!review) return;
+    const suggestion = await this.chooseSuggestion(argument, ["accepted"]);
+    if (!suggestion) return;
+    if (suggestion.revisionId !== review.revision.id) return void vscode.window.showErrorMessage("Open the suggestion's exact revision before applying it.");
+    if (suggestion.status !== "accepted") return void vscode.window.showErrorMessage("Only an accepted, conflict-free suggestion can be applied.");
+    const actor = await this.actorFor(review.folder);
+    if (!actor) return;
+    const uri = vscode.Uri.file(resolveInsideWorkspace(review.sourceRoot, suggestion.created.anchor.document));
+    const document = await vscode.workspace.openTextDocument(uri);
+    const source = document.getText();
+    const sourceVersion = document.version;
+    const anchor = suggestion.created.anchor;
+    const currentDigest = sha256(source);
+    if (currentDigest !== anchor.documentDigest) {
+      const choice = await vscode.window.showWarningMessage(
+        "The source changed after the reviewed revision. The client will apply only if the exact quoted text and context can still be located.",
+        { modal: true },
+        "Locate and apply",
+      );
+      if (choice !== "Locate and apply") return;
+    }
+    const preferred = offsetAtLine(source, anchor.range.start.line) + anchor.range.start.character;
+    const located = locateQuote(source, anchor.quote.exact, anchor.quote.prefix ?? "", anchor.quote.suffix ?? "", preferred);
+    if (!located) return void vscode.window.showErrorMessage("The anchored text can no longer be located safely. Create a new revision and suggestion.");
+    if (currentDigest !== anchor.documentDigest && located.confidence !== "context") {
+      return void vscode.window.showErrorMessage("The exact string still exists, but its surrounding context changed. Applying automatically would be ambiguous; create a new revision and suggestion.");
+    }
+    const operation = suggestion.created.operation;
+    const replacement = operation.kind === "delete"
+      ? ""
+      : operation.kind === "replace"
+        ? operation.replacement
+        : operation.position === "before"
+          ? `${operation.replacement}${anchor.quote.exact}`
+          : `${anchor.quote.exact}${operation.replacement}`;
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(uri, new vscode.Range(document.positionAt(located.start), document.positionAt(located.end)), replacement);
+    if (document.version !== sourceVersion || document.getText() !== source) {
+      return void vscode.window.showWarningMessage("The source changed while the suggestion was being prepared. Nothing was applied; try again after reviewing the latest text.");
+    }
+    if (!await vscode.workspace.applyEdit(edit)) throw new Error("VS Code could not apply the suggested edit.");
+    if (!await document.save()) throw new Error("The edited Markdown document could not be saved; no applied event was recorded.");
+    const changed = document.getText();
+    const now = new Date();
+    const event: SuggestionAppliedEvent = {
+      schemaVersion: EVENT_SCHEMA_VERSION,
+      id: createId("evt", now),
+      type: "suggestion.applied",
+      reviewId: review.manifest.reviewId,
+      revisionId: suggestion.revisionId,
+      occurredAt: now.toISOString(),
+      actor,
+      suggestionId: suggestion.id,
+      document: anchor.document,
+      sourceDigestBefore: sha256(source),
+      sourceDigestAfter: sha256(changed),
+    };
+    await appendEvent(review.storageRoot, event);
+    await this.refresh(document);
+    void vscode.window.showInformationMessage("Accepted edit applied and recorded. Create a new revision to review the updated document.");
+  }
+
+  async exportPdf(): Promise<void> {
+    const review = await this.activeReview();
+    if (!review) return;
+    const actor = await this.actorFor(review.folder);
+    if (!actor) return;
+    const panel = this.reviewPanel ?? (await this.openReview());
+    if (!panel) return;
+    const renderData = await panel.collectRenderData();
+    const result = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Creating auditable PDF locally", cancellable: false },
+      () => exportAuditPdf({
+        reviewRoot: review.storageRoot,
+        manifest: review.manifest,
+        revision: review.revision,
+        state: review.state,
+        events: this.loadedEvents,
+        renderData,
+        actor,
+        clientVersion: String(this.context.extension.packageJSON.version ?? "0.4.3"),
+      }),
+    );
+    await this.refresh();
+    const choice = await vscode.window.showInformationMessage(`Audit PDF created and hashed: ${result.relativePath}`, "Open PDF", "Reveal in folder");
+    if (choice === "Open PDF") await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(result.absolutePath));
+    if (choice === "Reveal in folder") await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(result.absolutePath));
+  }
+
+  async openThread(argument?: ThreadArgument): Promise<void> {
+    const thread = this.threads.threadFromArgument(argument);
+    if (!thread || !this.currentSourceRoot) return;
+    const source = resolveInsideWorkspace(this.currentSourceRoot, thread.root.anchor.document);
+    try {
+      await access(source);
+      await revealThread(this.currentSourceRoot, thread);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await this.openReview();
+      void vscode.window.showInformationMessage("The original Markdown source is not available on this machine. The immutable frozen review remains fully readable.");
+    }
+  }
+
+  async showThread(argument?: ThreadArgument): Promise<void> {
+    const thread = this.threads.threadFromArgument(argument);
+    if (!thread) return;
+    const panel = await this.openReview();
+    await panel?.revealThread(thread.id);
+  }
+
+  private async openAttachment(resourceId: string): Promise<void> {
+    if (!this.currentStorageRoot || !this.currentRevision) return;
+    const resource = this.currentRevision.resources.find((item) => item.id === resourceId && item.role === "attachment");
+    if (!resource) throw new Error(`Frozen attachment not found: ${resourceId}`);
+    const uri = vscode.Uri.file(resolveInsideReview(this.currentStorageRoot, resource.blobPath));
+    if (resource.mediaType === "application/pdf" || resource.mediaType.startsWith("text/") || resource.mediaType.startsWith("image/")) {
+      await vscode.commands.executeCommand("vscode.open", uri);
+      return;
+    }
+    const choice = await vscode.window.showWarningMessage(
+      `Open frozen ${resource.mediaType} attachment in its associated application? Treat attachments as untrusted.`,
+      { modal: true },
+      "Open attachment",
+    );
+    if (choice === "Open attachment") await vscode.env.openExternal(uri);
+  }
+
+  reportError(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    this.output.appendLine(`[${new Date().toISOString()}] ${message}`);
+    this.output.show(true);
+    if (!(error instanceof ReviewStoreError && message.includes("already initialized"))) void vscode.window.showErrorMessage(`Markdown Review: ${message}`);
+  }
+}
+
+export function activate(context: vscode.ExtensionContext): void {
+  const threads = new ThreadsProvider();
+  const reviews = new ReviewsProvider();
+  const controller = new ReviewController(context, threads, reviews);
+  context.subscriptions.push(
+    controller,
+    vscode.window.registerTreeDataProvider("openMarkdownReview.reviews", reviews),
+    vscode.window.registerTreeDataProvider("openMarkdownReview.threads", threads),
+  );
+  const register = (command: string, callback: (...args: unknown[]) => Promise<void>) => {
+    context.subscriptions.push(vscode.commands.registerCommand(command, (...args) => void callback(...args).catch((error) => controller.reportError(error))));
+  };
+  register("openMarkdownReview.initialize", () => controller.initialize());
+  register("openMarkdownReview.connectReview", () => controller.connectReview());
+  register("openMarkdownReview.switchReview", (argument) => controller.switchReview(argument as ReviewArgument));
+  register("openMarkdownReview.setup", () => controller.setupReview());
+  register("openMarkdownReview.createRevision", () => controller.createRevision());
+  register("openMarkdownReview.openReview", () => controller.openReview().then(() => undefined));
+  register("openMarkdownReview.addComment", () => controller.addComment());
+  register("openMarkdownReview.addSuggestion", () => controller.addSuggestion());
+  register("openMarkdownReview.reply", (argument) => controller.reply(argument as ThreadArgument));
+  register("openMarkdownReview.resolveThread", (argument) => controller.resolve(argument as ThreadArgument));
+  register("openMarkdownReview.decideThread", (argument) => controller.decideThread(argument as ThreadArgument));
+  register("openMarkdownReview.approveReview", () => controller.approve());
+  register("openMarkdownReview.rejectReview", () => controller.rejectReview());
+  register("openMarkdownReview.acceptSuggestion", (argument) => controller.decideSuggestion(argument as SuggestionArgument, "accepted"));
+  register("openMarkdownReview.rejectSuggestion", (argument) => controller.decideSuggestion(argument as SuggestionArgument, "rejected"));
+  register("openMarkdownReview.applySuggestion", (argument) => controller.applySuggestion(argument as SuggestionArgument));
+  register("openMarkdownReview.exportPdf", () => controller.exportPdf());
+  register("openMarkdownReview.refresh", () => controller.refresh());
+  register("openMarkdownReview.openThread", (argument) => controller.openThread(argument as ThreadArgument));
+  register("openMarkdownReview.showThread", (argument) => controller.showThread(argument as ThreadArgument));
+  void controller.refresh();
+}
+
+export function deactivate(): void {}

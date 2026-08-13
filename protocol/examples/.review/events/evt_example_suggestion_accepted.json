@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "0.3.0",
+  "reviewId": "review_example_architecture",
+  "revisionId": "revision_20260813T122955204Z_77c4c21ccab549a6bec195810779ca31",
+  "actor": {
+    "id": "mirek",
+    "displayName": "Mirek"
+  },
+  "id": "evt_example_suggestion_accepted",
+  "type": "suggestion.accepted",
+  "occurredAt": "2026-08-13T13:03:20.000Z",
+  "suggestionId": "suggestion_tables_wording",
+  "note": "Clearer wording accepted for the next revision."
+}
