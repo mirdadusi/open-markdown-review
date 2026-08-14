@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.6
+
+- Moved Windows validation and release packaging to a managed downstream Windows runner pool used by `task-orchestrator`.
+- Made cache-audit diagnostics retain protocol-canonical paths on Windows and safely retry transient cache-eviction failures.
+- Made native VSIX packaging invoke npm reliably under Node.js 22 on Windows and report process-launch failures explicitly.
+- Verified the full protocol, PDF, dependency-audit, portable-package, and `win32-x64` package pipeline on the enterprise runners.
+
 ## 0.4.5
 
 - Added a persistent validated event/content cache and immediate in-memory folding after local writes.

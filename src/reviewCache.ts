@@ -174,7 +174,11 @@ export class ReviewCache {
       .sort((left, right) => left[1].lastUsed - right[1].lastUsed);
     for (const [digest, entry] of candidates) {
       if (total <= this.maxContentBytes) break;
-      await unlink(this.contentPath(digest)).catch(() => undefined);
+      try {
+        await unlink(this.contentPath(digest));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") continue;
+      }
       this.contentIndex.delete(digest);
       this.verifiedLocalContent.delete(digest);
       total -= entry.byteLength;
@@ -335,7 +339,13 @@ export class ReviewCache {
           // Missing or corrupt derived data is rebuilt from the authoritative package.
         }
       }
-      const shared = await readFile(resolveInsideReview(reviewRoot, content.blobPath));
+      let shared: Buffer;
+      try {
+        shared = await readFile(resolveInsideReview(reviewRoot, content.blobPath));
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`${content.blobPath}: unable to read authoritative blob (${reason})`);
+      }
       if (shared.byteLength !== content.byteLength) throw new Error(`${content.blobPath}: byte length mismatch`);
       if (sha256(shared) !== content.digest) throw new Error(`${content.blobPath}: digest mismatch`);
       await mkdir(path.dirname(target), { recursive: true });

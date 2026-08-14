@@ -11,19 +11,39 @@ const require = createRequire(import.meta.url);
 const packageJson = require("../package.json");
 const repoRoot = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 
+function runNpm(args) {
+  if (process.platform === "win32") {
+    const npmCli = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+    return spawnSync(process.execPath, [npmCli, ...args], { cwd: repoRoot, stdio: "inherit" });
+  }
+  return spawnSync("npm", args, { cwd: repoRoot, stdio: "inherit" });
+}
+
+function assertCommandSucceeded(result, message) {
+  if (result.error) throw new Error(`${message}: ${result.error.message}`, { cause: result.error });
+  if (result.status !== 0) throw new Error(`${message} (exit code ${result.status ?? "unknown"}).`);
+}
+
 if (target === "win32-x64") {
+  const nativePackagePath = path.join(repoRoot, "node_modules", "@img", "sharp-win32-x64", "package.json");
+  const expectedVersion = packageJson.dependencies["@img/sharp-wasm32"];
   try {
-    require.resolve("@img/sharp-win32-x64");
+    const installed = JSON.parse(await readFile(nativePackagePath, "utf8"));
+    if (installed.version !== expectedVersion) throw new Error(`expected ${expectedVersion}, found ${installed.version}`);
   } catch {
-    throw new Error("The Windows-native Sharp package is missing. Build win32-x64 releases on a Windows x64 runner after npm ci.");
+    const staged = runNpm([
+      "install", "--no-save", "--package-lock=false", "--force", `@img/sharp-win32-x64@${expectedVersion}`,
+    ]);
+    assertCommandSucceeded(staged, "The Windows-native Sharp package could not be staged");
+    const installed = JSON.parse(await readFile(nativePackagePath, "utf8"));
+    if (installed.version !== expectedVersion) throw new Error(`The staged Windows-native Sharp version is ${installed.version}; expected ${expectedVersion}.`);
   }
 }
 
 const filename = `open-markdown-review-${packageJson.version}-${suffix}.vsix`;
-const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const args = ["run", "package:vsix", "--", ...(target ? ["--target", target] : []), "--out", filename];
-const packaged = spawnSync(npm, args, { cwd: repoRoot, stdio: "inherit" });
-if (packaged.status !== 0) process.exit(packaged.status ?? 1);
+const packaged = runNpm(args);
+assertCommandSucceeded(packaged, "VSIX packaging failed");
 
 const output = path.join(repoRoot, filename);
 const digest = createHash("sha256").update(await readFile(output)).digest("hex");
