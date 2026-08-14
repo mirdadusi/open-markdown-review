@@ -1,16 +1,18 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import Ajv2020 from "ajv/dist/2020";
 import addFormats from "ajv-formats";
 import { locateQuote } from "../src/protocol/anchor";
+import { mapWithConcurrency } from "../src/protocol/concurrency";
 import { detectEventRegression, retryDelay, reviewPackageFingerprint, semanticEventFingerprint, SerializedCoalescingRunner, SYNC_RETRY_DELAYS_MS } from "../src/liveSync";
 import { discoverReviewPackages } from "../src/protocol/discovery";
 import { documentsForPatterns, validateDocumentSelection } from "../src/protocol/scope";
 import { exportAuditPdf } from "../src/pdfExport";
+import { ReviewCache } from "../src/reviewCache";
 import { createSnapshot, inspectMarkdown, tableIdFor } from "../src/protocol/snapshot";
 import {
   appendEvent,
@@ -434,6 +436,28 @@ test("snapshot freezes only the documents selected in visual review setup", asyn
   }), /not found/);
 });
 
+test("later revisions reuse verified content-addressed blobs and reject corrupted targets", async (t) => {
+  const sourceRoot = await mkdtemp(path.join(os.tmpdir(), "omr-blob-reuse-"));
+  t.after(async () => rm(sourceRoot, { recursive: true, force: true }));
+  await writeFile(path.join(sourceRoot, "review.md"), "# Stable revision content\n");
+  const reviewRoot = path.join(sourceRoot, ".review");
+  const reviewManifest = manifest();
+  await initializeReview(reviewRoot, reviewManifest);
+  const first = await createSnapshot(sourceRoot, reviewManifest, actor, { rootDocument: "review.md", documentPaths: ["review.md"], storageRoot: reviewRoot });
+  const target = path.resolve(reviewRoot, ...first.revision.documents[0].blobPath.split("/"));
+  const before = await stat(target);
+  await createSnapshot(sourceRoot, reviewManifest, actor, { rootDocument: "review.md", documentPaths: ["review.md"], storageRoot: reviewRoot });
+  const after = await stat(target);
+  assert.equal(after.ino, before.ino);
+  assert.equal(after.mtimeMs, before.mtimeMs);
+
+  await writeFile(target, "corrupt immutable bytes\n");
+  await assert.rejects(
+    createSnapshot(sourceRoot, reviewManifest, actor, { rootDocument: "review.md", documentPaths: ["review.md"], storageRoot: reviewRoot }),
+    /Blob collision detected/,
+  );
+});
+
 test("file store creates one immutable file per event and rejects collisions", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "omr-store-"));
   t.after(async () => rm(root, { recursive: true, force: true }));
@@ -446,7 +470,123 @@ test("file store creates one immutable file per event and rejects collisions", a
   assert.equal(loaded.events.length, 10);
 });
 
-test("live synchronization fingerprint detects review frontier changes but ignores unrelated files", async (t) => {
+test("review cache reconciles only new event files and survives client restart", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "omr-cache-review-"));
+  const cacheRoot = await mkdtemp(path.join(os.tmpdir(), "omr-cache-local-"));
+  t.after(async () => Promise.all([
+    rm(root, { recursive: true, force: true }),
+    rm(cacheRoot, { recursive: true, force: true }),
+  ]));
+  const reviewManifest = manifest();
+  await initializeReview(root, reviewManifest);
+  await appendEvent(root, created());
+  const firstClient = new ReviewCache(cacheRoot);
+  const first = await firstClient.reconcileEvents(root, reviewManifest);
+  assert.equal(first.loadedFileCount, 1);
+  assert.equal(first.cachedEventCount, 0);
+  await firstClient.save(root, reviewManifest, first.events);
+
+  const restartedClient = new ReviewCache(cacheRoot);
+  const warm = await restartedClient.reconcileEvents(root, reviewManifest);
+  assert.equal(warm.loadedFileCount, 0);
+  assert.equal(warm.cachedEventCount, 1);
+  assert.deepEqual(warm.events.map((event) => event.id), [created().id]);
+
+  await appendEvent(root, replied());
+  const incremental = await restartedClient.reconcileEvents(root, reviewManifest);
+  assert.equal(incremental.loadedFileCount, 1);
+  assert.equal(incremental.cachedEventCount, 1);
+  assert.deepEqual(new Set(incremental.events.map((event) => event.id)), new Set([created().id, replied().id]));
+});
+
+test("review cache reloads watcher-directed rewrites and reports missing immutable events", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "omr-cache-regression-review-"));
+  const cacheRoot = await mkdtemp(path.join(os.tmpdir(), "omr-cache-regression-local-"));
+  t.after(async () => Promise.all([
+    rm(root, { recursive: true, force: true }),
+    rm(cacheRoot, { recursive: true, force: true }),
+  ]));
+  const reviewManifest = manifest();
+  await initializeReview(root, reviewManifest);
+  await appendEvent(root, created());
+  const cache = new ReviewCache(cacheRoot);
+  const initial = await cache.reconcileEvents(root, reviewManifest);
+  await cache.save(root, reviewManifest, initial.events);
+
+  const rewrittenComment = { ...created(), body: { format: "markdown" as const, text: "Rewritten on shared storage" } };
+  await writeFile(path.join(root, "events", `${created().id}.json`), `${JSON.stringify(rewrittenComment)}\n`);
+  const rewritten = await cache.reconcileEvents(root, reviewManifest, { reloadEventNames: [`${created().id}.json`] });
+  assert.equal(rewritten.loadedFileCount, 1);
+  assert.deepEqual(detectEventRegression(initial.events, rewritten.events).rewritten.map((event) => event.id), [created().id]);
+
+  await rm(path.join(root, "events", `${created().id}.json`));
+  const missing = await cache.reconcileEvents(root, reviewManifest);
+  assert.deepEqual(missing.missingCachedEvents.map((event) => event.id), [created().id]);
+});
+
+test("content-addressed cache serves frozen Markdown after the shared blob becomes unavailable", async (t) => {
+  const sourceRoot = await mkdtemp(path.join(os.tmpdir(), "omr-cache-content-source-"));
+  const cacheRoot = await mkdtemp(path.join(os.tmpdir(), "omr-cache-content-local-"));
+  t.after(async () => Promise.all([
+    rm(sourceRoot, { recursive: true, force: true }),
+    rm(cacheRoot, { recursive: true, force: true }),
+  ]));
+  await writeFile(path.join(sourceRoot, "review.md"), "# Cached review\n\nFrozen over a slow share.\n");
+  const reviewRoot = path.join(sourceRoot, ".review-cache-content");
+  const reviewManifest = manifest();
+  await initializeReview(reviewRoot, reviewManifest);
+  const snapshot = await createSnapshot(sourceRoot, reviewManifest, actor, {
+    rootDocument: "review.md",
+    documentPaths: ["review.md"],
+    storageRoot: reviewRoot,
+  });
+  const firstClient = new ReviewCache(cacheRoot);
+  const cold = await firstClient.materializeRevision(reviewRoot, snapshot.revision);
+  assert.deepEqual(cold.errors, []);
+  assert.equal(cold.sharedReads, 1);
+  const frozenDocument = snapshot.revision.documents[0];
+  await rm(path.resolve(reviewRoot, ...frozenDocument.blobPath.split("/")));
+
+  const restartedClient = new ReviewCache(cacheRoot);
+  const warm = await restartedClient.materializeRevision(reviewRoot, snapshot.revision);
+  assert.deepEqual(warm.errors, []);
+  assert.equal(warm.sharedReads, 0);
+  assert.equal(warm.localHits, 1);
+  assert.equal(await readFile(warm.paths.get(frozenDocument.digest)!, "utf8"), "# Cached review\n\nFrozen over a slow share.\n");
+  const audited = await restartedClient.materializeRevision(reviewRoot, snapshot.revision, { auditShared: true });
+  assert.ok(audited.errors.some((error) => error.includes(frozenDocument.blobPath)), "a full audit must not trust local bytes when shared content is missing");
+});
+
+test("content cache prunes least-recently-used inactive blobs while protecting the active revision", async (t) => {
+  const sourceRoot = await mkdtemp(path.join(os.tmpdir(), "omr-cache-prune-source-"));
+  const cacheRoot = await mkdtemp(path.join(os.tmpdir(), "omr-cache-prune-local-"));
+  t.after(async () => Promise.all([
+    rm(sourceRoot, { recursive: true, force: true }),
+    rm(cacheRoot, { recursive: true, force: true }),
+  ]));
+  const reviewRoot = path.join(sourceRoot, ".review-cache-prune");
+  const reviewManifest = manifest();
+  await initializeReview(reviewRoot, reviewManifest);
+  await writeFile(path.join(sourceRoot, "review.md"), `# First\n\n${"A".repeat(48)}\n`);
+  const first = await createSnapshot(sourceRoot, reviewManifest, actor, { rootDocument: "review.md", documentPaths: ["review.md"], storageRoot: reviewRoot });
+  const cache = new ReviewCache(cacheRoot, { maxContentBytes: 80 });
+  assert.deepEqual((await cache.materializeRevision(reviewRoot, first.revision)).errors, []);
+
+  await writeFile(path.join(sourceRoot, "review.md"), `# Second\n\n${"B".repeat(48)}\n`);
+  const second = await createSnapshot(sourceRoot, reviewManifest, actor, { rootDocument: "review.md", documentPaths: ["review.md"], storageRoot: reviewRoot });
+  assert.deepEqual((await cache.materializeRevision(reviewRoot, second.revision)).errors, []);
+  const firstDocument = first.revision.documents[0];
+  await rm(path.resolve(reviewRoot, ...firstDocument.blobPath.split("/")));
+
+  const restarted = new ReviewCache(cacheRoot, { maxContentBytes: 80 });
+  const evicted = await restarted.materializeRevision(reviewRoot, first.revision);
+  assert.ok(evicted.errors.some((error) => error.includes(firstDocument.blobPath)));
+  const active = await restarted.materializeRevision(reviewRoot, second.revision);
+  assert.deepEqual(active.errors, []);
+  assert.equal(active.localHits, 1);
+});
+
+test("live synchronization fingerprint uses only the immutable event publication frontier", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "omr-live-sync-"));
   t.after(async () => rm(root, { recursive: true, force: true }));
   const reviewManifest = manifest();
@@ -458,7 +598,23 @@ test("live synchronization fingerprint detects review frontier changes but ignor
   const afterEvent = await reviewPackageFingerprint(root, reviewManifest);
   assert.notEqual(afterEvent, initial);
   await writeFile(path.join(root, "revisions", "incoming.json"), "{}\n");
+  assert.equal(await reviewPackageFingerprint(root, reviewManifest), afterEvent, "an unpublished revision is not visible review state");
+  await appendEvent(root, replied());
   assert.notEqual(await reviewPackageFingerprint(root, reviewManifest), afterEvent);
+});
+
+test("bounded I/O mapping never exceeds its configured concurrency", async () => {
+  let active = 0;
+  let maximum = 0;
+  const values = await mapWithConcurrency([...Array(16).keys()], 3, async (value) => {
+    active += 1;
+    maximum = Math.max(maximum, active);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    active -= 1;
+    return value * 2;
+  });
+  assert.equal(maximum, 3);
+  assert.deepEqual(values, [...Array(16).keys()].map((value) => value * 2));
 });
 
 test("live synchronization semantic fingerprints are order-independent and retry backoff is bounded", () => {

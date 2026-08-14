@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import MarkdownIt from "markdown-it";
 import type Token from "markdown-it/lib/token.mjs";
+import { DEFAULT_IO_CONCURRENCY, mapWithConcurrency } from "./concurrency";
 import { createId } from "./ids";
 import { appendEvent, sha256, writeBlob, writeRevision } from "./store";
 import {
@@ -29,6 +30,8 @@ export interface SnapshotOptions {
   remoteResourceLimitBytes?: number;
   allowInsecureHttp?: boolean;
   fetchImplementation?: typeof fetch;
+  ioConcurrency?: number;
+  onProgress?: (message: string, completed: number, total: number) => void;
 }
 
 export interface SnapshotResult {
@@ -154,25 +157,30 @@ export function inspectMarkdown(source: string, document: string): ParsedDocumen
   };
 }
 
-export async function findMarkdownFiles(workspaceRoot: string): Promise<string[]> {
+export async function findMarkdownFiles(workspaceRoot: string, concurrency = DEFAULT_IO_CONCURRENCY): Promise<string[]> {
   const result: string[] = [];
-  async function visit(directory: string): Promise<void> {
-    let entries;
-    try {
-      entries = await readdir(directory, { withFileTypes: true });
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "EACCES" || code === "EPERM") return;
-      throw error;
+  let directories = [workspaceRoot];
+  while (directories.length) {
+    const levels = await mapWithConcurrency(directories, concurrency, async (directory) => {
+      try {
+        return await readdir(directory, { withFileTypes: true });
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "EACCES" || code === "EPERM") return [];
+        throw error;
+      }
+    });
+    const next: string[] = [];
+    for (let index = 0; index < directories.length; index += 1) {
+      for (const entry of levels[index]) {
+        if (entry.isSymbolicLink()) continue;
+        const absolute = path.join(directories[index], entry.name);
+        if (entry.isDirectory() && !EXCLUDED_DIRECTORIES.has(entry.name)) next.push(absolute);
+        else if (entry.isFile() && /\.md$/i.test(entry.name)) result.push(toPosix(path.relative(workspaceRoot, absolute)));
+      }
     }
-    for (const entry of entries) {
-      if (entry.isSymbolicLink()) continue;
-      const absolute = path.join(directory, entry.name);
-      if (entry.isDirectory() && !EXCLUDED_DIRECTORIES.has(entry.name)) await visit(absolute);
-      else if (entry.isFile() && /\.md$/i.test(entry.name)) result.push(toPosix(path.relative(workspaceRoot, absolute)));
-    }
+    directories = next;
   }
-  await visit(workspaceRoot);
   return result.sort();
 }
 
@@ -298,24 +306,6 @@ async function captureResource(
   };
 }
 
-async function mapWithConcurrency<T, R>(
-  values: readonly T[],
-  concurrency: number,
-  worker: (value: T) => Promise<R>,
-): Promise<R[]> {
-  const result = new Array<R>(values.length);
-  let cursor = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, values.length) }, async () => {
-      while (cursor < values.length) {
-        const index = cursor++;
-        result[index] = await worker(values[index]);
-      }
-    }),
-  );
-  return result;
-}
-
 export async function createSnapshot(
   workspaceRoot: string,
   manifest: ReviewManifest,
@@ -323,22 +313,49 @@ export async function createSnapshot(
   options: SnapshotOptions,
 ): Promise<SnapshotResult> {
   const storageRoot = options.storageRoot ?? path.join(workspaceRoot, ".review");
-  const documentPaths = await findMarkdownFiles(workspaceRoot);
-  const requested = options.documentPaths?.length ? [...new Set(options.documentPaths)].sort() : documentPaths;
-  const unknown = requested.filter((item) => !documentPaths.includes(item));
+  const ioConcurrency = options.ioConcurrency ?? DEFAULT_IO_CONCURRENCY;
+  const requested = options.documentPaths?.length
+    ? [...new Set(options.documentPaths)].sort()
+    : await findMarkdownFiles(workspaceRoot, ioConcurrency);
+  const unknown: string[] = [];
+  await mapWithConcurrency(requested, ioConcurrency, async (item) => {
+    if (!item || item.includes("\\") || path.isAbsolute(item) || item.split("/").includes("..") || !/\.md$/i.test(item)) {
+      unknown.push(item);
+      return;
+    }
+    const absolute = path.resolve(workspaceRoot, ...item.split("/"));
+    const relative = path.relative(path.resolve(workspaceRoot), absolute);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      unknown.push(item);
+      return;
+    }
+    try {
+      if (!(await stat(absolute)).isFile()) unknown.push(item);
+    } catch {
+      unknown.push(item);
+    }
+  });
   if (unknown.length) throw new Error(`Selected Markdown document not found: ${unknown.join(", ")}`);
   if (!requested.length) throw new Error("Select at least one Markdown document for the revision.");
   if (!requested.includes(options.rootDocument)) throw new Error(`Root document is not in the selected review scope: ${options.rootDocument}`);
 
-  const documents = [];
+  let completed = 0;
+  const documentCaptures = await mapWithConcurrency(requested, ioConcurrency, async (documentPath) => {
+    const bytes = await readFile(path.resolve(workspaceRoot, ...documentPath.split("/")));
+    const result = {
+      document: { path: documentPath, ...(await writeBlob(storageRoot, bytes, "text/markdown", manifest.blobDirectory)) },
+      parsed: inspectMarkdown(bytes.toString("utf8"), documentPath),
+    };
+    completed += 1;
+    options.onProgress?.(`Frozen ${documentPath}`, completed, requested.length);
+    return result;
+  });
+  const documents = documentCaptures.map((capture) => capture.document);
   const images: DiscoveredResource[] = [];
   const attachments: DiscoveredResource[] = [];
   const externalReferences: ExternalReference[] = [];
   const mermaidDiagrams: MermaidDiagram[] = [];
-  for (const documentPath of requested) {
-    const bytes = await readFile(path.resolve(workspaceRoot, ...documentPath.split("/")));
-    documents.push({ path: documentPath, ...(await writeBlob(storageRoot, bytes, "text/markdown", manifest.blobDirectory)) });
-    const parsed = inspectMarkdown(bytes.toString("utf8"), documentPath);
+  for (const { parsed } of documentCaptures) {
     images.push(...parsed.images);
     attachments.push(...parsed.attachments);
     externalReferences.push(...parsed.externalReferences);
@@ -347,9 +364,13 @@ export async function createSnapshot(
 
   const diagnostics: RevisionDiagnostic[] = [];
   const discoveredResources = [...images, ...attachments];
-  const captures = await mapWithConcurrency(discoveredResources, 4, async (resource) => {
+  const totalWork = requested.length + discoveredResources.length;
+  const captures = await mapWithConcurrency(discoveredResources, ioConcurrency, async (resource) => {
     try {
-      return await captureResource(workspaceRoot, storageRoot, manifest.blobDirectory, resource, options);
+      const captured = await captureResource(workspaceRoot, storageRoot, manifest.blobDirectory, resource, options);
+      completed += 1;
+      options.onProgress?.(`Frozen ${resource.reference}`, completed, totalWork);
+      return captured;
     } catch (error) {
       diagnostics.push({
         severity: "error",
@@ -392,6 +413,7 @@ export async function createSnapshot(
     revisionId: revision.id,
     ...stored,
   };
-  await appendEvent(storageRoot, event);
+  options.onProgress?.("Publishing immutable revision", totalWork, totalWork);
+  await appendEvent(storageRoot, event, manifest);
   return { revision, event };
 }

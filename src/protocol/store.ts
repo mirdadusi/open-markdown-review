@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { copyFile, link, mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { DEFAULT_IO_CONCURRENCY, mapWithConcurrency } from "./concurrency";
 import { isSafeEventId } from "./ids";
 import {
   ReviewEvent,
@@ -18,6 +19,16 @@ export interface LoadedEvents {
 }
 
 export class ReviewStoreError extends Error {}
+
+/** Filesystem roots where an exclusive copy succeeded after hard-link failure. */
+const copyPublicationRoots = new Set<string>();
+
+function publicationStrategyRoot(target: string): string {
+  const resolved = path.resolve(target);
+  if (process.platform === "win32") return path.parse(resolved).root.toLowerCase();
+  const segments = resolved.split(path.sep).filter(Boolean);
+  return path.join(path.sep, ...segments.slice(0, Math.min(2, segments.length)));
+}
 
 export function sha256(content: Uint8Array | string): Sha256Digest {
   return `sha256:${createHash("sha256").update(content).digest("hex")}`;
@@ -65,14 +76,21 @@ async function writeExclusiveAtomic(target: string, content: Uint8Array | string
   await writeFile(temporary, content, { flag: "wx" });
   try {
     // A hard link is an atomic, exclusive publish on the same filesystem.
-    try {
-      await link(temporary, target);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (!["EPERM", "EACCES", "ENOSYS", "ENOTSUP", "EOPNOTSUPP", "EXDEV"].includes(code ?? "")) throw error;
-      // Some mounted SMB/NAS filesystems do not expose hard links. COPYFILE_EXCL
-      // retains collision safety; readers already ignore incomplete sync files.
+    const filesystemRoot = publicationStrategyRoot(target);
+    if (copyPublicationRoots.has(filesystemRoot)) {
       await copyFile(temporary, target, constants.COPYFILE_EXCL);
+    } else {
+      try {
+        await link(temporary, target);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (!["EPERM", "EACCES", "ENOSYS", "ENOTSUP", "EOPNOTSUPP", "EXDEV"].includes(code ?? "")) throw error;
+        // Some mounted SMB/NAS filesystems do not expose hard links. COPYFILE_EXCL
+        // retains collision safety; a successful fallback is remembered so later
+        // writes avoid another high-latency unsupported operation on that root.
+        await copyFile(temporary, target, constants.COPYFILE_EXCL);
+        copyPublicationRoots.add(filesystemRoot);
+      }
     }
   } finally {
     await unlink(temporary).catch(() => undefined);
@@ -154,12 +172,24 @@ export async function writeBlob(
   const hash = digest.slice("sha256:".length);
   const blobPath = `${blobDirectory}/${hash.slice(0, 2)}/${hash}`;
   const target = resolveInsideReview(reviewRoot, blobPath);
+  // Later revisions commonly reuse most documents and images. Verify the
+  // existing immutable target before creating a temporary copy so a network
+  // share does not receive the same large blob twice on every revision.
+  try {
+    const existing = await readFile(target);
+    if (existing.byteLength !== content.byteLength || sha256(existing) !== digest) {
+      throw new ReviewStoreError(`Blob collision detected for ${digest}`);
+    }
+    return { digest, blobPath, mediaType, byteLength: content.byteLength };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   try {
     await writeExclusiveAtomic(target, content);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     const existing = await readFile(target);
-    if (sha256(existing) !== digest) throw new ReviewStoreError(`Blob collision detected for ${digest}`);
+    if (existing.byteLength !== content.byteLength || sha256(existing) !== digest) throw new ReviewStoreError(`Blob collision detected for ${digest}`);
   }
   return { digest, blobPath, mediaType, byteLength: content.byteLength };
 }
@@ -198,11 +228,11 @@ export async function loadRevision(
 }
 
 /** Persists one action to one exclusive-create file; existing files are never edited. */
-export async function appendEvent(reviewRoot: string, event: ReviewEvent): Promise<string> {
+export async function appendEvent(reviewRoot: string, event: ReviewEvent, knownManifest?: ReviewManifest): Promise<string> {
   const validation = validateEvent(event);
   if (!validation.ok) throw new ReviewStoreError(validation.errors.join("; "));
   if (!isSafeEventId(event.id)) throw new ReviewStoreError("Event id is not safe for use as a filename.");
-  const manifest = await loadManifest(reviewRoot);
+  const manifest = knownManifest ?? await loadManifest(reviewRoot);
   if (!manifest) throw new ReviewStoreError("Initialize the review before adding events.");
   if (event.reviewId !== manifest.reviewId) throw new ReviewStoreError("Event reviewId does not match the manifest.");
   const capabilityErrors = validateEventCapabilities(manifest, event);
@@ -212,23 +242,30 @@ export async function appendEvent(reviewRoot: string, event: ReviewEvent): Promi
   return target;
 }
 
-export async function loadEvents(reviewRoot: string, reviewId?: string): Promise<LoadedEvents> {
-  const manifest = await loadManifest(reviewRoot);
-  const eventsDirectory = manifest
-    ? resolveInsideReview(reviewRoot, manifest.eventDirectory)
-    : reviewPaths(reviewRoot).events;
+export async function listEventNames(reviewRoot: string, eventDirectory = "events"): Promise<string[]> {
+  const eventsDirectory = resolveInsideReview(reviewRoot, eventDirectory);
   let names: string[];
   try {
     names = (await readdir(eventsDirectory)).filter((name) => name.endsWith(".json")).sort();
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { events: [], warnings: [] };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
+  return names;
+}
 
+/** Loads an explicit immutable event-file subset without rediscovering the manifest. */
+export async function loadEventFiles(
+  reviewRoot: string,
+  names: readonly string[],
+  reviewId?: string,
+  eventDirectory = "events",
+  concurrency = DEFAULT_IO_CONCURRENCY,
+): Promise<LoadedEvents> {
+  const eventsDirectory = resolveInsideReview(reviewRoot, eventDirectory);
   const events: ReviewEvent[] = [];
   const warnings: string[] = [];
-  await Promise.all(
-    names.map(async (name) => {
+  await mapWithConcurrency(names, concurrency, async (name) => {
       try {
         const value: unknown = JSON.parse(await readFile(path.join(eventsDirectory, name), "utf8"));
         const validation = validateEvent(value);
@@ -239,17 +276,23 @@ export async function loadEvents(reviewRoot: string, reviewId?: string): Promise
       } catch (error) {
         warnings.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
       }
-    }),
-  );
+  });
   return { events, warnings: warnings.sort() };
+}
+
+export async function loadEvents(reviewRoot: string, reviewId?: string): Promise<LoadedEvents> {
+  const manifest = await loadManifest(reviewRoot);
+  const eventDirectory = manifest?.eventDirectory ?? "events";
+  return loadEventFiles(reviewRoot, await listEventNames(reviewRoot, eventDirectory), reviewId, eventDirectory);
 }
 
 export async function verifyRevisionContent(
   reviewRoot: string,
   revision: ReviewRevision,
+  concurrency = DEFAULT_IO_CONCURRENCY,
 ): Promise<string[]> {
   const errors: string[] = [];
-  for (const content of [...revision.documents, ...revision.resources]) {
+  await mapWithConcurrency([...revision.documents, ...revision.resources], concurrency, async (content) => {
     try {
       const bytes = await readFile(resolveInsideReview(reviewRoot, content.blobPath));
       if (sha256(bytes) !== content.digest) errors.push(`${content.blobPath}: digest mismatch`);
@@ -257,6 +300,6 @@ export async function verifyRevisionContent(
     } catch (error) {
       errors.push(`${content.blobPath}: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }
+  });
   return errors;
 }

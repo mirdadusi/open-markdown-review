@@ -11,8 +11,8 @@ import {
   SerializedCoalescingRunner,
   semanticEventFingerprint,
 } from "./liveSync";
-import { exportAuditPdf } from "./pdfExport";
 import { createId } from "./protocol/ids";
+import { mapWithConcurrency } from "./protocol/concurrency";
 import { discoverReviewPackages } from "./protocol/discovery";
 import { locateQuote, offsetAtLine, pointAtOffset } from "./protocol/anchor";
 import { createSnapshot, findMarkdownFiles } from "./protocol/snapshot";
@@ -22,14 +22,12 @@ import { validateEventAgainstRevision, validateEventCapabilities, validateEventG
 import {
   appendEvent,
   initializeReview,
-  loadEvents,
   loadManifest,
   loadRevision,
   resolveInsideReview,
   resolveInsideWorkspace,
   ReviewStoreError,
   sha256,
-  verifyRevisionContent,
 } from "./protocol/store";
 import {
   ActorRef,
@@ -42,11 +40,13 @@ import {
   ReviewApprovedEvent,
   ReviewRejectedEvent,
   ReviewManifest,
+  ReviewEvent,
   ReviewRevision,
   ReviewSuggestion,
   ReviewState,
   ReviewThread,
   SemanticTarget,
+  Sha256Digest,
   SuggestedEditOperation,
   SuggestionAcceptedEvent,
   SuggestionAppliedEvent,
@@ -57,6 +57,7 @@ import {
   ThreadResolvedEvent,
 } from "./protocol/types";
 import { RenderedCommentRequest, RenderedReviewPanel } from "./renderedView";
+import { ReviewCache } from "./reviewCache";
 import { RegisteredReview, ReviewArgument, ReviewsProvider } from "./reviewsView";
 import { ReviewSetupPanel, ReviewSetupResult } from "./setupView";
 import { SuggestionArgument, ThreadArgument, ThreadsProvider } from "./threadsView";
@@ -69,6 +70,7 @@ interface ActiveReview {
   manifest: ReviewManifest;
   revision: ReviewRevision;
   state: ReviewState;
+  contentPaths: ReadonlyMap<Sha256Digest, string>;
 }
 
 type RefreshTrigger = "manual" | "startup" | "write" | "filesystem" | "poll" | "retry";
@@ -76,6 +78,7 @@ type RefreshTrigger = "manual" | "startup" | "write" | "filesystem" | "poll" | "
 interface RefreshRequest {
   document?: vscode.TextDocument;
   trigger: RefreshTrigger;
+  changedPaths?: string[];
 }
 
 const REFRESH_PRIORITY: Record<RefreshTrigger, number> = { retry: 0, startup: 0, poll: 1, filesystem: 2, write: 3, manual: 3 };
@@ -86,7 +89,6 @@ function isBackgroundRefresh(trigger: RefreshTrigger): boolean {
 
 class ReviewController implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
-  private readonly workspaceWatchers: vscode.FileSystemWatcher[] = [];
   private readonly packageWatchers: vscode.FileSystemWatcher[] = [];
   private readonly output = vscode.window.createOutputChannel("Open Markdown Review");
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
@@ -95,44 +97,71 @@ class ReviewController implements vscode.Disposable {
   private currentStorageRoot?: string;
   private currentManifest?: ReviewManifest;
   private currentRevision?: ReviewRevision;
-  private loadedEvents = [] as Awaited<ReturnType<typeof loadEvents>>["events"];
+  private currentContentPaths = new Map<Sha256Digest, string>();
+  private loadedEvents: ReviewEvent[] = [];
   private currentSemanticFingerprint?: string;
   private observedPackageFingerprint?: string;
   private watchedPackageKey?: string;
   private refreshTimer?: NodeJS.Timeout;
+  private readonly pendingChangedPaths = new Set<string>();
   private pollTimer?: NodeJS.Timeout;
   private retryTimer?: NodeJS.Timeout;
   private retryFingerprint?: string;
   private retryAttempt = 0;
+  private backgroundRefreshSuspended = 0;
+  private readonly registeredReviewCache = new Map<string, RegisteredReview[]>();
+  private readonly reviewCache: ReviewCache;
+  private stateOperationTail: Promise<void> = Promise.resolve();
   private syncStatus: LiveSyncStatus = {
     phase: "checking",
     label: "Starting live sync",
     detail: "Connecting to the active review package.",
   };
   private readonly refreshQueue = new SerializedCoalescingRunner<RefreshRequest>(
-    (request) => this.performRefresh(request.document, request.trigger),
+    (request) => this.withStateLock(() => this.performRefresh(request.document, request.trigger, request.changedPaths)),
     (current, next) => ({
       document: next.document ?? current?.document,
       trigger: !current || REFRESH_PRIORITY[next.trigger] >= REFRESH_PRIORITY[current.trigger] ? next.trigger : current.trigger,
+      changedPaths: [...new Set([...(current?.changedPaths ?? []), ...(next.changedPaths ?? [])])],
     }),
   );
   private reviewPanel?: RenderedReviewPanel;
   private readonly commentDecorations: CommentDecorations;
+
+  private async withStateLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.stateOperationTail;
+    let release!: () => void;
+    this.stateOperationTail = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly threads: ThreadsProvider,
     private readonly reviews: ReviewsProvider,
   ) {
+    const configuration = vscode.workspace.getConfiguration("openMarkdownReview");
+    const cacheSizeMb = configuration.get<number>("cache.maxSizeMb", 512);
+    const ioConcurrency = configuration.get<number>("io.maxConcurrency", 4);
+    this.reviewCache = new ReviewCache(context.globalStorageUri.fsPath, {
+      maxContentBytes: cacheSizeMb * 1024 * 1024,
+      ioConcurrency,
+    });
     this.commentDecorations = new CommentDecorations(context);
     this.status.command = "openMarkdownReview.openReview";
     this.disposables.push(this.output, this.status, this.commentDecorations);
-    this.configureWorkspaceWatchers();
     this.disposables.push(
-      vscode.workspace.onDidChangeWorkspaceFolders(() => this.configureWorkspaceWatchers()),
+      vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        this.registeredReviewCache.clear();
+        void this.refresh(undefined, "startup");
+      }),
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (!event.affectsConfiguration("openMarkdownReview.liveSync")) return;
-        this.configureWorkspaceWatchers();
         this.watchedPackageKey = undefined;
         if (this.currentStorageRoot && this.currentManifest) this.configurePackageWatchers(this.currentStorageRoot, this.currentManifest);
         this.scheduleNextPoll(0);
@@ -146,7 +175,6 @@ class ReviewController implements vscode.Disposable {
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     if (this.pollTimer) clearTimeout(this.pollTimer);
     if (this.retryTimer) clearTimeout(this.retryTimer);
-    this.disposeWatchers(this.workspaceWatchers);
     this.disposeWatchers(this.packageWatchers);
     for (const disposable of this.disposables) disposable.dispose();
   }
@@ -170,33 +198,24 @@ class ReviewController implements vscode.Disposable {
     while (watchers.length) watchers.pop()?.dispose();
   }
 
-  private attachWatcher(watcher: vscode.FileSystemWatcher, target: vscode.FileSystemWatcher[]): void {
-    const changed = () => this.scheduleRefresh("filesystem");
+  private attachWatcher(
+    watcher: vscode.FileSystemWatcher,
+    target: vscode.FileSystemWatcher[],
+  ): void {
+    const changed = (uri: vscode.Uri) => {
+      this.scheduleRefresh("filesystem", undefined, uri.fsPath);
+    };
     watcher.onDidCreate(changed);
     watcher.onDidChange(changed);
     watcher.onDidDelete(changed);
     target.push(watcher);
   }
 
-  private configureWorkspaceWatchers(): void {
-    this.disposeWatchers(this.workspaceWatchers);
-    const folder = this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document);
-    if (!this.liveSyncConfiguration(folder).enabled) return;
-    for (const workspace of vscode.workspace.workspaceFolders ?? []) {
-      for (const pattern of ["**/manifest.json", "**/events/*.json", "**/revisions/*.json"]) {
-        this.attachWatcher(
-          vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(workspace, pattern)),
-          this.workspaceWatchers,
-        );
-      }
-    }
-  }
-
   private configurePackageWatchers(storageRoot: string, manifest: ReviewManifest): void {
     const folder = this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document);
     const configuration = this.liveSyncConfiguration(folder);
     const key = configuration.enabled
-      ? [storageRoot, manifest.eventDirectory, manifest.revisionDirectory, manifest.blobDirectory].join("\u0000")
+      ? [storageRoot, manifest.eventDirectory].join("\u0000")
       : "disabled";
     if (key === this.watchedPackageKey) return;
     this.disposeWatchers(this.packageWatchers);
@@ -207,27 +226,24 @@ class ReviewController implements vscode.Disposable {
     }
     const base = vscode.Uri.file(storageRoot);
     const packageRelative = (directory: string) => directory.startsWith(".review/") ? directory.slice(".review/".length) : directory;
-    for (const pattern of [
-      "manifest.json",
-      `${packageRelative(manifest.eventDirectory)}/*.json`,
-      `${packageRelative(manifest.revisionDirectory)}/*.json`,
-      `${packageRelative(manifest.blobDirectory)}/**/*`,
-    ]) {
-      this.attachWatcher(
-        vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(base, pattern)),
-        this.packageWatchers,
-      );
-    }
+    this.attachWatcher(
+      vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(base, `${packageRelative(manifest.eventDirectory)}/*.json`)),
+      this.packageWatchers,
+    );
   }
 
-  private scheduleRefresh(trigger: RefreshTrigger, delay?: number): void {
+  private scheduleRefresh(trigger: RefreshTrigger, delay?: number, changedPath?: string): void {
     const folder = this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document);
     if (isBackgroundRefresh(trigger) && !this.liveSyncConfiguration(folder).enabled) return;
+    if (isBackgroundRefresh(trigger) && this.backgroundRefreshSuspended > 0) return;
+    if (changedPath) this.pendingChangedPaths.add(path.resolve(changedPath));
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     const wait = delay ?? this.liveSyncConfiguration(folder).debounceMs;
     this.refreshTimer = setTimeout(() => {
       this.refreshTimer = undefined;
-      void this.refresh(undefined, trigger);
+      const changedPaths = [...this.pendingChangedPaths];
+      this.pendingChangedPaths.clear();
+      void this.refresh(undefined, trigger, changedPaths);
     }, wait);
   }
 
@@ -280,7 +296,10 @@ class ReviewController implements vscode.Disposable {
     return `activeReview:${folder.uri.toString()}`;
   }
 
-  private async registeredReviews(folder: vscode.WorkspaceFolder): Promise<RegisteredReview[]> {
+  private async registeredReviews(folder: vscode.WorkspaceFolder, force = false): Promise<RegisteredReview[]> {
+    const cacheKey = folder.uri.toString();
+    const cached = this.registeredReviewCache.get(cacheKey);
+    if (!force && cached) return cached;
     const savedRoots = new Set((this.context.workspaceState.get<string[]>(this.rootsStateKey(folder)) ?? []).map((item) => path.resolve(item)));
     const legacyParent = this.context.workspaceState.get<string>(`reviewStorage:${folder.uri.toString()}`);
     if (legacyParent) {
@@ -297,24 +316,51 @@ class ReviewController implements vscode.Disposable {
       50,
     );
     for (const manifest of manifests) roots.add(path.dirname(manifest.fsPath));
-    const result: RegisteredReview[] = [];
-    for (const reviewRoot of roots) {
+    const result = (await mapWithConcurrency([...roots], this.ioConcurrency(folder), async (reviewRoot): Promise<RegisteredReview | undefined> => {
       try {
         const manifest = await loadManifest(reviewRoot);
-        if (manifest) result.push({ reviewRoot, manifest });
+        return manifest ? { reviewRoot, manifest } : undefined;
       } catch (error) {
         this.output.appendLine(`[ignored review candidate] ${reviewRoot}: ${error instanceof Error ? error.message : String(error)}`);
+        return undefined;
       }
-    }
+    })).filter((item): item is RegisteredReview => item !== undefined);
     result.sort((left, right) => left.manifest.title.localeCompare(right.manifest.title) || left.reviewRoot.localeCompare(right.reviewRoot));
     for (const item of result) savedRoots.add(item.reviewRoot);
     await this.context.workspaceState.update(this.rootsStateKey(folder), [...savedRoots]);
+    this.registeredReviewCache.set(cacheKey, result);
     return result;
   }
 
   private async activeStorageRootFor(folder: vscode.WorkspaceFolder): Promise<string> {
-    const registered = await this.registeredReviews(folder);
     const saved = this.context.workspaceState.get<string>(this.activeStateKey(folder));
+    if (saved) {
+      const normalized = path.resolve(saved);
+      const cachedReviews = this.registeredReviewCache.get(folder.uri.toString());
+      if (cachedReviews?.some((item) => path.resolve(item.reviewRoot) === normalized)) {
+        this.reviews.setReviews(cachedReviews, normalized, folder.uri.fsPath);
+        return normalized;
+      }
+      const manifest = this.currentStorageRoot && path.resolve(this.currentStorageRoot) === normalized
+        ? this.currentManifest ?? await loadManifest(normalized)
+        : await loadManifest(normalized).catch(() => undefined);
+      if (manifest) {
+        const rememberedRoots = new Set([
+          ...(this.context.workspaceState.get<string[]>(this.rootsStateKey(folder)) ?? []).map((item) => path.resolve(item)),
+          normalized,
+        ]);
+        const remembered = (await mapWithConcurrency([...rememberedRoots], this.ioConcurrency(folder), async (reviewRoot): Promise<RegisteredReview | undefined> => {
+          const knownManifest = reviewRoot === normalized ? manifest : await loadManifest(reviewRoot).catch(() => undefined);
+          return knownManifest ? { reviewRoot, manifest: knownManifest } : undefined;
+        })).filter((item): item is RegisteredReview => item !== undefined);
+        const registered = remembered
+          .sort((left, right) => left.manifest.title.localeCompare(right.manifest.title) || left.reviewRoot.localeCompare(right.reviewRoot));
+        this.registeredReviewCache.set(folder.uri.toString(), registered);
+        this.reviews.setReviews(registered, normalized, folder.uri.fsPath);
+        return normalized;
+      }
+    }
+    const registered = await this.registeredReviews(folder);
     const active = registered.find((item) => item.reviewRoot === saved)?.reviewRoot ?? registered[0]?.reviewRoot;
     this.reviews.setReviews(registered, active, folder.uri.fsPath);
     return active ?? path.join(folder.uri.fsPath, ".review");
@@ -326,6 +372,14 @@ class ReviewController implements vscode.Disposable {
     roots.add(normalized);
     await this.context.workspaceState.update(this.rootsStateKey(folder), [...roots]);
     if (makeActive) await this.context.workspaceState.update(this.activeStateKey(folder), normalized);
+    const manifest = await loadManifest(normalized).catch(() => undefined);
+    const cached = this.registeredReviewCache.get(folder.uri.toString());
+    if (manifest && cached) {
+      const reviews = [...cached.filter((item) => path.resolve(item.reviewRoot) !== normalized), { reviewRoot: normalized, manifest }]
+        .sort((left, right) => left.manifest.title.localeCompare(right.manifest.title) || left.reviewRoot.localeCompare(right.reviewRoot));
+      this.registeredReviewCache.set(folder.uri.toString(), reviews);
+      this.reviews.setReviews(reviews, makeActive ? normalized : undefined, folder.uri.fsPath);
+    }
   }
 
   private async actorFor(folder: vscode.WorkspaceFolder): Promise<ActorRef | undefined> {
@@ -404,11 +458,39 @@ class ReviewController implements vscode.Disposable {
     }
   }
 
-  async refresh(document?: vscode.TextDocument, trigger: RefreshTrigger = "manual"): Promise<void> {
-    await this.refreshQueue.request({ document, trigger });
+  private changedEventNames(storageRoot: string, manifest: ReviewManifest, changedPaths: readonly string[] = []): string[] {
+    const eventRoot = path.resolve(resolveInsideReview(storageRoot, manifest.eventDirectory));
+    const comparable = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
+    return [...new Set(changedPaths.map((item) => path.resolve(item)).filter((item) =>
+      comparable(path.dirname(item)) === comparable(eventRoot) && item.toLowerCase().endsWith(".json"),
+    ).map((item) => path.basename(item)))];
   }
 
-  private async performRefresh(document: vscode.TextDocument | undefined, trigger: RefreshTrigger): Promise<void> {
+  private ioConcurrency(folder?: vscode.WorkspaceFolder): number {
+    return vscode.workspace.getConfiguration("openMarkdownReview", folder?.uri).get<number>("io.maxConcurrency", 4);
+  }
+
+  private revisionContentComplete(revision: ReviewRevision, paths: ReadonlyMap<Sha256Digest, string>): boolean {
+    return [...revision.documents, ...revision.resources].every((content) => paths.has(content.digest));
+  }
+
+  async refresh(document?: vscode.TextDocument, trigger: RefreshTrigger = "manual", changedPaths?: string[]): Promise<void> {
+    await this.refreshQueue.request({ document, trigger, changedPaths });
+  }
+
+  async refreshWithProgress(): Promise<void> {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Validating the complete shared review", cancellable: false },
+      () => this.refresh(undefined, "manual"),
+    );
+  }
+
+  private async performRefresh(
+    document: vscode.TextDocument | undefined,
+    trigger: RefreshTrigger,
+    changedPaths: readonly string[] = [],
+  ): Promise<void> {
+    const refreshStarted = Date.now();
     const folder = this.workspaceFolderForDocument(document ?? vscode.window.activeTextEditor?.document);
     if (!folder) return this.clearState();
     this.setSyncStatus({
@@ -421,6 +503,7 @@ class ReviewController implements vscode.Disposable {
     try {
       storageRoot = await this.activeStorageRootFor(folder);
       const manifest = await loadManifest(storageRoot);
+      const packageReadyAt = Date.now();
       this.currentSourceRoot = folder.uri.fsPath;
       this.currentStorageRoot = storageRoot;
       if (!manifest) return this.clearState(false);
@@ -428,7 +511,16 @@ class ReviewController implements vscode.Disposable {
       const previousEventIds = sameReview ? new Set(this.loadedEvents.map((event) => event.id)) : new Set<string>();
       this.currentManifest = manifest;
       this.configurePackageWatchers(storageRoot, manifest);
-      const loaded = await loadEvents(storageRoot, manifest.reviewId);
+      const fullAudit = trigger === "manual";
+      const eventsStarted = Date.now();
+      const loaded = await this.reviewCache.reconcileEvents(storageRoot, manifest, {
+        full: fullAudit,
+        reloadEventNames: this.changedEventNames(storageRoot, manifest, changedPaths),
+      });
+      const eventsReadyAt = Date.now();
+      if (loaded.missingCachedEvents.length) {
+        throw new ReviewStoreError(`${loaded.missingCachedEvents.length} previously validated event file${loaded.missingCachedEvents.length === 1 ? " is" : "s are"} missing after synchronization.`);
+      }
       const contextualWarnings: string[] = [];
       let acceptedEvents = loaded.events.filter((event) => {
         const errors = validateEventCapabilities(manifest, event);
@@ -448,12 +540,28 @@ class ReviewController implements vscode.Disposable {
       let state = buildReviewState(acceptedEvents);
       const revisionEvent = state.revisionEvents.at(-1);
       let revision: ReviewRevision | undefined;
+      let contentPaths = new Map<Sha256Digest, string>();
+      let contentDurationMs = 0;
       if (revisionEvent) {
-        revision = await loadRevision(storageRoot, revisionEvent.revisionPath, revisionEvent.revisionDigest);
+        revision = fullAudit ? undefined : await this.reviewCache.cachedRevision(storageRoot, manifest, revisionEvent);
+        revision ??= await loadRevision(storageRoot, revisionEvent.revisionPath, revisionEvent.revisionDigest);
         const publicationErrors = validatePublishedRevision(manifest, revisionEvent, revision);
         if (publicationErrors.length) throw new ReviewStoreError(`Published revision is inconsistent:\n${publicationErrors.join("\n")}`);
-        const integrityErrors = await verifyRevisionContent(storageRoot, revision);
-        if (integrityErrors.length) throw new ReviewStoreError(`Frozen revision content failed verification:\n${integrityErrors.join("\n")}`);
+        if (this.currentRevision?.id === revision.id) contentPaths = new Map(this.currentContentPaths);
+        const needsContent = fullAudit || Boolean(this.reviewPanel && !this.revisionContentComplete(revision, contentPaths));
+        if (needsContent) {
+          const contentStarted = Date.now();
+          const materialized = await this.reviewCache.materializeRevision(storageRoot, revision, { auditShared: fullAudit });
+          contentDurationMs = Date.now() - contentStarted;
+          if (materialized.errors.length) {
+            const action = fullAudit ? "failed shared-storage verification" : "could not be cached";
+            throw new ReviewStoreError(`Frozen revision content ${action}:\n${materialized.errors.join("\n")}`);
+          }
+          contentPaths = materialized.paths;
+          this.output.appendLine(`[cache] ${loaded.cachedEventCount} cached events, ${loaded.loadedFileCount} shared event reads, ${materialized.localHits} local blobs, ${materialized.sharedReads} shared blob reads${fullAudit ? " · full audit" : ""}.`);
+        } else {
+          this.output.appendLine(`[cache] ${loaded.cachedEventCount} cached events, ${loaded.loadedFileCount} shared event reads · frozen content deferred until it is displayed.`);
+        }
         acceptedEvents = acceptedEvents.filter((event) => {
           if (event.revisionId !== revision!.id) return true;
           const errors = validateEventAgainstRevision(event, revision!);
@@ -480,6 +588,7 @@ class ReviewController implements vscode.Disposable {
       const newCommentCount = announcedEvents.filter((event) => event.type === "comment.created" || event.type === "comment.replied").length;
       this.loadedEvents = acceptedEvents;
       this.currentRevision = revision;
+      this.currentContentPaths = contentPaths;
       this.currentSemanticFingerprint = semanticFingerprint;
       this.threads.setState(state);
       this.commentDecorations.setReview(folder.uri.fsPath, revision, state);
@@ -487,7 +596,9 @@ class ReviewController implements vscode.Disposable {
       for (const warning of loaded.warnings) this.output.appendLine(`[ignored] ${warning}`);
       for (const warning of contextualWarnings) this.output.appendLine(`[ignored] ${warning}`);
       if (state.danglingEvents.length) this.output.appendLine(`${state.danglingEvents.length} event(s) await related files from synchronization.`);
+      await this.reviewCache.save(storageRoot, manifest, acceptedEvents, revision, revisionEvent);
       await this.updateObservedFingerprint(storageRoot, manifest);
+      this.output.appendLine(`[performance] refresh=${trigger} total=${Date.now() - refreshStarted}ms package=${packageReadyAt - refreshStarted}ms events=${eventsReadyAt - eventsStarted}ms content=${contentDurationMs}ms eventFiles=${loaded.loadedFileCount}.`);
       const pendingFiles = loaded.warnings.length + contextualWarnings.length + state.danglingEvents.length;
       const now = new Date();
       const lastUpdated = now.toISOString();
@@ -521,7 +632,7 @@ class ReviewController implements vscode.Disposable {
       this.setSyncStatus(syncStatus);
       if (this.reviewPanel?.isDisposed) this.reviewPanel = undefined;
       if (this.reviewPanel && revision) {
-        if (semanticChanged) await this.reviewPanel.update(manifest, revision, state, syncStatus, announcedEventIds);
+        if (semanticChanged) await this.reviewPanel.update(manifest, revision, state, syncStatus, announcedEventIds, contentPaths);
         else await this.reviewPanel.setSyncStatus(syncStatus);
       }
       if (liveSyncEnabled && pendingFiles) this.scheduleSyncRetry(`${pendingFiles} file(s) are incomplete, invalid, or awaiting related events.`);
@@ -552,6 +663,7 @@ class ReviewController implements vscode.Disposable {
     }
     this.currentManifest = undefined;
     this.currentRevision = undefined;
+    this.currentContentPaths = new Map();
     this.currentSemanticFingerprint = undefined;
     this.loadedEvents = [];
     this.threads.setState(undefined);
@@ -592,15 +704,21 @@ class ReviewController implements vscode.Disposable {
   async setupReview(createNew = false): Promise<void> {
     const folder = this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document);
     if (!folder) return void vscode.window.showErrorMessage("Open a folder or workspace first.");
-    const existing = await this.registeredReviews(folder);
+    const existing = createNew
+      ? this.registeredReviewCache.get(folder.uri.toString()) ?? []
+      : await this.registeredReviews(folder);
+    const knownReviewCount = Math.max(
+      existing.length,
+      this.context.workspaceState.get<string[]>(this.rootsStateKey(folder))?.length ?? 0,
+    );
     let storageRoot = createNew
-      ? path.join(folder.uri.fsPath, existing.length ? `.review-${existing.length + 1}` : ".review")
+      ? path.join(folder.uri.fsPath, knownReviewCount ? `.review-${knownReviewCount + 1}` : ".review")
       : await this.activeStorageRootFor(folder);
     let manifest = createNew ? undefined : await loadManifest(storageRoot);
-    if (manifest) await this.refresh();
+    if (manifest) await this.refresh(undefined, "startup");
     const availableDocuments = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Window, title: "Finding Markdown documents" },
-      () => findMarkdownFiles(folder.uri.fsPath),
+      () => findMarkdownFiles(folder.uri.fsPath, this.ioConcurrency(folder)),
     );
     if (!availableDocuments.length) return void vscode.window.showErrorMessage("No Markdown documents were found in this workspace.");
     const active = vscode.window.activeTextEditor?.document;
@@ -634,43 +752,48 @@ class ReviewController implements vscode.Disposable {
     if (!manifest && selectedManifest) manifest = selectedManifest;
     const actor = await this.actorFor(folder);
     if (!actor) return;
-    if (!manifest) {
-      let names: string[] = [];
-      try {
-        names = await readdir(storageRoot);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    this.backgroundRefreshSuspended += 1;
+    try {
+      if (!manifest) {
+        let names: string[] = [];
+        try {
+          names = await readdir(storageRoot);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        if (names.length) {
+          const choice = await vscode.window.showWarningMessage(
+            "The selected review package folder is not empty. Protocol files will be added without removing existing files.",
+            { modal: true },
+            "Use folder",
+          );
+          if (choice !== "Use folder") return;
+        }
+        manifest = {
+          protocol: PROTOCOL_ID,
+          protocolVersion: PROTOCOL_VERSION,
+          reviewId: createId("review"),
+          title: selection.title,
+          createdAt: new Date().toISOString(),
+          createdBy: actor,
+          documents: selection.documentPaths,
+          eventDirectory: "events",
+          revisionDirectory: "revisions",
+          blobDirectory: "blobs/sha256",
+          exportDirectory: "exports",
+          capabilities: [
+            "quote-anchor-v1", "range-anchor-v1", "semantic-anchor-v1",
+            "content-addressed-resources-v1", "audit-export-v1", "thread-decision-v1",
+            "suggested-edit-v1", "review-rejection-v1",
+          ],
+        };
+        await initializeReview(storageRoot, manifest);
       }
-      if (names.length) {
-        const choice = await vscode.window.showWarningMessage(
-          "The selected review package folder is not empty. Protocol files will be added without removing existing files.",
-          { modal: true },
-          "Use folder",
-        );
-        if (choice !== "Use folder") return;
-      }
-      manifest = {
-        protocol: PROTOCOL_ID,
-        protocolVersion: PROTOCOL_VERSION,
-        reviewId: createId("review"),
-        title: selection.title,
-        createdAt: new Date().toISOString(),
-        createdBy: actor,
-        documents: selection.documentPaths,
-        eventDirectory: "events",
-        revisionDirectory: "revisions",
-        blobDirectory: "blobs/sha256",
-        exportDirectory: "exports",
-        capabilities: [
-          "quote-anchor-v1", "range-anchor-v1", "semantic-anchor-v1",
-          "content-addressed-resources-v1", "audit-export-v1", "thread-decision-v1",
-          "suggested-edit-v1", "review-rejection-v1",
-        ],
-      };
-      await initializeReview(storageRoot, manifest);
+      await this.registerReview(folder, storageRoot);
+      await this.createRevisionFromSelection(folder, storageRoot, manifest, actor, selection);
+    } finally {
+      this.backgroundRefreshSuspended -= 1;
     }
-    await this.registerReview(folder, storageRoot);
-    await this.createRevisionFromSelection(folder, storageRoot, manifest, actor, selection);
   }
 
   async connectReview(): Promise<void> {
@@ -707,7 +830,7 @@ class ReviewController implements vscode.Disposable {
       return;
     }
     await this.registerReview(folder, storageRoot);
-    await this.refresh();
+    await this.refreshWithProgress();
     const choice = await vscode.window.showInformationMessage(`Active review: ${manifest.title}`, "Open frozen review");
     if (choice === "Open frozen review") await this.openReview();
   }
@@ -728,7 +851,7 @@ class ReviewController implements vscode.Disposable {
     await this.registerReview(folder, review.reviewRoot);
     this.reviewPanel?.dispose();
     this.reviewPanel = undefined;
-    await this.refresh();
+    await this.refresh(undefined, "startup");
   }
 
   private async initializedReview(): Promise<{ folder: vscode.WorkspaceFolder; sourceRoot: string; storageRoot: string; manifest: ReviewManifest } | undefined> {
@@ -738,7 +861,9 @@ class ReviewController implements vscode.Disposable {
       return undefined;
     }
     const storageRoot = await this.activeStorageRootFor(folder);
-    const manifest = await loadManifest(storageRoot);
+    const manifest = this.currentStorageRoot && path.resolve(this.currentStorageRoot) === path.resolve(storageRoot)
+      ? this.currentManifest ?? await loadManifest(storageRoot)
+      : await loadManifest(storageRoot);
     if (!manifest) {
       const choice = await vscode.window.showInformationMessage("This workspace has no Markdown review.", "Open review setup");
       if (choice !== "Open review setup") return undefined;
@@ -750,17 +875,78 @@ class ReviewController implements vscode.Disposable {
     return { folder, sourceRoot: folder.uri.fsPath, storageRoot, manifest };
   }
 
-  private async activeReview(): Promise<ActiveReview | undefined> {
+  private async activeReview(requireFullAudit = false): Promise<ActiveReview | undefined> {
     const initialized = await this.initializedReview();
     if (!initialized) return undefined;
-    await this.refresh();
+    const currentMatches = this.currentManifest?.reviewId === initialized.manifest.reviewId
+      && this.currentStorageRoot !== undefined
+      && path.resolve(this.currentStorageRoot) === path.resolve(initialized.storageRoot)
+      && this.currentRevision !== undefined
+      && this.threads.getState() !== undefined;
+    if (requireFullAudit) {
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: "Validating shared review before the audit decision", cancellable: false },
+        () => this.refresh(undefined, "manual"),
+      );
+    } else if (!currentMatches) {
+      await this.refresh(undefined, "startup");
+    }
     const state = this.threads.getState();
     if (!this.currentRevision || !state) {
       const choice = await vscode.window.showInformationMessage("Create an immutable revision before reviewing.", "Create revision");
       if (choice === "Create revision") await this.createRevision();
       return undefined;
     }
-    return { ...initialized, revision: this.currentRevision, state };
+    return { ...initialized, revision: this.currentRevision, state, contentPaths: this.currentContentPaths };
+  }
+
+  private async ensureReviewContent(review: ActiveReview): Promise<ActiveReview> {
+    if (this.revisionContentComplete(review.revision, review.contentPaths)) return review;
+    return vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Preparing frozen Markdown, diagrams, and images locally", cancellable: false },
+      () => this.withStateLock(async () => {
+        if (this.currentRevision?.id === review.revision.id && this.revisionContentComplete(review.revision, this.currentContentPaths)) {
+          return { ...review, contentPaths: this.currentContentPaths };
+        }
+        const started = Date.now();
+        const materialized = await this.reviewCache.materializeRevision(review.storageRoot, review.revision);
+        if (materialized.errors.length) throw new ReviewStoreError(`Frozen revision content could not be prepared:\n${materialized.errors.join("\n")}`);
+        if (this.currentRevision?.id === review.revision.id) this.currentContentPaths = materialized.paths;
+        this.output.appendLine(`[performance] prepare-content total=${Date.now() - started}ms localBlobs=${materialized.localHits} sharedBlobs=${materialized.sharedReads}.`);
+        return { ...review, contentPaths: materialized.paths };
+      }),
+    );
+  }
+
+  async rebuildLocalCache(): Promise<void> {
+    const review = await this.initializedReview();
+    if (!review) return;
+    const choice = await vscode.window.showWarningMessage(
+      "Rebuild the disposable local cache from the authoritative shared review? Review files will not be changed.",
+      { modal: true },
+      "Rebuild cache",
+    );
+    if (choice !== "Rebuild cache") return;
+    await this.reviewCache.invalidateReview(review.storageRoot);
+    this.currentContentPaths = new Map();
+    await this.refreshWithProgress();
+    void vscode.window.showInformationMessage("Local review cache rebuilt and fully validated.");
+  }
+
+  async showDiagnostics(): Promise<void> {
+    const folder = this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document);
+    const cache = await this.reviewCache.stats();
+    const live = this.liveSyncConfiguration(folder);
+    const megabytes = (bytes: number) => (bytes / (1024 * 1024)).toFixed(1);
+    this.output.appendLine("");
+    this.output.appendLine(`[diagnostics] Open Markdown Review ${String(this.context.extension.packageJSON.version ?? "unknown")}`);
+    this.output.appendLine(`[diagnostics] Platform ${process.platform}-${process.arch} · Node ${process.versions.node} · VS Code ${vscode.version}`);
+    this.output.appendLine(`[diagnostics] Review ${this.currentStorageRoot ?? "none"}`);
+    this.output.appendLine(`[diagnostics] Revision ${this.currentRevision?.id ?? "none"} · ${this.loadedEvents.length} validated events · ${this.currentContentPaths.size} prepared blobs`);
+    this.output.appendLine(`[diagnostics] Cache ${cache.root} · ${cache.contentEntries} blobs · ${megabytes(cache.contentBytes)} MB / ${megabytes(cache.maxContentBytes)} MB`);
+    this.output.appendLine(`[diagnostics] I/O concurrency ${this.ioConcurrency(folder)} · polling ${live.activeIntervalMs / 1_000}s visible / ${live.backgroundIntervalMs / 1_000}s background · live sync ${live.enabled ? "enabled" : "disabled"}`);
+    this.output.appendLine(`[diagnostics] Sync ${this.syncStatus.phase} · ${this.syncStatus.detail}`);
+    this.output.show(true);
   }
 
   async createRevision(): Promise<void> {
@@ -777,25 +963,28 @@ class ReviewController implements vscode.Disposable {
     const configuration = vscode.workspace.getConfiguration("openMarkdownReview", folder.uri);
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: `Freezing ${selection.documentPaths.length} selected Markdown document${selection.documentPaths.length === 1 ? "" : "s"}`, cancellable: false },
-      async () => {
+      async (progress) => {
         const result = await createSnapshot(folder.uri.fsPath, manifest, actor, {
           rootDocument: selection.rootDocument,
           documentPaths: selection.documentPaths,
           storageRoot,
           remoteResourceLimitBytes: configuration.get<number>("remoteResourceLimitMb", 15) * 1024 * 1024,
           allowInsecureHttp: configuration.get<boolean>("allowInsecureHttp", false),
+          ioConcurrency: this.ioConcurrency(folder),
+          onProgress: (message) => progress.report({ message }),
         });
         this.output.appendLine(`Created revision ${result.revision.id} with ${result.revision.documents.length} documents, ${result.revision.resources.length} frozen resources, and ${result.revision.mermaidDiagrams.length} Mermaid diagrams.`);
       },
     );
-    await this.refresh();
+    await this.refresh(undefined, "startup");
     const choice = await vscode.window.showInformationMessage("Auditable revision created.", "Open rendered review");
     if (choice === "Open rendered review") await this.openReview();
   }
 
   async openReview(): Promise<RenderedReviewPanel | undefined> {
-    const review = await this.activeReview();
-    if (!review) return undefined;
+    const active = await this.activeReview();
+    if (!active) return undefined;
+    const review = await this.ensureReviewContent(active);
     if (this.reviewPanel?.isDisposed) this.reviewPanel = undefined;
     this.reviewPanel = await RenderedReviewPanel.show(
       this.context,
@@ -815,9 +1004,10 @@ class ReviewController implements vscode.Disposable {
         exportPdf: () => this.exportPdf(),
         openThread: (threadId) => this.openThread(threadId),
         openAttachment: (resourceId) => this.openAttachment(resourceId),
-        refresh: () => this.refresh(),
+        refresh: () => this.refreshWithProgress(),
       },
       this.syncStatus,
+      review.contentPaths,
     );
     this.scheduleNextPoll(0);
     return this.reviewPanel;
@@ -865,7 +1055,7 @@ class ReviewController implements vscode.Disposable {
   private async anchorForRendered(review: ActiveReview, request: RenderedCommentRequest): Promise<MarkdownAnchor> {
     const frozen = review.revision.documents.find((item) => item.path === request.document);
     if (!frozen) throw new Error(`Frozen document not found: ${request.document}`);
-    const source = await readFile(resolveInsideReview(review.storageRoot, frozen.blobPath), "utf8");
+    const source = await readFile(review.contentPaths.get(frozen.digest) ?? resolveInsideReview(review.storageRoot, frozen.blobPath), "utf8");
     const quote = request.quote?.trim() || request.label?.trim() || request.kind;
     const preferred = offsetAtLine(source, request.lineStart ?? 0);
     const located = locateQuote(source, quote, "", "", preferred);
@@ -905,11 +1095,75 @@ class ReviewController implements vscode.Disposable {
     const anchor = await this.anchorForRendered(review, request);
     const frozen = review.revision.documents.find((item) => item.path === anchor.document);
     if (!frozen) throw new Error(`Frozen document not found: ${anchor.document}`);
-    const source = await readFile(resolveInsideReview(review.storageRoot, frozen.blobPath), "utf8");
+    const source = await readFile(review.contentPaths.get(frozen.digest) ?? resolveInsideReview(review.storageRoot, frozen.blobPath), "utf8");
     if (!source.includes(anchor.quote.exact)) {
       return void vscode.window.showWarningMessage("This rendered selection crosses Markdown formatting and cannot be mapped to one exact source string. Select it in the Markdown source editor and run Suggest Edit on Selection.");
     }
     await this.createSuggestionEvent(review, anchor);
+  }
+
+  private async applyPublishedEvent(review: ActiveReview, event: ReviewEvent): Promise<void> {
+    await this.withStateLock(() => this.applyPublishedEventLocked(review, event));
+  }
+
+  private async applyPublishedEventLocked(review: ActiveReview, event: ReviewEvent): Promise<void> {
+    const existing = this.loadedEvents.find((candidate) => candidate.id === event.id);
+    if (existing) {
+      if (JSON.stringify(existing) !== JSON.stringify(event)) throw new ReviewStoreError(`Immutable event ${event.id} changed after publication.`);
+      return;
+    }
+    const capabilityErrors = validateEventCapabilities(review.manifest, event);
+    if (capabilityErrors.length) throw new ReviewStoreError(capabilityErrors.join("; "));
+    const revisionErrors = validateEventAgainstRevision(event, review.revision);
+    if (revisionErrors.length) throw new ReviewStoreError(revisionErrors.join("; "));
+    const events = [...this.loadedEvents, event];
+    const graphErrors = validateEventGraph(events);
+    if (graphErrors.size) {
+      const errors = graphErrors.get(event.id) ?? [...graphErrors.values()].flat();
+      throw new ReviewStoreError(errors.join("; "));
+    }
+    const state = buildReviewState(events);
+    this.loadedEvents = events;
+    this.currentSemanticFingerprint = semanticEventFingerprint(events, review.revision.id);
+    this.threads.setState(state);
+    this.commentDecorations.setReview(review.sourceRoot, review.revision, state);
+    await this.setContext(true, true, state.unresolvedThreads.length > 0 || state.openSuggestions.length > 0);
+    void this.reviewCache.save(review.storageRoot, review.manifest, events, review.revision, state.revisionEvents.at(-1)).catch((error) => {
+      this.output.appendLine(`[cache] Could not persist derived review state: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    this.observedPackageFingerprint = undefined;
+    const now = new Date();
+    const syncStatus: LiveSyncStatus = this.liveSyncConfiguration(review.folder).enabled
+      ? {
+          phase: "ready",
+          label: `Published · ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`,
+          detail: "The immutable event was written to shared storage and applied from memory.",
+          lastUpdated: now.toISOString(),
+        }
+      : {
+          phase: "disabled",
+          label: "Published · live sync disabled",
+          detail: "The immutable event was written to storage. Use Refresh to read changes from other reviewers.",
+          lastUpdated: now.toISOString(),
+        };
+    this.setSyncStatus(syncStatus);
+    if (this.reviewPanel?.isDisposed) this.reviewPanel = undefined;
+    await this.reviewPanel?.update(review.manifest, review.revision, state, syncStatus, [event.id], review.contentPaths);
+  }
+
+  private async publishEvent(review: ActiveReview, event: ReviewEvent): Promise<void> {
+    // Validate cross-file semantics before the immutable file becomes visible.
+    const capabilityErrors = validateEventCapabilities(review.manifest, event);
+    const revisionErrors = validateEventAgainstRevision(event, review.revision);
+    const graphErrors = validateEventGraph([...this.loadedEvents, event]).get(event.id) ?? [];
+    const errors = [...capabilityErrors, ...revisionErrors, ...graphErrors];
+    if (errors.length) throw new ReviewStoreError(errors.join("; "));
+    const started = Date.now();
+    const target = await appendEvent(review.storageRoot, event, review.manifest);
+    const publishedAt = Date.now();
+    this.output.appendLine(`[published] ${path.basename(target)}`);
+    await this.applyPublishedEvent(review, event);
+    this.output.appendLine(`[performance] publish=${event.type} total=${Date.now() - started}ms sharedWrite=${publishedAt - started}ms memoryUi=${Date.now() - publishedAt}ms.`);
   }
 
   private async createCommentEvent(review: ActiveReview, anchor: MarkdownAnchor): Promise<void> {
@@ -936,8 +1190,7 @@ class ReviewController implements vscode.Disposable {
       anchor,
       body: { format: "markdown", text: body.trim() },
     };
-    await appendEvent(review.storageRoot, event);
-    await this.refresh();
+    await this.publishEvent(review, event);
   }
 
   private async createSuggestionEvent(review: ActiveReview, anchor: MarkdownAnchor): Promise<void> {
@@ -986,8 +1239,7 @@ class ReviewController implements vscode.Disposable {
       operation,
       rationale: { format: "markdown", text: rationale.trim() },
     };
-    await appendEvent(review.storageRoot, event);
-    await this.refresh();
+    await this.publishEvent(review, event);
   }
 
   private async chooseThread(argument?: ThreadArgument): Promise<ReviewThread | undefined> {
@@ -1024,8 +1276,7 @@ class ReviewController implements vscode.Disposable {
       inReplyTo: thread.replies.at(-1)?.commentId ?? thread.root.commentId,
       body: { format: "markdown", text: text.trim() },
     };
-    await appendEvent(review.storageRoot, event);
-    await this.refresh();
+    await this.publishEvent(review, event);
   }
 
   async resolve(argument?: ThreadArgument): Promise<void> {
@@ -1046,8 +1297,7 @@ class ReviewController implements vscode.Disposable {
       actor,
       threadId: thread.id,
     };
-    await appendEvent(review.storageRoot, event);
-    await this.refresh();
+    await this.publishEvent(review, event);
   }
 
   async decideThread(argument?: ThreadArgument): Promise<void> {
@@ -1084,12 +1334,11 @@ class ReviewController implements vscode.Disposable {
       decision: selected.decision,
       ...(reason.trim() ? { reason: reason.trim() } : {}),
     };
-    await appendEvent(review.storageRoot, event);
-    await this.refresh();
+    await this.publishEvent(review, event);
   }
 
   async approve(): Promise<void> {
-    const review = await this.activeReview();
+    const review = await this.activeReview(true);
     if (!review) return;
     const unresolved = review.state.unresolvedThreads.filter((thread) => thread.revisionId === review.revision.id).length;
     const openSuggestions = review.state.openSuggestions.filter((suggestion) => suggestion.revisionId === review.revision.id).length;
@@ -1112,12 +1361,11 @@ class ReviewController implements vscode.Disposable {
       actor,
       ...(note.trim() ? { note: note.trim() } : {}),
     };
-    await appendEvent(review.storageRoot, event);
-    await this.refresh();
+    await this.publishEvent(review, event);
   }
 
   async rejectReview(): Promise<void> {
-    const review = await this.activeReview();
+    const review = await this.activeReview(true);
     if (!review) return;
     const reason = await vscode.window.showInputBox({
       title: "Reject immutable revision",
@@ -1139,8 +1387,7 @@ class ReviewController implements vscode.Disposable {
       actor,
       reason: reason.trim(),
     };
-    await appendEvent(review.storageRoot, event);
-    await this.refresh();
+    await this.publishEvent(review, event);
   }
 
   private async chooseSuggestion(argument?: SuggestionArgument, statuses?: ReviewSuggestion["status"][]): Promise<ReviewSuggestion | undefined> {
@@ -1191,8 +1438,7 @@ class ReviewController implements vscode.Disposable {
     const event: SuggestionAcceptedEvent | SuggestionRejectedEvent = decision === "accepted"
       ? { ...common, type: "suggestion.accepted", ...(note.trim() ? { note: note.trim() } : {}) }
       : { ...common, type: "suggestion.rejected", ...(note.trim() ? { reason: note.trim() } : {}) };
-    await appendEvent(review.storageRoot, event);
-    await this.refresh();
+    await this.publishEvent(review, event);
   }
 
   async applySuggestion(argument?: SuggestionArgument): Promise<void> {
@@ -1254,19 +1500,19 @@ class ReviewController implements vscode.Disposable {
       sourceDigestBefore: sha256(source),
       sourceDigestAfter: sha256(changed),
     };
-    await appendEvent(review.storageRoot, event);
-    await this.refresh(document);
+    await this.publishEvent(review, event);
     void vscode.window.showInformationMessage("Accepted edit applied and recorded. Create a new revision to review the updated document.");
   }
 
   async exportPdf(): Promise<void> {
-    const review = await this.activeReview();
+    const review = await this.activeReview(true);
     if (!review) return;
     const actor = await this.actorFor(review.folder);
     if (!actor) return;
     const panel = this.reviewPanel ?? (await this.openReview());
     if (!panel) return;
     const renderData = await panel.collectRenderData();
+    const { exportAuditPdf } = await import("./pdfExport");
     const result = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: "Creating auditable PDF locally", cancellable: false },
       () => exportAuditPdf({
@@ -1277,10 +1523,11 @@ class ReviewController implements vscode.Disposable {
         events: this.loadedEvents,
         renderData,
         actor,
-        clientVersion: String(this.context.extension.packageJSON.version ?? "0.4.3"),
+        clientVersion: String(this.context.extension.packageJSON.version ?? "0.4.5"),
+        contentPaths: review.contentPaths,
       }),
     );
-    await this.refresh();
+    await this.applyPublishedEvent(review, result.event);
     const choice = await vscode.window.showInformationMessage(`Audit PDF created and hashed: ${result.relativePath}`, "Open PDF", "Reveal in folder");
     if (choice === "Open PDF") await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(result.absolutePath));
     if (choice === "Reveal in folder") await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(result.absolutePath));
@@ -1311,7 +1558,7 @@ class ReviewController implements vscode.Disposable {
     if (!this.currentStorageRoot || !this.currentRevision) return;
     const resource = this.currentRevision.resources.find((item) => item.id === resourceId && item.role === "attachment");
     if (!resource) throw new Error(`Frozen attachment not found: ${resourceId}`);
-    const uri = vscode.Uri.file(resolveInsideReview(this.currentStorageRoot, resource.blobPath));
+    const uri = vscode.Uri.file(this.currentContentPaths.get(resource.digest) ?? resolveInsideReview(this.currentStorageRoot, resource.blobPath));
     if (resource.mediaType === "application/pdf" || resource.mediaType.startsWith("text/") || resource.mediaType.startsWith("image/")) {
       await vscode.commands.executeCommand("vscode.open", uri);
       return;
@@ -1361,7 +1608,9 @@ export function activate(context: vscode.ExtensionContext): void {
   register("openMarkdownReview.rejectSuggestion", (argument) => controller.decideSuggestion(argument as SuggestionArgument, "rejected"));
   register("openMarkdownReview.applySuggestion", (argument) => controller.applySuggestion(argument as SuggestionArgument));
   register("openMarkdownReview.exportPdf", () => controller.exportPdf());
-  register("openMarkdownReview.refresh", () => controller.refresh());
+  register("openMarkdownReview.refresh", () => controller.refreshWithProgress());
+  register("openMarkdownReview.rebuildCache", () => controller.rebuildLocalCache());
+  register("openMarkdownReview.showDiagnostics", () => controller.showDiagnostics());
   register("openMarkdownReview.openThread", (argument) => controller.openThread(argument as ThreadArgument));
   register("openMarkdownReview.showThread", (argument) => controller.showThread(argument as ThreadArgument));
   void controller.refresh(undefined, "startup");

@@ -17,6 +17,31 @@ interface PersistedViewState {
   lastNotificationToken?: string;
 }
 
+interface ReviewAnchorState {
+  threadId: string;
+  document: string;
+  quote: string;
+  lineStart: number;
+  lineEnd: number;
+  target: {
+    kind: "text" | "image" | "mermaid" | "table" | "table-cell";
+    resourceId?: string;
+    diagramId?: string;
+    tableId?: string;
+    row?: number;
+    column?: number;
+  };
+  open: boolean;
+}
+
+interface ReviewStateMessage {
+  command: "reviewState";
+  threadsHtml: string;
+  suggestionsHtml: string;
+  stats: Record<string, number>;
+  anchors: ReviewAnchorState[];
+}
+
 function viewState(): PersistedViewState {
   return (vscode.getState() as PersistedViewState | undefined) ?? {};
 }
@@ -80,6 +105,121 @@ function updateSyncStatus(status: LiveSyncStatus): void {
       : `${newCount} new review update${newCount === 1 ? "" : "s"} synchronized.`);
     saveViewState({ lastNotificationToken: status.notificationToken });
   }
+}
+
+function setAnchorState(element: HTMLElement, anchor: ReviewAnchorState, anchorsById: Map<string, ReviewAnchorState>): void {
+  const ids = new Set(threadIds(element));
+  ids.add(anchor.threadId);
+  element.dataset.threadIds = [...ids].join(" ");
+  const isText = element.classList.contains("comment-highlight");
+  if (isText) {
+    element.classList.add("comment-highlight");
+    if (!element.querySelector(".comment-glyph, .comment-count")) {
+      const marker = document.createElement("span");
+      marker.className = ids.size > 1 ? "comment-count" : "comment-glyph";
+      marker.setAttribute("aria-hidden", ids.size > 1 ? "false" : "true");
+      marker.textContent = ids.size > 1 ? String(ids.size) : "●";
+      element.append(marker);
+    } else {
+      const marker = element.querySelector<HTMLElement>(".comment-glyph, .comment-count");
+      if (marker && ids.size > 1) {
+        marker.className = "comment-count";
+        marker.textContent = String(ids.size);
+      }
+    }
+  } else {
+    element.classList.add("comment-anchored");
+  }
+  const open = [...ids].some((id) => anchorsById.get(id)?.open);
+  element.classList.toggle("comment-open", open);
+  element.classList.toggle("comment-resolved", !open);
+  element.tabIndex = 0;
+  element.setAttribute("role", "button");
+  element.setAttribute("aria-label", `Open ${ids.size} review comment${ids.size === 1 ? "" : "s"}`);
+}
+
+function findSemanticAnchor(anchor: ReviewAnchorState): HTMLElement | undefined {
+  const documentElement = document.querySelector<HTMLElement>(`.document[data-document="${CSS.escape(anchor.document)}"]`);
+  if (!documentElement) return undefined;
+  return [...documentElement.querySelectorAll<HTMLElement>("[data-target-kind]")].find((element) => {
+    if (element.dataset.targetKind !== anchor.target.kind) return false;
+    if (anchor.target.kind === "image") return element.dataset.resourceId === anchor.target.resourceId;
+    if (anchor.target.kind === "mermaid") return element.dataset.diagramId === anchor.target.diagramId;
+    if (anchor.target.kind === "table") return element.dataset.tableId === anchor.target.tableId;
+    if (anchor.target.kind === "table-cell") {
+      return element.dataset.tableId === anchor.target.tableId
+        && Number(element.dataset.row) === anchor.target.row
+        && Number(element.dataset.column) === anchor.target.column;
+    }
+    return false;
+  });
+}
+
+function findOrCreateTextAnchor(anchor: ReviewAnchorState): HTMLElement | undefined {
+  const documentElement = document.querySelector<HTMLElement>(`.document[data-document="${CSS.escape(anchor.document)}"]`);
+  if (!documentElement || !anchor.quote) return undefined;
+  const existing = [...documentElement.querySelectorAll<HTMLElement>(".comment-highlight")].find((element) => {
+    const text = [...element.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent ?? "").join("");
+    return text === anchor.quote;
+  });
+  if (existing) return existing;
+  const blocks = [...documentElement.querySelectorAll<HTMLElement>(".review-text-block")].filter((block) => {
+    const start = Number(block.dataset.lineStart ?? 0);
+    const end = Number(block.dataset.lineEnd ?? start);
+    return anchor.lineStart <= end && anchor.lineEnd >= start;
+  });
+  for (const block of blocks) {
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        if (!parent || parent.closest(".comment-highlight, .suggested-change, script, style")) return NodeFilter.FILTER_REJECT;
+        return node.textContent?.includes(anchor.quote) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+      },
+    });
+    const node = walker.nextNode();
+    if (!node?.textContent) continue;
+    const index = node.textContent.indexOf(anchor.quote);
+    if (index < 0) continue;
+    const range = document.createRange();
+    range.setStart(node, index);
+    range.setEnd(node, index + anchor.quote.length);
+    const wrapper = document.createElement("span");
+    wrapper.className = "comment-highlight";
+    range.surroundContents(wrapper);
+    block.classList.add("comment-anchor-block");
+    return wrapper;
+  }
+  return undefined;
+}
+
+function applyReviewState(message: ReviewStateMessage): void {
+  const threadList = document.querySelector<HTMLElement>("#review-thread-list");
+  const suggestionList = document.querySelector<HTMLElement>("#review-suggestion-list");
+  if (threadList) threadList.innerHTML = message.threadsHtml;
+  if (suggestionList) suggestionList.innerHTML = message.suggestionsHtml;
+  for (const [name, value] of Object.entries(message.stats)) {
+    const target = document.querySelector<HTMLElement>(`[data-review-stat="${CSS.escape(name)}"]`);
+    if (target) target.textContent = String(value);
+  }
+  const anchorsById = new Map(message.anchors.map((anchor) => [anchor.threadId, anchor]));
+  for (const element of document.querySelectorAll<HTMLElement>("[data-thread-ids]")) {
+    if (element.classList.contains("thread") || element.classList.contains("comment-anchor-block")) continue;
+    const ids = threadIds(element).filter((id) => anchorsById.has(id));
+    if (!ids.length) continue;
+    element.dataset.threadIds = ids.join(" ");
+    const open = ids.some((id) => anchorsById.get(id)?.open);
+    element.classList.toggle("comment-open", open);
+    element.classList.toggle("comment-resolved", !open);
+  }
+  for (const anchor of message.anchors) {
+    const existing = document.querySelector<HTMLElement>(`[data-thread-ids~="${CSS.escape(anchor.threadId)}"]`);
+    const target = existing && !existing.classList.contains("thread") && !existing.classList.contains("comment-anchor-block")
+      ? existing
+      : anchor.target.kind === "text" ? findOrCreateTextAnchor(anchor) : findSemanticAnchor(anchor);
+    if (target) setAnchorState(target, anchor, anchorsById);
+  }
+  const activeThreadId = viewState().activeThreadId;
+  if (activeThreadId) document.getElementById(`thread-${activeThreadId}`)?.classList.add("active");
 }
 
 function revealCommentedContent(threadId: string): void {
@@ -265,10 +405,11 @@ document.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("message", (event) => {
-  const message = event.data as { command?: string; threadId?: string; status?: LiveSyncStatus };
+  const message = event.data as { command?: string; threadId?: string; status?: LiveSyncStatus } | ReviewStateMessage;
   if (message.command === "collectRenderData") post("renderData", { diagrams: renderedDiagrams, diagramErrors });
   if (message.command === "refresh") post("refresh");
   if (message.command === "syncStatus" && message.status) updateSyncStatus(message.status);
+  if (message.command === "reviewState" && "anchors" in message) applyReviewState(message);
   if (message.command === "revealThread" && message.threadId) {
     revealCommentedContent(message.threadId);
     focusComment(message.threadId);

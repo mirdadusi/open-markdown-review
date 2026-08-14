@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdir, stat } from "node:fs/promises";
-import path from "node:path";
+import { readdir } from "node:fs/promises";
 import { resolveInsideReview } from "./protocol/store";
 import { ReviewManifest } from "./protocol/types";
 
@@ -69,21 +68,10 @@ export class SerializedCoalescingRunner<T> {
   }
 }
 
-async function fileStamp(target: string): Promise<string> {
-  try {
-    const info = await stat(target);
-    return `${info.size}:${Math.trunc(info.mtimeMs)}`;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing";
-    throw error;
-  }
-}
-
-async function directoryStamp(root: string, relativeDirectory: string): Promise<string[]> {
+async function directoryInventory(root: string, relativeDirectory: string): Promise<string[]> {
   const absolute = resolveInsideReview(root, relativeDirectory);
   try {
-    const names = (await readdir(absolute)).filter((name) => name.endsWith(".json")).sort();
-    return Promise.all(names.map(async (name) => `${relativeDirectory}/${name}:${await fileStamp(path.join(absolute, name))}`));
+    return (await readdir(absolute)).filter((name) => name.endsWith(".json")).sort().map((name) => `${relativeDirectory}/${name}`);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [`${relativeDirectory}:missing`];
     throw error;
@@ -91,16 +79,15 @@ async function directoryStamp(root: string, relativeDirectory: string): Promise<
 }
 
 /**
- * Produces a cheap change detector for the mutable package frontier. It hashes
- * only the manifest and immutable JSON inventories, not large content blobs.
- * Blob arrivals are covered by exact file watching and bounded sync retries.
+ * Produces a cheap change detector for the immutable package frontier. One
+ * event-directory inventory replaces repeated manifest/blob reads and one stat
+ * per historical event. The manifest is created once and a revision is visible
+ * only after its revision.created event is published last.
+ * Known-file rewrites remain an audit violation and are detected by watcher-
+ * directed reloads and explicit full validation.
  */
 export async function reviewPackageFingerprint(reviewRoot: string, manifest: ReviewManifest): Promise<string> {
-  const parts = [
-    `manifest.json:${await fileStamp(path.join(reviewRoot, "manifest.json"))}`,
-    ...await directoryStamp(reviewRoot, manifest.eventDirectory),
-    ...await directoryStamp(reviewRoot, manifest.revisionDirectory),
-  ];
+  const parts = await directoryInventory(reviewRoot, manifest.eventDirectory);
   return createHash("sha256").update(parts.join("\n")).digest("hex");
 }
 

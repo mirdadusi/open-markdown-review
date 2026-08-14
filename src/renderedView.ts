@@ -12,6 +12,7 @@ import {
   ReviewSuggestion,
   ReviewState,
   ReviewThread,
+  Sha256Digest,
 } from "./protocol/types";
 
 export interface RenderedCommentRequest {
@@ -69,7 +70,7 @@ function lineAttributes(token: Token): string {
 }
 
 function isOpenThread(thread: ReviewThread): boolean {
-  return !thread.resolved && !thread.decision && !thread.decisionConflicts.length;
+  return thread.decisionConflicts.length > 0 || (!thread.resolved && !thread.decision);
 }
 
 function commentAttributes(threads: readonly ReviewThread[]): string {
@@ -95,6 +96,7 @@ export function renderDocument(
   state: ReviewState,
   webview: vscode.Webview,
   reviewRoot: string,
+  contentPaths: ReadonlyMap<Sha256Digest, string> = new Map(),
 ): string {
   const md = new MarkdownIt({ html: false, linkify: true, typographer: false, breaks: false });
   md.validateLink = (url) => /^(?:https?:|mailto:|#|\.\.?\/)/i.test(url);
@@ -211,7 +213,7 @@ export function renderDocument(
     if (!resource) {
       return `<div class="mermaid-error">Image was not captured: ${escapeHtml(reference)}</div>`;
     }
-    const uri = webview.asWebviewUri(vscode.Uri.file(resolveInsideReview(reviewRoot, resource.blobPath)));
+    const uri = webview.asWebviewUri(vscode.Uri.file(contentPaths.get(resource.digest) ?? resolveInsideReview(reviewRoot, resource.blobPath)));
     const alt = token.content || resource.alt || "Image";
     const map = (token.meta?.map as [number, number] | null | undefined) ?? [0, 1];
     const comments = documentThreads.filter((thread) => thread.root.anchor.target?.kind === "image" && thread.root.anchor.target.resourceId === resource.id);
@@ -279,11 +281,12 @@ async function buildDocuments(
   state: ReviewState,
   webview: vscode.Webview,
   reviewRoot: string,
+  contentPaths: ReadonlyMap<Sha256Digest, string>,
 ): Promise<DocumentHtml[]> {
   return Promise.all(
     revision.documents.map(async (document) => {
-      const source = await readFile(resolveInsideReview(reviewRoot, document.blobPath), "utf8");
-      return { path: document.path, html: renderDocument(source, document.path, revision, state, webview, reviewRoot) };
+      const source = await readFile(contentPaths.get(document.digest) ?? resolveInsideReview(reviewRoot, document.blobPath), "utf8");
+      return { path: document.path, html: renderDocument(source, document.path, revision, state, webview, reviewRoot, contentPaths) };
     }),
   );
 }
@@ -331,6 +334,51 @@ function syncStatusHtml(status: LiveSyncStatus): string {
   return `<div id="live-sync-status" class="live-sync ${escapeHtml(status.phase)}" role="status" aria-live="polite" title="${escapeHtml(status.detail)}" data-phase="${escapeHtml(status.phase)}" data-label="${escapeHtml(status.label)}" data-detail="${escapeHtml(status.detail)}" data-new-events="${status.newEventCount ?? 0}" data-new-comments="${status.newCommentCount ?? 0}" data-notification-token="${escapeHtml(status.notificationToken ?? "")}"><span class="live-sync-dot"></span><span data-live-sync-label>${escapeHtml(status.label)}</span><span class="live-sync-new${status.newEventCount ? " visible" : ""}" data-live-sync-new>${status.newEventCount ? `${status.newEventCount} new` : ""}</span></div>`;
 }
 
+function presentationFingerprint(revision: ReviewRevision, state: ReviewState): string {
+  const suggestions = [...state.suggestions.values()]
+    .filter((suggestion) => suggestion.revisionId === revision.id)
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((suggestion) => ({
+      id: suggestion.id,
+      status: suggestion.status,
+      accepted: suggestion.accepted?.id,
+      rejected: suggestion.rejected?.id,
+      applied: suggestion.applied?.id,
+      conflicts: suggestion.decisionConflicts.map((event) => event.id).sort(),
+    }));
+  return JSON.stringify({ revisionId: revision.id, suggestions });
+}
+
+function reviewStateMessage(revision: ReviewRevision, state: ReviewState, newEventIds: readonly string[]) {
+  const newEvents = new Set(newEventIds);
+  const revisionThreads = [...state.threads.values()].filter((thread) => thread.revisionId === revision.id);
+  const revisionSuggestions = [...state.suggestions.values()].filter((suggestion) => suggestion.revisionId === revision.id);
+  return {
+    command: "reviewState",
+    threadsHtml: revisionThreads.length
+      ? revisionThreads.map((thread) => threadHtml(thread, newEvents)).join("")
+      : `<li class="empty">No comments on this revision.</li>`,
+    suggestionsHtml: revisionSuggestions.length
+      ? revisionSuggestions.map((suggestion) => suggestionHtml(suggestion, newEvents)).join("")
+      : `<li class="empty">No suggested edits on this revision.</li>`,
+    stats: {
+      unresolved: state.unresolvedThreads.filter((thread) => thread.revisionId === revision.id).length,
+      suggestions: state.openSuggestions.filter((suggestion) => suggestion.revisionId === revision.id).length,
+      approvals: state.approvals.filter((approval) => approval.revisionId === revision.id).length,
+      rejections: state.rejections.filter((rejection) => rejection.revisionId === revision.id).length,
+    },
+    anchors: revisionThreads.map((thread) => ({
+      threadId: thread.id,
+      document: thread.root.anchor.document,
+      quote: thread.root.anchor.quote.exact,
+      lineStart: thread.root.anchor.range.start.line,
+      lineEnd: thread.root.anchor.range.end.line,
+      target: thread.root.anchor.target ?? { kind: "text" as const },
+      open: isOpenThread(thread),
+    })),
+  };
+}
+
 async function buildHtml(
   context: vscode.ExtensionContext,
   panel: vscode.WebviewPanel,
@@ -340,8 +388,9 @@ async function buildHtml(
   state: ReviewState,
   syncStatus: LiveSyncStatus,
   newEventIds: readonly string[],
+  contentPaths: ReadonlyMap<Sha256Digest, string>,
 ): Promise<string> {
-  const documents = await buildDocuments(revision, state, panel.webview, reviewRoot);
+  const documents = await buildDocuments(revision, state, panel.webview, reviewRoot, contentPaths);
   const nonce = randomBytes(18).toString("base64");
   const scriptUri = panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "media", "review.js"));
   const styleUri = panel.webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "media", "review.css"));
@@ -365,8 +414,8 @@ async function buildHtml(
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${panel.webview.cspSource} data:; style-src ${panel.webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; font-src ${panel.webview.cspSource};">
 <link rel="stylesheet" href="${styleUri}"><title>${escapeHtml(manifest.title)}</title></head>
 <body><div class="app"><header class="topbar"><div class="brand"><strong>${escapeHtml(manifest.title)}</strong><span>Revision ${escapeHtml(revision.id)} · immutable snapshot</span>${syncStatusHtml(syncStatus)}</div><div class="actions"><button class="button" data-command="refresh">Refresh</button><button class="button" data-command="addComment">Comment</button><button class="button" data-command="addSuggestion">Suggest edit</button><button class="button" data-command="approve">Approve</button><button class="button" data-command="reject">Reject</button><button class="button primary" data-command="export">Export audit PDF</button></div></header>
-<div class="layout"><nav class="sidebar left"><section class="sidebar-section"><h2 class="sidebar-title">Documents</h2><ul class="document-list">${documentButtons}</ul></section><section class="sidebar-section"><h2 class="sidebar-title">Revision status</h2><div class="status"><span>Open threads</span><strong>${unresolved}</strong><span>Open suggestions</span><strong>${state.openSuggestions.filter((item) => item.revisionId === revision.id).length}</strong><span>Approvals</span><strong>${approvals}</strong><span>Rejections</span><strong>${rejections}</strong><span>Images</span><strong>${revision.resources.filter((item) => item.role === "image").length}</strong><span>Attachments</span><strong>${revision.resources.filter((item) => item.role === "attachment").length}</strong><span>Mermaid</span><strong>${revision.mermaidDiagrams.length}</strong><span>External links</span><strong>${revision.externalReferences.length}</strong></div></section><section class="sidebar-section"><div id="selection-hint" class="selection-hint">Select text to comment or suggest an edit.</div></section></nav>
-<main class="content">${documentBodies}</main><aside class="sidebar right"><section class="sidebar-section"><h2 class="sidebar-title">Review threads</h2><ul class="thread-list">${threads}</ul></section><section class="sidebar-section"><h2 class="sidebar-title">Suggested edits</h2><ul class="thread-list">${suggestions}</ul></section></aside></div></div><div id="toast" class="toast"></div><script nonce="${nonce}" src="${scriptUri}"></script></body></html>`;
+  <div class="layout"><nav class="sidebar left"><section class="sidebar-section"><h2 class="sidebar-title">Documents</h2><ul class="document-list">${documentButtons}</ul></section><section class="sidebar-section"><h2 class="sidebar-title">Revision status</h2><div class="status"><span>Open threads</span><strong data-review-stat="unresolved">${unresolved}</strong><span>Open suggestions</span><strong data-review-stat="suggestions">${state.openSuggestions.filter((item) => item.revisionId === revision.id).length}</strong><span>Approvals</span><strong data-review-stat="approvals">${approvals}</strong><span>Rejections</span><strong data-review-stat="rejections">${rejections}</strong><span>Images</span><strong>${revision.resources.filter((item) => item.role === "image").length}</strong><span>Attachments</span><strong>${revision.resources.filter((item) => item.role === "attachment").length}</strong><span>Mermaid</span><strong>${revision.mermaidDiagrams.length}</strong><span>External links</span><strong>${revision.externalReferences.length}</strong></div></section><section class="sidebar-section"><div id="selection-hint" class="selection-hint">Select text to comment or suggest an edit.</div></section></nav>
+  <main class="content">${documentBodies}</main><aside class="sidebar right"><section class="sidebar-section"><h2 class="sidebar-title">Review threads</h2><ul id="review-thread-list" class="thread-list">${threads}</ul></section><section class="sidebar-section"><h2 class="sidebar-title">Suggested edits</h2><ul id="review-suggestion-list" class="thread-list">${suggestions}</ul></section></aside></div></div><div id="toast" class="toast"></div><script nonce="${nonce}" src="${scriptUri}"></script></body></html>`;
 }
 
 export class RenderedReviewPanel implements vscode.Disposable {
@@ -376,6 +425,8 @@ export class RenderedReviewPanel implements vscode.Disposable {
   private renderWaiters: Array<(data: RenderData) => void> = [];
   private disposed = false;
   private pendingThreadId?: string;
+  private hasHtml = false;
+  private currentPresentationFingerprint = "";
 
   get isDisposed(): boolean {
     return this.disposed;
@@ -393,6 +444,7 @@ export class RenderedReviewPanel implements vscode.Disposable {
     private revision: ReviewRevision,
     private state: ReviewState,
     private readonly handlers: RenderedViewHandlers,
+    private contentPaths: ReadonlyMap<Sha256Digest, string>,
   ) {
     this.disposables.push(
       panel.onDidDispose(() => this.dispose()),
@@ -408,6 +460,7 @@ export class RenderedReviewPanel implements vscode.Disposable {
     state: ReviewState,
     handlers: RenderedViewHandlers,
     syncStatus: LiveSyncStatus,
+    contentPaths: ReadonlyMap<Sha256Digest, string> = new Map(),
   ): Promise<RenderedReviewPanel> {
     if (this.current && this.current.reviewRoot !== reviewRoot) {
       this.current.panel.dispose();
@@ -415,7 +468,7 @@ export class RenderedReviewPanel implements vscode.Disposable {
     }
     if (this.current) {
       this.current.panel.reveal(vscode.ViewColumn.Beside);
-      await this.current.update(manifest, revision, state, syncStatus);
+      await this.current.update(manifest, revision, state, syncStatus, [], contentPaths);
       return this.current;
     }
     const panel = vscode.window.createWebviewPanel("openMarkdownReview.rendered", "Rendered Markdown Review", vscode.ViewColumn.Beside, {
@@ -423,11 +476,12 @@ export class RenderedReviewPanel implements vscode.Disposable {
       retainContextWhenHidden: true,
       localResourceRoots: [
         vscode.Uri.joinPath(context.extensionUri, "media"),
+        context.globalStorageUri,
         vscode.Uri.file(reviewRoot),
       ],
     });
-    this.current = new RenderedReviewPanel(context, panel, reviewRoot, manifest, revision, state, handlers);
-    await this.current.update(manifest, revision, state, syncStatus);
+    this.current = new RenderedReviewPanel(context, panel, reviewRoot, manifest, revision, state, handlers, contentPaths);
+    await this.current.update(manifest, revision, state, syncStatus, [], contentPaths);
     return this.current;
   }
 
@@ -437,14 +491,27 @@ export class RenderedReviewPanel implements vscode.Disposable {
     state: ReviewState,
     syncStatus: LiveSyncStatus,
     newEventIds: readonly string[] = [],
+    contentPaths: ReadonlyMap<Sha256Digest, string> = this.contentPaths,
   ): Promise<void> {
     if (this.disposed) return;
+    const nextPresentationFingerprint = presentationFingerprint(revision, state);
+    const requiresDocumentRender = !this.hasHtml
+      || this.revision.id !== revision.id
+      || this.currentPresentationFingerprint !== nextPresentationFingerprint;
     this.manifest = manifest;
     this.revision = revision;
     this.state = state;
-    this.renderData = undefined;
+    this.contentPaths = contentPaths;
     this.panel.title = `${manifest.title} · Review`;
-    this.panel.webview.html = await buildHtml(this.context, this.panel, this.reviewRoot, manifest, revision, state, syncStatus, newEventIds);
+    if (requiresDocumentRender) {
+      this.renderData = undefined;
+      this.panel.webview.html = await buildHtml(this.context, this.panel, this.reviewRoot, manifest, revision, state, syncStatus, newEventIds, contentPaths);
+      this.hasHtml = true;
+      this.currentPresentationFingerprint = nextPresentationFingerprint;
+    } else {
+      await this.panel.webview.postMessage(reviewStateMessage(revision, state, newEventIds));
+      await this.setSyncStatus(syncStatus);
+    }
   }
 
   async setSyncStatus(status: LiveSyncStatus): Promise<void> {

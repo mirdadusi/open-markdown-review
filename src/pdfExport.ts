@@ -22,6 +22,8 @@ import {
   ReviewManifest,
   ReviewRevision,
   ReviewState,
+  Sha256Digest,
+  StoredContent,
 } from "./protocol/types";
 import type { RenderData } from "./renderedView";
 
@@ -34,6 +36,12 @@ export interface PdfExportInput {
   renderData: RenderData;
   actor: ActorRef;
   clientVersion: string;
+  /** Locally verified content-addressed copies used to avoid repeated network reads. */
+  contentPaths?: ReadonlyMap<Sha256Digest, string>;
+}
+
+function contentPath(input: PdfExportInput, content: StoredContent): string {
+  return input.contentPaths?.get(content.digest) ?? resolveInsideReview(input.reviewRoot, content.blobPath);
 }
 
 export interface PdfExportResult {
@@ -240,7 +248,7 @@ async function renderMarkdown(
           const reference = image.attrGet("src") ?? "";
           const resource = input.revision.resources.find((item) => item.id === resourceIdFor(documentPath, reference));
           if (!resource) paragraph(doc, `[Image unavailable: ${reference}]`);
-          else await drawImage(doc, await readFile(resolveInsideReview(input.reviewRoot, resource.blobPath)), resource.mediaType, image.content || resource.alt || reference);
+          else await drawImage(doc, await readFile(contentPath(input, resource)), resource.mediaType, image.content || resource.alt || reference);
         }
       } else if (pendingBlock === "paragraph" || listItem) {
         paragraph(doc, `${listDepth || listItem ? "• ".padStart(Math.max(2, listDepth * 2), " ") : ""}${text}`, {
@@ -403,7 +411,7 @@ export async function exportAuditPdf(input: PdfExportInput): Promise<PdfExportRe
     if (index === 0) doc.outline.addItem("Reviewed documents");
     sectionHeading(doc, document.path);
     keyValue(doc, "Frozen digest", document.digest);
-    const source = await readFile(resolveInsideReview(input.reviewRoot, document.blobPath), "utf8");
+    const source = await readFile(contentPath(input, document), "utf8");
     await renderMarkdown(doc, source, document.path, input);
   }
   addAuditSections(doc, input, exportId, included);

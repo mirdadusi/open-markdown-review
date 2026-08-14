@@ -38,7 +38,7 @@ const result = await exportAuditPdf({
   events: loaded.events,
   renderData: { diagrams: { [diagram.id]: svg }, diagramErrors: {} },
   actor: { id: "mirek", displayName: "Mirek" },
-  clientVersion: "0.4.3",
+  clientVersion: "0.4.5",
 });
 const outputDirectory = path.join(projectRoot, "output", "pdf");
 await mkdir(outputDirectory, { recursive: true });

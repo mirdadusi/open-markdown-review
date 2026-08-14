@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.5
+
+- Added a persistent validated event/content cache and immediate in-memory folding after local writes.
+- Reduced live polling to one event-directory inventory and removed recursive workspace/blob watchers.
+- Deferred frozen Markdown/image/attachment loading until the rendered review is opened; full audit operations still verify every shared blob.
+- Bounded filesystem concurrency for Windows, SMB, NAS, and endpoint-scanned folders, with a configurable limit.
+- Avoided republishing unchanged content-addressed blobs when creating later revisions.
+- Added operation timing, performance diagnostics, cache rebuild, and progress feedback for long shared-folder operations.
+- Added a Windows-native `win32-x64` VSIX release alongside the portable WASM-backed package.
+
 ## 0.4.4
 
 - Added near-real-time local-first synchronization for simultaneous reviewers using exact active-package watchers plus a configurable polling fallback.

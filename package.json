@@ -2,7 +2,7 @@
   "name": "open-markdown-review",
   "displayName": "Open Markdown Review",
   "description": "A serverless, local-first Markdown review protocol and usable VS Code pilot client.",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "private": true,
   "license": "MIT",
   "publisher": "mirdadusi",
@@ -42,6 +42,8 @@
     "onCommand:openMarkdownReview.applySuggestion",
     "onCommand:openMarkdownReview.exportPdf",
     "onCommand:openMarkdownReview.refresh",
+    "onCommand:openMarkdownReview.rebuildCache",
+    "onCommand:openMarkdownReview.showDiagnostics",
     "onCommand:openMarkdownReview.openThread",
     "onCommand:openMarkdownReview.showThread"
   ],
@@ -136,6 +138,16 @@
         "command": "openMarkdownReview.refresh",
         "title": "Markdown Review: Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "openMarkdownReview.rebuildCache",
+        "title": "Markdown Review: Rebuild Local Cache",
+        "icon": "$(database)"
+      },
+      {
+        "command": "openMarkdownReview.showDiagnostics",
+        "title": "Markdown Review: Show Performance Diagnostics",
+        "icon": "$(output)"
       },
       {
         "command": "openMarkdownReview.openThread",
@@ -234,6 +246,11 @@
           "group": "navigation"
         },
         {
+          "command": "openMarkdownReview.showDiagnostics",
+          "when": "view == openMarkdownReview.threads || view == openMarkdownReview.reviews",
+          "group": "navigation"
+        },
+        {
           "command": "openMarkdownReview.approveReview",
           "when": "view == openMarkdownReview.threads && openMarkdownReview.hasRevision",
           "group": "navigation"
@@ -306,6 +323,20 @@
           "type": "boolean",
           "default": false,
           "description": "Allow capturing resources over plain HTTP. Disabled by default."
+        },
+        "openMarkdownReview.cache.maxSizeMb": {
+          "type": "number",
+          "default": 512,
+          "minimum": 64,
+          "maximum": 4096,
+          "description": "Maximum size of the disposable local content-addressed cache. The active revision working set is retained even when it exceeds this limit."
+        },
+        "openMarkdownReview.io.maxConcurrency": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 16,
+          "description": "Maximum concurrent filesystem operations for scans, full audits, snapshots, and cache fills. Four is suitable for SMB and Windows antivirus scanning; reload VS Code after changing it."
         },
         "openMarkdownReview.liveSync.enabled": {
           "type": "boolean",

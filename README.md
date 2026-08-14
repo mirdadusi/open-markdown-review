@@ -2,7 +2,7 @@
 
 Open Markdown Review is a serverless, local-first review system for technical Markdown. Each review is a self-contained folder. Its default name is `.review`, but it can be named `.architecture-review`, `safety-approval`, or anything else and stored inside the source repository or anywhere on a normal local disk, mounted SMB/NFS/NAS share, mapped network drive, Syncthing folder, removable disk, or cloud-synchronized folder. No OneDrive, SharePoint, or hosted service is required.
 
-Client 0.4.4 is a limited-pilot client, not merely a schema demonstration. Its VS Code extension has a dedicated Review icon in the Activity Bar, manages multiple review packages per Markdown workspace, provides a visual setup flow, selective document scope, an immutable rendered review, GFM tables, Mermaid diagrams, local and external images, explicit Markdown attachments, visibly anchored threaded comments, live local-first synchronization, comment decisions, suggested edits, approval or rejection, and auditable client-side PDF export.
+Client 0.4.5 is a limited-pilot client, not merely a schema demonstration. Its VS Code extension has a dedicated Review icon in the Activity Bar, manages multiple review packages per Markdown workspace, provides a visual setup flow, selective document scope, an immutable rendered review, GFM tables, Mermaid diagrams, local and external images, explicit Markdown attachments, visibly anchored threaded comments, live local-first synchronization, comment decisions, suggested edits, approval or rejection, and auditable client-side PDF export.
 
 ## What the client does
 
@@ -83,7 +83,19 @@ With live synchronization enabled (the default), the active package is watched d
 
 Synchronization is intentionally eventual rather than server-mediated. Local disk is usually immediate; SMB, NFS, Syncthing, OneDrive, or SharePoint adds provider/network latency. The client keeps the last validated review visible, quarantines incomplete or out-of-order files, detects the disappearance or rewrite of previously validated events during the session, retries with bounded backoff, and shows a visible **Live**, **Waiting**, or **Delayed** status. A manual **Refresh** remains available. Git-backed reviews update only after the new files are fetched/merged into the local checkout; this client does not automatically pull or push Git.
 
-The rendered client marks newly synchronized discussions, reports new comments without stealing focus, and preserves the current document, scroll positions, and focused thread when it rebuilds annotations. Existing events are never rewritten as part of synchronization.
+The rendered client marks newly synchronized discussions, reports new comments without stealing focus, and preserves the current document, scroll positions, focused thread, and already-rendered Mermaid diagrams while applying comment-only state updates. Existing events are never rewritten as part of synchronization.
+
+### Local performance cache
+
+The shared review package remains the only authoritative review record, but the extension does not use a slow network folder as its working database. It keeps the active validated event map and folded review state in memory and writes a disposable derived cache under VS Code's extension global-storage directory. The cache is never placed in the review package, source repository, or Git history.
+
+On normal synchronization, the client performs one event-directory inventory, compares immutable filenames with the cached inventory, and reads only new or watcher-reported files. A locally published comment, reply, decision, or approval is folded into memory immediately after its exclusive shared-folder write succeeds; it does not trigger a complete package reload. Because the manifest is created once and a revision is published by its event last, polling needs only the event frontier. It does not recursively watch blobs, scan the workspace, read the manifest repeatedly, or `stat` every historical event.
+
+Activation and sidebar synchronization validate events and the revision descriptor without eagerly downloading every frozen blob. Frozen Markdown, images, and attachments are copied into a local SHA-256-addressed content cache when the rendered review first needs them. Rendered review and PDF generation then use those verified local bytes instead of repeatedly opening SMB, NAS, OneDrive, or SharePoint-backed blobs. Later revisions verify and reuse unchanged content-addressed blobs rather than uploading duplicate temporary copies. Corrupt or incompatible cache data is ignored and rebuilt from the shared package. The cache defaults to 512 MB with least-recently-used pruning and is configurable under **Open Markdown Review › Cache: Max Size MB**; the active revision working set is protected from eviction.
+
+Filesystem work is bounded to four concurrent operations by default to avoid overwhelming SMB servers or Windows endpoint scanners. It can be tuned under **Open Markdown Review › I/O: Max Concurrency**. Run **Markdown Review: Show Performance Diagnostics** to open timing, cache, platform, and synchronization details. Run **Markdown Review: Rebuild Local Cache** to discard the active review's derived event cache and reconstruct it with a complete shared-storage audit; authoritative review files are never changed.
+
+Audit safety is separate from this performance path. Manual **Refresh**, review approval or rejection, and PDF export read every shared event and verify every shared revision blob before proceeding. Missing events and watcher-reported rewrites remain audit failures. Deleting the local cache loses no review information; the client reconstructs it from the shared package.
 
 One source workspace can have several review packages—for example `.architecture-review` in Git and `safety-approval` on a shared drive. The sidebar marks one review as active. Commands never combine their event logs.
 
@@ -122,7 +134,7 @@ Attached links are frozen, hashed, and opened from the local blob in the rendere
 
 ## Install the packaged extension
 
-In VS Code, run **Extensions: Install from VSIX…** and select the supplied `open-markdown-review-0.4.4.vsix`.
+In VS Code, run **Extensions: Install from VSIX…**. Windows x64 pilot users should select `open-markdown-review-0.4.5-win32-x64.vsix`, which contains native image/PDF processing. The `open-markdown-review-0.4.5-portable.vsix` package retains the cross-platform WASM fallback.
 
 To build it yourself, use Node.js 22 or newer and VS Code 1.90 or newer:
 
@@ -149,6 +161,7 @@ src/renderedView.ts           secure rendered-review webview
 src/setupView.ts              visual review/document setup panel
 src/reviewsView.ts            multiple-review registry and Activity Bar list
 src/pdfExport.ts              local PDF and audit-event generation
+src/reviewCache.ts            incremental event and verified local-content cache
 src/extension.ts              commands, identity, status, and lifecycle
 test/                         conformance, capture, merge, security, and PDF tests
 output/pdf/                   visually verified sample audit report
@@ -169,6 +182,7 @@ output/pdf/                   visually verified sample audit report
 - local and remote content capture with secret redaction;
 - fail-closed missing-image behavior;
 - atomic event collision handling;
+- persistent incremental event reconciliation, restart-safe cache recovery, bounded I/O, rewrite/deletion detection, and temporary shared-blob-unavailability fallback;
 - custom-named package storage and isolation between multiple reviews of one workspace;
 - PDF content, resource, Mermaid, comment, suggested-edit, approval/rejection, and digest generation.
 

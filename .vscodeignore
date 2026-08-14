@@ -20,3 +20,4 @@ node_modules/@emnapi/**
 node_modules/@img/**
 !node_modules/@img/colour/**
 !node_modules/@img/sharp-wasm32/**
+!node_modules/@img/sharp-win32-x64/**

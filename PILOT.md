@@ -46,6 +46,11 @@
 26. Several events arrive in one synchronization burst; the client folds them deterministically without overlapping refresh failures or lost events.
 27. A live update preserves the selected document, main and sidebar scroll positions, and focused discussion.
 28. A synchronized provider temporarily removes or rewrites a previously validated event; the client retains the last valid state and reports synchronization delay instead of silently deleting audit history.
+29. On Windows x64, install the target-specific VSIX, open **Show Performance Diagnostics**, and confirm the reported platform is `win32-x64`.
+30. On a mapped SMB drive, restart VS Code twice and confirm the warm startup reports zero shared event-file reads and does not read revision blobs until the rendered review opens.
+31. Add, reply to, and resolve a comment while recording the `publish` timing; each action creates one shared event file and updates the visible UI without a package reload or Mermaid rerender.
+32. Create a later revision with mostly unchanged documents/images and confirm unchanged content-addressed blobs are verified and reused rather than uploaded again.
+33. Run **Rebuild Local Cache** and confirm the complete event/blob audit succeeds, then reopen the rendered review from the reconstructed local cache.
 
 ## Exit criteria
 
@@ -63,6 +68,7 @@
 - Export digests verify and event inventories are complete.
 - No active Markdown, SVG, Mermaid, or attachment content executes.
 - Participants can initialize, create a revision, comment, reply, decide, suggest edits, apply accepted edits, approve/reject, and export without developer assistance.
+- Windows/SMB warm refreshes read no historical event files, normal startup defers blob reads, and diagnostic timings make remaining provider latency attributable.
 
 ## Feedback to collect
 
