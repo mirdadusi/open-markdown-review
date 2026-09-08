@@ -13,6 +13,7 @@ import { discoverReviewPackages } from "../src/protocol/discovery";
 import { documentsForPatterns, validateDocumentSelection } from "../src/protocol/scope";
 import { exportAuditPdf } from "../src/pdfExport";
 import { ReviewCache } from "../src/reviewCache";
+import { installPortableBrowserClient, PORTABLE_BROWSER_FILENAME } from "../src/portableBrowser";
 import { createSnapshot, inspectMarkdown, tableIdFor } from "../src/protocol/snapshot";
 import {
   appendEvent,
@@ -349,6 +350,19 @@ test("event graph rejects cross-thread replies and invalid detached export inven
   const graph = validateEventGraph([revisionCreated(), created(), otherRoot, crossThread, invalidExport]);
   assert.match(graph.get(crossThread.id)?.join(";") ?? "", /inReplyTo/);
   assert.match(graph.get(invalidExport.id)?.join(";") ?? "", /own detached|missing or ambiguous/);
+});
+
+test("audit export metadata is client-neutral", async () => {
+  const browserExport: ReviewEvent = {
+    schemaVersion: EVENT_SCHEMA_VERSION, id: "evt_browser_export", type: "export.created", reviewId: "review_test", revisionId: "revision_1",
+    occurredAt: "2026-08-13T10:09:00.000Z", actor, exportId: "export_browser", format: "application/pdf", exportPath: "exports/browser.pdf",
+    exportDigest: digest, includedEventIds: [], renderer: { client: "open-markdown-review-browser", clientVersion: "0.1.0", pdfEngine: "PDFKit 0.17.2", mermaidVersion: "11.10.1" }, renderedDiagramDigests: {},
+  };
+  assert.equal(validateEvent(browserExport).ok, true);
+  const ajv = new Ajv2020({ allErrors: true, strict: true });
+  addFormats(ajv);
+  const eventSchema = JSON.parse(await readFile("protocol/schemas/event.schema.json", "utf8"));
+  assert.equal(ajv.validate(eventSchema, browserExport), true, ajv.errorsText());
 });
 
 test("quote anchors survive inserted text and prefer matching context", () => {
@@ -689,6 +703,41 @@ test("custom-named review packages remain independent for multiple reviews of on
 test("extension bundle includes PDFKit runtime font and color-profile assets", async () => {
   assert.match(await readFile(path.resolve("dist/data/Helvetica.afm"), "utf8"), /FontName Helvetica/);
   assert.ok((await readFile(path.resolve("dist/data/sRGB_IEC61966_2_1.icc"))).byteLength > 1_000);
+});
+
+test("portable browser client is generic, self-contained, bounded, and installed without overwriting", async (t) => {
+  const artifact = path.resolve("dist/OpenMarkdownReview.html");
+  const bytes = await readFile(artifact);
+  const html = bytes.toString("utf8");
+  assert.match(html, /name="open-markdown-review-portable-client"/);
+  assert.match(html, /showDirectoryPicker/);
+  assert.match(html, /open-markdown-review-portable/);
+  assert.ok(html.includes('omr-professional-local'), 'portable client includes local permission/recovery storage');
+  assert.ok(html.includes('Choose review folder'), 'portable client explains the folder grant');
+  assert.match(html, /comment\.created/);
+  assert.match(html, /review\.approved/);
+  assert.match(html, /Mermaid/);
+  assert.doesNotMatch(html, /review_test/);
+  assert.doesNotMatch(html, /__PORTABLE_(?:CSS|JS)__/);
+  assert.equal([...html.matchAll(/<script(?:\s[^>]*)?>/g)].length, 1);
+  assert.equal([...html.matchAll(/<\/script>/g)].length, 1);
+  assert.ok(/script-src 'sha256-[A-Za-z0-9+/=]+'/.test(html), 'bundle uses a fixed script hash');
+  assert.ok(!html.includes("script-src 'unsafe-inline'") && !html.includes("'unsafe-eval'"), 'CSP does not allow dynamic code execution');
+  const scriptStart = html.lastIndexOf("<script>") + "<script>".length;
+  const scriptEnd = html.lastIndexOf("</script>");
+  assert.ok(scriptStart > 0 && scriptEnd > scriptStart);
+  assert.doesNotThrow(() => new Function(html.slice(scriptStart, scriptEnd)), "assembled browser bundle must remain syntactically valid");
+  assert.ok(bytes.byteLength < 6 * 1024 * 1024, "portable browser artifact should remain practical for a shared folder");
+
+  const reviewRoot = await mkdtemp(path.join(os.tmpdir(), "omr-browser-client-"));
+  t.after(async () => rm(reviewRoot, { recursive: true, force: true }));
+  await initializeReview(reviewRoot, manifest());
+  const manifestBefore = await readFile(path.join(reviewRoot, "manifest.json"));
+  const target = await installPortableBrowserClient(reviewRoot, artifact);
+  assert.equal(target, path.join(reviewRoot, PORTABLE_BROWSER_FILENAME));
+  assert.deepEqual(await readFile(path.join(reviewRoot, "manifest.json")), manifestBefore);
+  assert.equal((await readdir(path.join(reviewRoot, "events"))).length, 0);
+  await assert.rejects(() => installPortableBrowserClient(reviewRoot, artifact), /already exists/);
 });
 
 test("rendered review links highlighted anchored text to comment cards and shows replies", () => {

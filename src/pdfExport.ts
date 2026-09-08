@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { contained } from "./professional/nativeStorage";
 import MarkdownIt from "markdown-it";
 import type Token from "markdown-it/lib/token.mjs";
 import PDFDocument from "pdfkit";
@@ -38,6 +40,9 @@ export interface PdfExportInput {
   clientVersion: string;
   /** Locally verified content-addressed copies used to avoid repeated network reads. */
   contentPaths?: ReadonlyMap<Sha256Digest, string>;
+  /** Captured and reverified authoritative bytes; never a caller-supplied cache receipt. */
+  verifiedBytes?: ReadonlyMap<Sha256Digest, Buffer>;
+  eventDigests?: ReadonlyMap<string, Sha256Digest>;
 }
 
 function contentPath(input: PdfExportInput, content: StoredContent): string {
@@ -248,7 +253,7 @@ async function renderMarkdown(
           const reference = image.attrGet("src") ?? "";
           const resource = input.revision.resources.find((item) => item.id === resourceIdFor(documentPath, reference));
           if (!resource) paragraph(doc, `[Image unavailable: ${reference}]`);
-          else await drawImage(doc, await readFile(contentPath(input, resource)), resource.mediaType, image.content || resource.alt || reference);
+          else await drawImage(doc, input.verifiedBytes!.get(resource.digest)!, resource.mediaType, image.content || resource.alt || reference);
         }
       } else if (pendingBlock === "paragraph" || listItem) {
         paragraph(doc, `${listDepth || listItem ? "• ".padStart(Math.max(2, listDepth * 2), " ") : ""}${text}`, {
@@ -349,7 +354,7 @@ function addAuditSections(doc: PDFKit.PDFDocument, input: PdfExportInput, export
   for (const item of input.revision.externalReferences) keyValue(doc, item.label ?? item.document, item.uri);
   sectionHeading(doc, "Included event inventory");
   for (const event of included) {
-    const digest = sha256(`${JSON.stringify(event, null, 2)}\n`);
+    const digest = input.eventDigests!.get(event.id)!;
     keyValue(doc, `${event.type} · ${event.id}`, digest);
   }
 }
@@ -366,6 +371,20 @@ async function documentToBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
 }
 
 export async function exportAuditPdf(input: PdfExportInput): Promise<PdfExportResult> {
+  const verifiedBytes = new Map<Sha256Digest, Buffer>(), eventDigests = new Map<string, Sha256Digest>();
+  for (const content of [...input.revision.documents, ...input.revision.resources]) {
+    const relative = content.blobPath.replace(/^\.review\//, "");
+    const bytes = await readFile(await contained(input.reviewRoot, relative));
+    if (bytes.length !== content.byteLength || sha256(bytes) !== content.digest) throw new Error(`PDF export blocked: frozen content changed: ${relative}`);
+    verifiedBytes.set(content.digest, bytes);
+  }
+  for (const event of input.events) {
+    const relative = `${input.manifest.eventDirectory.replace(/^\.review\//, "")}/${event.id}.json`;
+    const bytes = await readFile(await contained(input.reviewRoot, relative));
+    if (!isDeepStrictEqual(JSON.parse(bytes.toString("utf8")), event)) throw new Error(`PDF export blocked: event changed: ${event.id}`);
+    eventDigests.set(event.id, sha256(bytes));
+  }
+  input = { ...input, verifiedBytes, eventDigests };
   const errors = Object.entries(input.renderData.diagramErrors);
   if (errors.length) throw new Error(`PDF export blocked: ${errors.map(([id, message]) => `${id}: ${message}`).join("; ")}`);
   for (const diagram of input.revision.mermaidDiagrams) {
@@ -411,7 +430,7 @@ export async function exportAuditPdf(input: PdfExportInput): Promise<PdfExportRe
     if (index === 0) doc.outline.addItem("Reviewed documents");
     sectionHeading(doc, document.path);
     keyValue(doc, "Frozen digest", document.digest);
-    const source = await readFile(contentPath(input, document), "utf8");
+    const source = input.verifiedBytes!.get(document.digest)!.toString("utf8");
     await renderMarkdown(doc, source, document.path, input);
   }
   addAuditSections(doc, input, exportId, included);

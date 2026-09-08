@@ -1,0 +1,45 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { authorReview } from '../src/professional/authoring';
+import { NativeStorage } from '../src/professional/nativeStorage';
+import { ReviewSession } from '../src/professional/session';
+import { digest, encode } from '../src/professional/bytes';
+import { publish, evidence } from '../src/professional/storage';
+
+test('Windows CI SMB: concurrent independent writers, cold reconstruction, damaged event and recovery', { timeout: 120000 }, async () => {
+  assert.equal(process.platform, 'win32', 'Run this qualification only in Windows CI.');
+  const share = process.env.OMR_TEST_REVIEW_ROOT;
+  assert.ok(share && /^\\\\/.test(share), 'An actual UNC path is mandatory; a local folder cannot pass this gate.');
+  const local = await mkdtemp(path.join(os.tmpdir(), 'omr-smb-author-'));
+  const source = path.join(local, 'source'); await mkdir(source);
+  await writeFile(path.join(source, 'review.md'), '# Shared review\n\nConcurrent participant test.\n');
+  const root = path.join(await mkdtemp(path.join(share, 'omr-smb-')), 'review');
+  const created = await authorReview({ source, store: root, rootDocument: 'review.md', actor: { id: 'author' }, operationId: 'smb_creation', clientArtifact: path.resolve('dist/OpenMarkdownReview.html'), journalRoot: path.join(local, 'author-journal') });
+  assert.equal(created.outcome, 'completed');
+  const a = new ReviewSession(new NativeStorage(root, path.join(local, 'alice'))), b = new ReviewSession(new NativeStorage(root, path.join(local, 'bob')));
+  await Promise.all([a.open(), b.open()]);
+  const actions = Array.from({ length: 20 }, (_, i) => {
+    const session = i % 2 ? a : b, context = session.context({ id: i % 2 ? 'alice' : 'bob' });
+    const event = session.makeEvent(context, { type: 'comment.created', threadId: `thread_${i}`, commentId: `comment_${i}`, anchor: { document: 'review.md', documentDigest: digest('# Shared review\n\nConcurrent participant test.\n'), range: { start: { line: 2, character: 0 }, end: { line: 2, character: 11 } }, quote: { exact: 'Concurrent ' }, target: { kind: 'text' } }, body: { format: 'markdown', text: `Participant action ${i}` } });
+    return session.save(context, event);
+  });
+  await Promise.all(actions); await Promise.all([a.refresh(), b.refresh()]);
+  assert.deepEqual(a.events.map(e => e.id).sort(), b.events.map(e => e.id).sort()); assert.equal(a.events.length, 21);
+  const cold = new ReviewSession(new NativeStorage(root, path.join(local, 'cold'))); await cold.open();
+  assert.deepEqual(cold.events.map(e => e.id).sort(), a.events.map(e => e.id).sort());
+  const audit = await cold.audit(cold.context({ id: 'auditor' }));
+  for (const event of audit.inventory.events) assert.equal(digest(await readFile(path.join(root, event.path))), event.digest);
+  const pending = encode('Exact bytes after an interrupted SMB publication.');
+  const file = evidence(`blobs/sha256/${digest(pending).slice(7, 9)}/${digest(pending).slice(7)}`, pending, 'text/plain');
+  await a.storage.journalPut('smb_interrupted', { path: file.path, bytes: Array.from(pending), acknowledged: false });
+  await a.storage.write(file.path, pending.slice(0, 8), false);
+  await publish(a.storage, 'smb_interrupted', file, pending); assert.equal(digest(await a.storage.read(file.path, 100)), file.digest);
+  const damaged = audit.inventory.events.at(-1)!;
+  await writeFile(path.join(root, damaged.path), '{}');
+  await assert.rejects(() => cold.audit(cold.context({ id: 'auditor' })));
+  assert.ok(cold.diagnostics.length);
+  process.stdout.write(`SMB qualification: ${root}; ${actions.length} simultaneous actions, two journals, cold verification and interrupted publication passed.\n`);
+});

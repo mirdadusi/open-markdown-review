@@ -1,10 +1,15 @@
 .github/**
 .vscode/**
+.vscode-test/**
+**/*.vsix.sha256
+examples/**/OpenMarkdownReview.html
+examples/**/client-backups/**
 src/**
 test/**
 scripts/**
 tsconfig.json
 out/**
+coverage/**
 output/**
 tmp/**
 **/*.map

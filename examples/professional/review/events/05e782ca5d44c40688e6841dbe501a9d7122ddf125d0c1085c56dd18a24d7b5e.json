@@ -1,0 +1,21 @@
+{
+  "type": "comment.replied",
+  "threadId": "example_thread",
+  "commentId": "example_reply",
+  "inReplyTo": "example_comment",
+  "body": {
+    "format": "markdown",
+    "text": "Yes. Authoring is available in VS Code and from the CLI."
+  },
+  "schemaVersion": "0.5.0",
+  "id": "evt_add34ba79c80460a99d04d06274a40c3",
+  "reviewId": "review_00e74973abaa401d89d1de855963c346",
+  "revisionId": "revision_82c76e2ae8f74431a48f30742b6a7cc3",
+  "revisionDigest": "sha256:9c836ede96fc7b1d990ab1934d13c3cf5fb62bd1e22e5960c68dff03be35849b",
+  "occurredAt": "2026-09-08T12:42:21.998Z",
+  "actor": {
+    "id": "example-author",
+    "displayName": "Example author"
+  },
+  "operationId": "example_reply"
+}

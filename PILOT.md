@@ -1,5 +1,7 @@
 # Limited pilot plan
 
+The scenarios below describe the earlier 0.4 pilot. The new 0.5 implementation candidate is tracked in [implementation status](spec/IMPLEMENTATION-STATUS.md). Entry to the professional pilot is governed by [the professional specification](spec/PROFESSIONAL-V1.md) and [its mandatory acceptance gates](spec/ACCEPTANCE.md). Windows/share testing is CI-only, on disposable runner-owned fixtures. This historical checklist is not evidence that the new gates are closed.
+
 ## Recommended group
 
 - 8–20 participants
@@ -8,6 +10,7 @@
 - At least one mounted SMB/NFS/NAS or mapped network-drive review and one Git-backed review
 - Optional OneDrive/SharePoint/Syncthing comparison; no cloud provider is required
 - Documents containing Mermaid, local and remote images, explicit attachments, and wide tables
+- Current Microsoft Edge or Google Chrome on at least one Windows participant machine for the portable-client path
 
 ## Entry criteria
 
@@ -49,8 +52,14 @@
 29. On Windows x64, install the target-specific VSIX, open **Show Performance Diagnostics**, and confirm the reported platform is `win32-x64`.
 30. On a mapped SMB drive, restart VS Code twice and confirm the warm startup reports zero shared event-file reads and does not read revision blobs until the rendered review opens.
 31. Add, reply to, and resolve a comment while recording the `publish` timing; each action creates one shared event file and updates the visible UI without a package reload or Mermaid rerender.
-32. Create a later revision with mostly unchanged documents/images and confirm unchanged content-addressed blobs are verified and reused rather than uploaded again.
-33. Run **Rebuild Local Cache** and confirm the complete event/blob audit succeeds, then reopen the rendered review from the reconstructed local cache.
+32. Create a new review with **VS Code + portable browser** selected and verify `OpenMarkdownReview.html` appears only after the first revision publishes.
+33. Open the generated HTML in Edge/Chrome, choose the same local or mounted SMB package, grant read/write access, and verify manifest/revision/event schema validation completes.
+34. Verify frozen Markdown, GFM tables, local and external captured images, Mermaid diagrams, explicit attachments, comment highlights, replies, resolutions, decisions, approvals, and rejections match the VS Code view.
+35. Add an event in the browser and in VS Code within the same polling interval; verify both clients converge without modifying either event file. Repeat on the slowest pilot share.
+36. Print/save a browser convenience PDF and verify comments and replies are present, while confirming it is not presented as the digest-recorded audit export.
+37. Verify Firefox/Safari or a browser policy that disables folder access shows the compatibility path and cannot pretend to write events.
+38. Create a later revision with mostly unchanged documents/images and confirm unchanged content-addressed blobs are verified and reused rather than uploaded again.
+39. Run **Rebuild Local Cache** and confirm the complete event/blob audit succeeds, then reopen the rendered review from the reconstructed local cache.
 
 ## Exit criteria
 

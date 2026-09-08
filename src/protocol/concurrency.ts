@@ -13,11 +13,16 @@ export async function mapWithConcurrency<T, R>(
   if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error("I/O concurrency must be a positive integer.");
   const result = new Array<R>(values.length);
   let cursor = 0;
-  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, async () => {
-    while (cursor < values.length) {
+  let stopped = false;
+  const settled = await Promise.allSettled(Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (!stopped && cursor < values.length) {
       const index = cursor++;
-      result[index] = await worker(values[index], index);
+      try { result[index] = await worker(values[index], index); }
+      catch (error) { stopped = true; throw error; }
     }
   }));
+  // Never report failure/cancellation while sibling workers can still mutate files.
+  const failure = settled.find((value): value is PromiseRejectedResult => value.status === 'rejected');
+  if (failure) throw failure.reason;
   return result;
 }

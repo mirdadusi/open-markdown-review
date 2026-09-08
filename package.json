@@ -2,7 +2,7 @@
   "name": "open-markdown-review",
   "displayName": "Open Markdown Review",
   "description": "A serverless, local-first Markdown review protocol and usable VS Code pilot client.",
-  "version": "0.4.6",
+  "version": "0.5.0",
   "private": true,
   "license": "MIT",
   "publisher": "mirdadusi",
@@ -15,13 +15,19 @@
     "url": "https://github.com/mirdadusi/open-markdown-review/issues"
   },
   "engines": {
+    "node": ">=22",
     "vscode": "^1.90.0"
   },
   "categories": [
     "Other"
   ],
   "main": "./dist/extension.js",
+  "bin": {
+    "omr": "./dist/cli.js"
+  },
   "activationEvents": [
+    "onCustomEditor:openMarkdownReview.entryFile",
+    "onView:openMarkdownReview.packages",
     "onView:openMarkdownReview.reviews",
     "onView:openMarkdownReview.threads",
     "onCommand:openMarkdownReview.initialize",
@@ -29,6 +35,7 @@
     "onCommand:openMarkdownReview.switchReview",
     "onCommand:openMarkdownReview.setup",
     "onCommand:openMarkdownReview.createRevision",
+    "onCommand:openMarkdownReview.addPortableBrowserClient",
     "onCommand:openMarkdownReview.openReview",
     "onCommand:openMarkdownReview.addComment",
     "onCommand:openMarkdownReview.addSuggestion",
@@ -48,7 +55,24 @@
     "onCommand:openMarkdownReview.showThread"
   ],
   "contributes": {
+    "customEditors": [
+      {
+        "viewType": "openMarkdownReview.entryFile",
+        "displayName": "Markdown Review Toolbox",
+        "selector": [
+          {
+            "filenamePattern": "**/OpenMarkdownReview.html"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
     "commands": [
+      {
+        "command": "openMarkdownReview.updatePortableBrowserClient",
+        "title": "Markdown Review: Update Portable Browser Client",
+        "icon": "$(sync)"
+      },
       {
         "command": "openMarkdownReview.initialize",
         "title": "Markdown Review: Create New Review",
@@ -73,6 +97,11 @@
         "command": "openMarkdownReview.createRevision",
         "title": "Markdown Review: Choose Documents and Create Revision",
         "icon": "$(archive)"
+      },
+      {
+        "command": "openMarkdownReview.addPortableBrowserClient",
+        "title": "Markdown Review: Add Portable Browser Client",
+        "icon": "$(globe)"
       },
       {
         "command": "openMarkdownReview.openReview",
@@ -171,6 +200,10 @@
     "views": {
       "openMarkdownReview": [
         {
+          "id": "openMarkdownReview.packages",
+          "name": "Review Packages (0.5)"
+        },
+        {
           "id": "openMarkdownReview.reviews",
           "name": "Reviews"
         },
@@ -181,6 +214,10 @@
       ]
     },
     "viewsWelcome": [
+      {
+        "view": "openMarkdownReview.packages",
+        "contents": "Open OpenMarkdownReview.html from a review folder, or create a new review.\n[Create new review](command:openMarkdownReview.initialize)\n[Connect existing review](command:openMarkdownReview.connectReview)"
+      },
       {
         "view": "openMarkdownReview.reviews",
         "contents": "Create a review package or connect one from a local/shared drive.\n[Create new review](command:openMarkdownReview.initialize)\n[Connect existing review](command:openMarkdownReview.connectReview)"
@@ -236,9 +273,14 @@
           "group": "navigation@2"
         },
         {
-          "command": "openMarkdownReview.exportPdf",
+          "command": "openMarkdownReview.addPortableBrowserClient",
           "when": "view == openMarkdownReview.threads && openMarkdownReview.hasRevision",
           "group": "navigation@3"
+        },
+        {
+          "command": "openMarkdownReview.exportPdf",
+          "when": "view == openMarkdownReview.threads && openMarkdownReview.hasRevision",
+          "group": "navigation@4"
         },
         {
           "command": "openMarkdownReview.refresh",
@@ -370,31 +412,40 @@
   "scripts": {
     "clean": "node ./scripts/clean.mjs",
     "build:webview": "esbuild src/webview/review.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=media/review.js --minify && esbuild src/webview/setup.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=media/setup.js --minify",
-    "build:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/extension.js --external:vscode --external:sharp --minify && node scripts/copy-pdfkit-assets.mjs",
-    "compile": "npm run build:webview && tsc -p tsconfig.json && npm run build:extension",
+    "build:portable-browser": "esbuild src/professional/toolbox.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=dist/portable-browser.js --minify --metafile=dist/toolbox-metafile.json && node scripts/dependency-inventory.mjs toolbox && node scripts/assemble-portable-browser.mjs",
+    "build:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/extension.js --external:vscode --external:sharp --minify --metafile=dist/extension-metafile.json && node scripts/copy-pdfkit-assets.mjs",
+    "build:schemas": "node scripts/build-professional-schemas.mjs",
+    "build:cli": "esbuild src/professional/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:playwright --metafile=dist/cli-metafile.json",
+    "compile": "npm run build:schemas && npm run build:webview && tsc -p tsconfig.json && npm run build:extension && npm run build:portable-browser && npm run build:cli && node scripts/dependency-inventory.mjs runtime",
     "watch": "tsc -w -p tsconfig.json",
-    "test": "npm run compile && node --test out/test/*.test.js",
+    "test": "npm run compile && node --test out/test/*.test.js test/release-policy.test.mjs",
+    "test:browser": "npm run compile && node --test out/test/browser.integration.js",
+    "test:extension": "npm run compile && node scripts/test-extension.mjs",
     "check": "npm run test",
     "sample:pdf": "npm run compile && node scripts/export-example.mjs",
     "package:vsix": "npm run compile && vsce package --no-rewrite-relative-links"
   },
   "dependencies": {
     "@img/sharp-wasm32": "0.35.3",
+    "@noble/hashes": "1.8.0",
     "markdown-it": "^14.1.0",
     "pdfkit": "^0.17.2",
+    "pdfmake": "0.3.11",
     "sharp": "^0.35.3",
     "svg-to-pdfkit": "^0.1.8"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
     "@types/markdown-it": "^14.1.2",
-    "@vscode/vsce": "^3.9.2",
+    "@types/node": "^22.10.0",
     "@types/pdfkit": "^0.17.3",
     "@types/vscode": "^1.90.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.9.2",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "esbuild": "^0.25.9",
     "mermaid": "^11.10.1",
+    "playwright": "1.62.1",
     "typescript": "^5.7.2"
   }
 }

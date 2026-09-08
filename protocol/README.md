@@ -2,6 +2,8 @@
 
 This document defines the portable, serverless protocol. The key words MUST, MUST NOT, REQUIRED, SHOULD, SHOULD NOT, and MAY indicate interoperability requirements.
 
+This remains the normative contract for existing 0.4 packages. The [professional client specification](../spec/PROFESSIONAL-V1.md) and [0.5 implementation draft](../spec/PROTOCOL-0.5.md) define the next target, including CLI authoring, full HTML review parity, exact audit inventories, and changed lifecycle/publication rules. They do not retroactively change this protocol or claim the current implementation is conforming.
+
 ## Package layout
 
 The review package is a directory, not a required directory name. `.review` is the conventional default, but `.architecture-review`, `safety-approval`, or any other filesystem-safe name is equivalent. It MAY be inside the Markdown source workspace or at a separate local/mounted location.
@@ -24,6 +26,34 @@ The normative data shapes are:
 - [`schemas/event.schema.json`](schemas/event.schema.json)
 
 Equivalent TypeScript types and independent runtime validation live under [`../src/protocol/`](../src/protocol/).
+
+[`STANDARDIZATION.md`](STANDARDIZATION.md) defines the complete client-neutral standardization boundary and the wire-format gaps that must close before a future protocol version is declared. It does not silently change the 0.4 wire format.
+
+## Authority and client independence
+
+The selected review-package directory is the only authoritative review record. A VS Code extension, browser client, CLI, or other implementation MUST read and write the same manifest, revisions, blobs, events, and exports. A conforming client MUST NOT require a client-private database to interpret shared state and MUST NOT place client-specific mutable state inside protocol directories.
+
+Authority is divided deliberately:
+
+- the source workspace is authoritative for editable Markdown used to create a later revision;
+- frozen revision blobs are authoritative for the exact material being reviewed;
+- admitted immutable events are authoritative for review actions and assertions;
+- an export's bytes and detached `export.created` event are authoritative for that artifact;
+- active-review choice, open panels, filesystem handles, indexes, and caches are client-local and non-authoritative.
+
+Freezing Markdown and required resources is audit evidence, not duplication between clients. Blob identity is content digest, so identical bytes are stored once and MAY be referenced by several documents, resources, or revisions.
+
+A client MAY keep a memory, IndexedDB, or local-disk cache outside the review package. Such a cache MUST be reconstructible from authoritative package files, MUST NOT be synchronized as protocol state, MUST NOT cause a full audit to trust missing shared bytes, and MAY be deleted without losing review information.
+
+Non-protocol files MAY exist at the package root and MUST be ignored by the state fold. For example, `OpenMarkdownReview.html` is replaceable client software, not a manifest extension, revision, event, blob, export, identity record, or audit authority. It MUST NOT embed review-specific authoritative state.
+
+## Client conformance and filesystem contract
+
+Protocol conformance is by behavior, not product name. A core reader validates and reconstructs state. A participant writer additionally publishes review events. An authoring writer additionally publishes revisions and may apply accepted suggestions to a separately selected source workspace. An audit exporter additionally publishes verified detached artifacts. A client MAY implement several roles.
+
+A 0.4 participant writer requires filesystem operations capable of exclusive creation of an event file. It MUST generate a collision-resistant ID, construct the complete UTF-8 bytes, create the final target without replacing an existing name, close it, and report any failure. A client whose API only uploads copies or downloads files elsewhere is a reader, not a conforming participant writer. A single-file browser application is not exempt from these requirements; browser packaging and permission grants are outside the wire protocol.
+
+Readers and writers MUST NOT use modification time, directory enumeration order, advisory locks, filesystem owner/ACL metadata, or a presumed Windows identity as semantic input. Mounted-share permissions control access to the directory but do not authenticate the `actor` recorded inside an event.
 
 ## Wire format, identifiers, and paths
 
@@ -69,7 +99,7 @@ The manifest establishes one `reviewId`, title, creation identity, Markdown scop
 
 `manifest.json` does not embed an absolute source path or storage path. Source-to-package association and the choice of active review are client-local concerns, which keeps a copied or mounted package portable between machines.
 
-Actor IDs are self-asserted strings. Display names are descriptive and MUST NOT be treated as authenticated identity unless an external profile adds signatures.
+Actor IDs are self-asserted strings. Display names are descriptive and MUST NOT be treated as authenticated identity unless an explicit profile adds verifiable signatures and authorization. Typing a name proves no more than self-declaration. SMB/Windows authentication may restrict access to the package, but browser and portable clients MUST NOT claim that filesystem access authenticates an event author.
 
 ## Review scope
 
@@ -206,6 +236,8 @@ Multiple acceptance assertions without a rejection are agreement; multiple rejec
 
 `export.created.includedEventIds` lists the pre-existing events represented in the PDF. The PDF's own digest is kept in the detached event because embedding a file's digest inside itself is mathematically self-referential.
 
+`export.created.renderer.client` is a non-empty implementation identifier such as `open-markdown-review-vscode` or `open-markdown-review-browser`. It is audit metadata, not a required client brand. Readers MUST NOT reject an otherwise supported export because it was produced by an independent implementation.
+
 ## State reconstruction and synchronization
 
 Clients MUST:
@@ -248,9 +280,11 @@ Protocol files and attachment bytes are untrusted data. Clients MUST NOT execute
 
 Protocol 0.4 does not provide cryptographic actor signatures, event deletion/editing, thread reopening, or authenticated web capture. These can be added through explicit future events or profiles without weakening existing immutable history.
 
+Protocol 0.4 also cannot make a browser grant filesystem access. A local HTML client MAY participate only when its runtime provides the required read/write and exclusive-publication behavior for the explicitly selected package. Read-only directory upload and downloaded event files do not satisfy participant-writer conformance.
+
 ## Conformance
 
-A protocol 0.4 writer is conforming when it emits schema-valid files, follows exclusive append-only publication, satisfies every cross-file invariant, freezes required resources, and never emits an event family without its advertised capability. A reader is conforming when it validates and verifies before presentation, reconstructs deterministic state, exposes conflicts/dangling data/integrity failures, and does not execute untrusted content.
+A protocol 0.4 participant writer is conforming when it emits schema-valid files, follows exclusive append-only publication, satisfies every event invariant, and never emits an event family without its advertised capability. An authoring writer additionally satisfies every revision/resource invariant and freezes required resources. An audit exporter additionally builds from verified frozen inputs and publishes the detached artifact event. A reader is conforming when it validates and verifies before presentation, reconstructs deterministic state, exposes conflicts/dangling data/integrity failures, and does not execute untrusted content.
 
 [`IMPLEMENTER-CHECKLIST.md`](IMPLEMENTER-CHECKLIST.md) maps these requirements to a client build sequence and required tests. The checked-in schemas are structural validation; the cross-file and state-machine rules in this document remain normative where JSON Schema cannot express them.
 

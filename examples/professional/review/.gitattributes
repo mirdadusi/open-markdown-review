@@ -1,0 +1,3 @@
+# Exact review evidence: never normalize, filter, or re-encode.
+* -text -filter -working-tree-encoding
+**/* -text -filter -working-tree-encoding

@@ -255,7 +255,8 @@ export interface ExportCreatedEvent extends EventBase {
   exportDigest: Sha256Digest;
   includedEventIds: string[];
   renderer: {
-    client: "open-markdown-review-vscode";
+    /** Stable implementation identifier, not a protocol-defined client brand. */
+    client: string;
     clientVersion: string;
     pdfEngine: string;
     mermaidVersion: string;

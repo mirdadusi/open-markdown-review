@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "omr-release-qualification/1",
+  "version": "0.5.0",
+  "professionalPilotApproved": false,
+  "statusReport": "spec/IMPLEMENTATION-STATUS.md",
+  "publication": {
+    "channel": "evaluation",
+    "approved": true,
+    "approvedBy": "user",
+    "approvedOn": "2026-09-08",
+    "note": "Public upstream release 0.5.0; MIT is the sole project-code license and M.I.R.D.A. is a non-binding philosophy. Professional-pilot qualification remains unchanged."
+  },
+  "blockingGates": [
+    "Interruptible Mermaid rendering deadline",
+    "Remaining participant cancellation and platform source-save durability/ACL qualification",
+    "Containment race and optional-extension conformance",
+    "Windows native browser folder-permission qualification on local disk",
+    "Reference-workload performance and independent user-task acceptance"
+  ],
+  "excludedQualifications": [
+    {
+      "id": "windows-smb",
+      "status": "untested",
+      "requestedBy": "user",
+      "date": "2026-09-08",
+      "reason": "An authorized CI-only SMB share cannot be arranged.",
+      "scope": "SMB transport, concurrent shared-drive publication, native browser grant on SMB, shared-drive ACL/recovery and real SMB performance.",
+      "doesNotWaive": "Local Windows folder-permission, correctness, security, performance and other professional-pilot gates."
+    }
+  ]
+}

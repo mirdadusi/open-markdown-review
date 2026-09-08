@@ -1,0 +1,18 @@
+{
+  "type": "thread.decided",
+  "threadId": "example_thread",
+  "decision": "accepted",
+  "reason": "Useful clarification.",
+  "decisionPredecessors": [],
+  "schemaVersion": "0.5.0",
+  "id": "evt_c454b0d4d76f485098c9edb962218804",
+  "reviewId": "review_00e74973abaa401d89d1de855963c346",
+  "revisionId": "revision_82c76e2ae8f74431a48f30742b6a7cc3",
+  "revisionDigest": "sha256:9c836ede96fc7b1d990ab1934d13c3cf5fb62bd1e22e5960c68dff03be35849b",
+  "occurredAt": "2026-09-08T12:42:22.028Z",
+  "actor": {
+    "id": "example-author",
+    "displayName": "Example author"
+  },
+  "operationId": "example_decide"
+}

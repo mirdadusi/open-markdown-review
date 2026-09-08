@@ -1,0 +1,73 @@
+{
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "mode"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "0.5.0"
+        },
+        "kind": {
+          "const": "review-policy"
+        },
+        "mode": {
+          "const": "assertions-only"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "mode",
+        "eligibleActorIds",
+        "minimumApprovals",
+        "blockOnRejection",
+        "requireResolvedThreads",
+        "requireClosedSuggestions"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "0.5.0"
+        },
+        "kind": {
+          "const": "review-policy"
+        },
+        "mode": {
+          "const": "quorum-v1"
+        },
+        "eligibleActorIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "minimumApprovals": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "blockOnRejection": {
+          "type": "boolean"
+        },
+        "requireResolvedThreads": {
+          "type": "boolean"
+        },
+        "requireClosedSuggestions": {
+          "type": "boolean"
+        }
+      }
+    }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-markdown-review:schema:policy:0.5"
+}

@@ -10,6 +10,7 @@ interface SetupData {
   sourceRoot: string;
   storageRoot: string;
   storageEditable: boolean;
+  portableBrowserDefault: boolean;
 }
 
 interface TreeNode {
@@ -173,6 +174,7 @@ document.querySelector("#submit")!.addEventListener("click", () => vscode.postMe
   documentPaths: [...selected].sort(),
   rootDocument: rootSelect.value,
   storageRoot,
+  includePortableBrowser: document.querySelector<HTMLInputElement>('input[name="participant-access"]:checked')?.value === "portable",
 }));
 window.addEventListener("message", (event) => {
   const message = event.data as { command?: string; errors?: string[]; storageRoot?: string; insideWorkspace?: boolean };

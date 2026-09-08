@@ -1,209 +1,153 @@
-# Open Markdown Review 0.4
+# Open Markdown Review 0.5
 
-Open Markdown Review is a serverless, local-first review system for technical Markdown. Each review is a self-contained folder. Its default name is `.review`, but it can be named `.architecture-review`, `safety-approval`, or anything else and stored inside the source repository or anywhere on a normal local disk, mounted SMB/NFS/NAS share, mapped network drive, Syncthing folder, removable disk, or cloud-synchronized folder. No OneDrive, SharePoint, or hosted service is required.
+A local-first Markdown review protocol with one shared reviewer toolbox for VS Code and a double-clicked HTML file. No application server, browser extension, cloud account, or separate review database.
 
-Client 0.4.5 is a limited-pilot client, not merely a schema demonstration. Its VS Code extension has a dedicated Review icon in the Activity Bar, manages multiple review packages per Markdown workspace, provides a visual setup flow, selective document scope, an immutable rendered review, GFM tables, Mermaid diagrams, local and external images, explicit Markdown attachments, visibly anchored threaded comments, live local-first synchronization, comment decisions, suggested edits, approval or rejection, and auditable client-side PDF export.
+Version **0.5.0 is an evaluation pre-release**, not a qualified professional pilot. Download it from the [0.5.0 release page](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.0) and read the [release notes and limitations](docs/releases/0.5.0.md). Existing 0.4 packages keep their legacy VS Code reader; they are never silently migrated.
 
-## What the client does
+For Windows x64 install `open-markdown-review-0.5.0-win32-x64.vsix`; for other supported VS Code platforms install `open-markdown-review-0.5.0-portable.vsix`. Both release packages are marked pre-release and have SHA-256 checksum files. Use **Extensions: Install from VSIX** in VS Code.
 
-- Adds a dedicated Markdown Review icon and sidebar to VS Code.
-- Creates, connects, lists, and switches between multiple independent reviews for one Markdown workspace; all actions target the visibly active review.
-- Opens a visual setup panel that lists Markdown by folder with search, folder/file checkboxes, selected count, start-document choice, and review-package location.
-- Stores a review in a freely named package folder inside Git or on any ordinary local/shared drive.
-- Initializes a portable review without a server or database.
-- Watches the exact active review package—even outside the workspace—and normally shows synchronized comments and replies within seconds.
-- Uses filesystem notifications plus a lightweight polling fallback, serialized refreshes, and bounded retry for partially synchronized files.
-- Creates an immutable revision containing only the selected Markdown documents.
-- Freezes embedded local, data-URI, and HTTPS images into SHA-256-addressed blobs.
-- Freezes explicitly attached Markdown links into the same blob store.
-- Records ordinary external links without silently archiving entire websites.
-- Renders multiple documents, GFM tables, Mermaid, frozen images, and safe Markdown in a review panel.
-- Adds comments from source selections or rendered text, images, diagrams, tables, and table cells.
-- Highlights commented text and annotated images, diagrams, tables, and cells in the rendered review; clicking the highlight focuses its discussion, and clicking the discussion returns to the anchored content.
-- Decorates commented ranges in an open source Markdown editor with a gutter marker and hover link to the rendered discussion.
-- Lists, displays replies to, navigates to, and resolves threads.
-- Accepts, rejects, marks won't-fix, or marks duplicate individual comments with an auditable reason.
-- Proposes exact-string insert, replace, and delete edits without silently changing Markdown; replacements and deletions are shown as strikeout/insertion diffs.
-- Accepts or rejects each suggested edit and applies only accepted, conflict-free edits with before/after source hashes.
-- Records approval or rejection against an exact revision.
-- Exports a polished PDF containing reviewed documents, comments, replies, decisions, suggested edits, revision decisions, digests, renderer versions, and an event inventory.
-- Records the PDF digest in an immutable `export.created` event.
+## Install
 
-Existing events and blobs are never modified. Concurrent participants create independently named files and reconstruct state from their union.
+Download the VSIX and matching SHA-256 checksum from the [0.5.0 release](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.0). In VS Code run **Extensions: Install from VSIX**, select the package for your platform, and reload when prompted. Browser-only participants receive the review folder with its generated HTML launcher and do not install an extension.
 
-## Review workflow
+## Tested status and known limits
 
-```mermaid
-flowchart LR
-    A[Edit Markdown] --> B[Create immutable revision]
-    B --> C[Rendered review]
-    C --> D[Comments and suggested edits]
-    D --> F[Decisions and approval or rejection]
-    F --> E[Client-side audit PDF]
-    B <-->|file synchronization| S[SharePoint / SMB / Syncthing / Git]
-```
+The release source passed its recorded unit/protocol, real-browser, VS Code extension-host, dependency-audit, and packaging checks on its supported release platforms. Passing automation is not complete browser, transport, security, or usability qualification.
 
-1. Open the Markdown Review icon in the left Activity Bar and choose **Create New Review** or **Connect Existing Review**.
-2. For a new review, select or create its package folder. Leave the default `<workspace>/.review` for Git storage, or choose any local or mounted shared-drive folder and any folder name.
-3. Select complete folders or individual Markdown files, choose the start document, and click **Initialize and create revision**.
-4. If the workspace has several reviews, click one under **Reviews** to make it active.
-5. Open **Markdown Review: Open Rendered Review**.
-6. Select rendered text or click an image, Mermaid diagram, table, or cell, then choose **Comment**.
-7. Click the highlighted content to focus its discussion; click the discussion location to return to the content, or choose **Open source** to select it in Markdown.
-8. Select an exact string and choose **Suggest edit** to insert, replace, or delete text.
-9. Reply to comments, decide them, and accept or reject suggested edits.
-10. Apply an accepted suggestion explicitly if desired, then create a new immutable revision of the changed source.
-11. Approve or reject the reviewed revision and choose **Export audit PDF**. Generation occurs locally inside the extension.
+- **SMB remains untested**, because no authorized test share was available. No SMB compatibility or performance claim is made.
+- Remaining professional-pilot requirements are tracked in the [implementation status](spec/IMPLEMENTATION-STATUS.md).
+- Identities are self-asserted and events are unsigned. Exact-byte audit hashes do not authenticate a reviewer or prove that every disconnected participant has synchronized.
 
-To change the document set later, run **Markdown Review: Review Setup and Documents**. The panel starts with the current revision selected. Saving creates a new revision with the new scope; previous revisions and their review history remain immutable.
+## Open a review someone sent you
 
-If Markdown or an image changes, create a new revision. Source-editor comments are blocked when the active file no longer matches the frozen revision; reviewers can always use the immutable rendered view.
+1. Open its folder in Explorer/Finder.
+2. Double-click **OpenMarkdownReview.html** in a supported Chrome/Edge browser.
+3. Choose that same review folder when the browser asks for access.
+4. Enter a stable reviewer ID and your name. Select the pinned revision if there are competing heads.
+5. Select text or click a diagram, image, table, or cell, then choose **Comment** or **Suggest edit**.
 
-## Storage and Git
+The folder grant is a browser security requirement. An HTML file cannot silently obtain access to its neighboring files or inherit a verified Windows login. Remembered access is best effort and may require reconnection. Unsupported/restricted browsers show an explicit explanation; they do not simulate saving.
 
-The selected folder is the review package itself:
+With the extension installed, opening **the same OpenMarkdownReview.html file in VS Code** opens the review custom editor. **Markdown Review: Connect Existing Review** also accepts a package folder. VS Code uses its installed trusted toolbox, not arbitrary JavaScript found in a received package.
+
+## What is implemented
+
+- One shared validation, session, renderer, action toolbox, and PDF exporter in both hosts.
+- Markdown, GFM tables and cells, Mermaid, frozen local/data/HTTPS images, and explicit attachments.
+- Anchored comments, replies, visible highlights, click-through navigation, and searchable/paged discussion history.
+- Separate accept/reject decisions and resolve/reopen status. Accepting a concern does not resolve it.
+- Exact-string insertion, replacement and strikeout suggestions; accept/reject and explicit author-only source application.
+- Revision approval, rejection and withdrawal with freshly verified evidence and confirmation of the observed state.
+- Multiple packages and explicit immutable revision selection; arriving revisions never silently retarget a draft.
+- Independent content-addressed event files, conflict detection, partial-write recovery, and eventual synchronization.
+- Whole-revision PDF exports containing documents, diagrams, tables, comments, responses, reasons, suggestions and event history. UI filters never shrink an audit export.
+- CLI creation/revision/export/inspection/validation and safe HTML installation/update.
+
+Graphical creation is in VS Code; the same authoring service is available from the CLI. A participant browser does not need the source workspace.
+
+## Create in VS Code
+
+Open a Markdown source workspace, select the Review icon in the left Activity Bar, and choose **Create New Review**. The visual setup selects individual documents or folders, the start document, title and storage folder/name. Additional prompts allow an approval quorum and explicitly granted external-resource folders.
+
+Creation captures saved disk bytes. Unsaved editors require an explicit save/use-disk choice. Every successful creation installs the HTML entry file with JavaScript, Mermaid, fonts and PDF runtime bundled; reviewers need no CDN or npm installation.
+
+Creation can be cancelled before final publication. Its private capture checkpoints remain intact; run Create again to choose a saved operation to resume. Once final publication starts, the client finishes and reports the actual result.
+
+To update documents, choose **Choose Documents and Create Revision**. Existing review evidence stays immutable. Parents are selected explicitly; a merge revision does not transfer earlier comments or approvals to new content.
+
+## One source of truth
 
 ```text
-<any-review-folder>/
+any-review-folder/
   manifest.json
-  events/
-  revisions/
-  blobs/sha256/
-  exports/
+  revisions/<revision-id>.json
+  blobs/sha256/<first-two>/<digest>
+  events/<exact-event-byte-digest>.json
+  exports/<pdf-digest>.pdf
+  exports/<inventory-digest>.inventory.json
+  OpenMarkdownReview.html
   .gitattributes
 ```
 
-For a Git-backed review, keep the package inside the repository and commit the complete folder, for example `git add .review`. The generated package-local `.gitattributes` disables line-ending conversion below the package because revision and blob digests cover exact bytes. Do not ignore `events`, `revisions`, `blobs`, or audited `exports`.
+The editable source is used only for creating revisions and explicitly applying accepted edits. Frozen blobs are the material being reviewed; events are the review history. Both clients read that same package. Identical content is stored once by digest. The HTML contains application code and licenses, not copies of review content or comments.
 
-For disk/shared-drive operation, select or create a folder on any filesystem visible to VS Code. A plain local directory or mounted SMB/NFS/NAS share works directly; SharePoint and OneDrive are only optional synchronization choices. The extension remembers external package locations for the current workspace. If a synchronized drive is temporarily unavailable, its registration is retained and becomes usable again after the drive returns and the view is refreshed.
+Caches, remembered directory handles, identities and recovery journals remain client-local. Removing a cache cannot remove published history. An unacknowledged action may need its original local journal to resume safely.
 
-### Live synchronization
+Any filesystem-safe folder name is allowed. The design accepts filesystem paths inside Git, on a normal disk, on a mounted SMB share/mapped drive, or in a synchronized folder. **SMB behavior is unqualified:** its CI testing is excluded by user decision because an authorized test share is unavailable. Use a filesystem path, such as a mapped drive or UNC path on Windows; an `smb://` URL is not a native directory path. Neither client hosts a server.
 
-With live synchronization enabled (the default), the active package is watched directly even when it is outside the opened workspace. The rendered review, sidebar, source highlights, decisions, and counters update after another participant's immutable event file reaches the local filesystem. A polling fallback runs every 3 seconds while the rendered review is visible and every 15 seconds in the background; both intervals are configurable under **Open Markdown Review › Live Sync**.
+For Git, commit the complete package. The generated `.gitattributes` disables line-ending conversion, filters and encoding transformations inside the package. The extension does not automatically pull, merge or push Git.
 
-Synchronization is intentionally eventual rather than server-mediated. Local disk is usually immediate; SMB, NFS, Syncthing, OneDrive, or SharePoint adds provider/network latency. The client keeps the last validated review visible, quarantines incomplete or out-of-order files, detects the disappearance or rewrite of previously validated events during the session, retries with bounded backoff, and shows a visible **Live**, **Waiting**, or **Delayed** status. A manual **Refresh** remains available. Git-backed reviews update only after the new files are fetched/merged into the local checkout; this client does not automatically pull or push Git.
+## Synchronization and performance
 
-The rendered client marks newly synchronized discussions, reports new comments without stealing focus, and preserves the current document, scroll positions, focused thread, and already-rendered Mermaid diagrams while applying comment-only state updates. Existing events are never rewritten as part of synchronization.
+The active toolbox polls after the previous scan finishes: every three seconds in the foreground, fifteen seconds in the background. This is eventual visibility after the storage provider delivers complete bytes, not a guarantee that disconnected users have synchronized.
 
-### Local performance cache
+Warm scans reuse verified state and unchanged rendering. A bounded 64-event integrity sweep detects rewritten historical event files over time; explicit audits freshly verify the complete observed package. Native/browser adapters admit at most four concurrent file operations per process. An audit attempt deduplicates reads of files referenced by many earlier receipts.
 
-The shared review package remains the only authoritative review record, but the extension does not use a slow network folder as its working database. It keeps the active validated event map and folded review state in memory and writes a disposable derived cache under VS Code's extension global-storage directory. The cache is never placed in the review package, source repository, or Git history.
+Missing, partial, changed or conflicting evidence is disclosed. Approval and export fail closed. These optimizations have regression tests, including 10,000 events, but do not establish Windows latency or real SMB performance; SMB qualification is excluded and untested.
 
-On normal synchronization, the client performs one event-directory inventory, compares immutable filenames with the cached inventory, and reads only new or watcher-reported files. A locally published comment, reply, decision, or approval is folded into memory immediately after its exclusive shared-folder write succeeds; it does not trigger a complete package reload. Because the manifest is created once and a revision is published by its event last, polling needs only the event frontier. It does not recursively watch blobs, scan the workspace, read the manifest repeatedly, or `stat` every historical event.
+## Build, test and package
 
-Activation and sidebar synchronization validate events and the revision descriptor without eagerly downloading every frozen blob. Frozen Markdown, images, and attachments are copied into a local SHA-256-addressed content cache when the rendered review first needs them. Rendered review and PDF generation then use those verified local bytes instead of repeatedly opening SMB, NAS, OneDrive, or SharePoint-backed blobs. Later revisions verify and reuse unchanged content-addressed blobs rather than uploading duplicate temporary copies. Corrupt or incompatible cache data is ignored and rebuilt from the shared package. The cache defaults to 512 MB with least-recently-used pruning and is configurable under **Open Markdown Review › Cache: Max Size MB**; the active revision working set is protected from eviction.
-
-Filesystem work is bounded to four concurrent operations by default to avoid overwhelming SMB servers or Windows endpoint scanners. It can be tuned under **Open Markdown Review › I/O: Max Concurrency**. Run **Markdown Review: Show Performance Diagnostics** to open timing, cache, platform, and synchronization details. Run **Markdown Review: Rebuild Local Cache** to discard the active review's derived event cache and reconstruct it with a complete shared-storage audit; authoritative review files are never changed.
-
-Audit safety is separate from this performance path. Manual **Refresh**, review approval or rejection, and PDF export read every shared event and verify every shared revision blob before proceeding. Missing events and watcher-reported rewrites remain audit failures. Deleting the local cache loses no review information; the client reconstructs it from the shared package.
-
-One source workspace can have several review packages—for example `.architecture-review` in Git and `safety-approval` on a shared drive. The sidebar marks one review as active. Commands never combine their event logs.
-
-To read a review received from someone else, choose **Connect Existing Review** and select either the package folder containing `manifest.json` or a parent folder containing one or more review packages. The client discovers packages and asks which one to open when needed. If no workspace is open, the extension can open the selected package as the VS Code folder. Frozen documents, images, Mermaid, tables, comments, replies, decisions, approvals/rejections, attachments, and PDF export remain available without the sender's original source checkout. Source editing and applying suggestions naturally require the matching source workspace.
-
-## Images, Mermaid, tables, and attachments
-
-Embedded images use ordinary Markdown:
-
-```markdown
-![Context diagram](images/context.png)
-![Externally hosted evidence](https://example.org/evidence.png)
-```
-
-Both are captured into `<review-package>/blobs/sha256/` before the revision is published. Revision creation fails closed if a required image is missing, too large, insecure, or invalid.
-
-Mermaid uses normal fenced blocks and is rendered locally with a pinned engine version:
-
-````markdown
-```mermaid
-flowchart LR
-    Author --> Revision --> Reviewer
-```
-````
-
-GFM tables render with horizontal scrolling in the client and bounded page layout in the PDF.
-
-Ordinary links are audit-listed but not downloaded. Add the standard Markdown title `review:attach` when the referenced bytes are evidence that must travel with the review:
-
-```markdown
-[Local evidence](evidence/decision.pdf "review:attach")
-[Remote evidence](https://example.org/decision.pdf "review:attach")
-```
-
-Attached links are frozen, hashed, and opened from the local blob in the rendered client. Active HTML, script, and executable attachment media types are rejected.
-
-## Install the packaged extension
-
-In VS Code, run **Extensions: Install from VSIX…**. Windows x64 pilot users should select `open-markdown-review-0.4.5-win32-x64.vsix`, which contains native image/PDF processing. The `open-markdown-review-0.4.5-portable.vsix` package retains the cross-platform WASM fallback.
-
-To build it yourself, use Node.js 22 or newer and VS Code 1.90 or newer:
+Use Node.js 22 or newer.
 
 ```sh
-npm install
+npm ci
 npm test
-npx --yes @vscode/vsce package --allow-missing-repository --no-rewrite-relative-links
+npx playwright install chromium
+npm run test:browser
+npm run test:extension
+node scripts/package-release.mjs portable candidate
 ```
 
-For development, open this folder in VS Code and press `F5`. The Extension Development Host opens the complete workspace in `protocol/examples`.
+The VSIX is created at the repository root. Install it using VS Code's **Extensions: Install from VSIX**. This does not install a browser extension. The development launch configuration also supports F5.
 
-## Project layout
+The browser tests use real Chromium and real browser directory handles/IndexedDB; their deterministic adapter test uses origin-private storage and is explicitly not a native folder-permission test. Windows local-storage browser and VS Code checks run in CI. SMB testing is excluded by user decision; the retained SMB-dependent native-picker fixture has not run, so actual local native folder grants remain unqualified.
 
-```text
-protocol/
-  schemas/                    JSON Schema 2020-12 definitions
-  fixtures/v0.4/              current portable-path conformance fixture
-  examples/                   complete legacy compatibility fixture
-  README.md                   normative protocol behavior
-  IMPLEMENTER-CHECKLIST.md    implementation and test requirements
-media/                        bundled review UI
-src/protocol/                 types, validation, snapshots, storage, state fold
-src/renderedView.ts           secure rendered-review webview
-src/setupView.ts              visual review/document setup panel
-src/reviewsView.ts            multiple-review registry and Activity Bar list
-src/pdfExport.ts              local PDF and audit-event generation
-src/reviewCache.ts            incremental event and verified local-content cache
-src/extension.ts              commands, identity, status, and lifecycle
-test/                         conformance, capture, merge, security, and PDF tests
-output/pdf/                   visually verified sample audit report
+Build outputs include the generic HTML, CLI, extension, conservative dependency inventory and third-party notices. The HTML embeds its license notices and has a fixed-script-hash CSP, without `unsafe-eval`.
+
+## Command line
+
+No VS Code process is required. From a built checkout:
+
+```sh
+node dist/cli.js review create --source ./docs --store ./reviews/design --root-document architecture.md --actor-id mira --operation-id design-001 --json
+node dist/cli.js review inspect --store ./reviews/design --json
+node dist/cli.js review validate --store ./reviews/design --full --json
+node dist/cli.js review export --store ./reviews/design --actor-id mira --operation-id export-001 --json
+node dist/cli.js --help
 ```
 
-## Verification
+Repeat `--include FILE`, `--include-dir DIR`, `--exclude PATH`, or `--resource-root PATH` as needed. `--policy FILE` accepts the policy schema. `revision create` uses the same parameters plus repeatable `--parent REVISION_ID`. Creation `--dry-run` reads local Markdown but creates no package, journal or remote capture and does not require an operation ID. Ctrl+C cancels creation before final publication with exit code 6; progress goes to stderr, leaving JSON stdout clean.
 
-`npm test` currently covers:
+Use the original `--operation-id` with `--resume` after interrupted creation or source application. Already captured Markdown/resources and published bytes are reused. Different parameters are refused.
 
-- runtime validation and all three JSON Schemas;
-- deterministic revision-scoped event folding;
-- visual-scope pattern expansion, selection validation, and selective snapshot capture;
-- deterministic comment/suggestion decision conflicts and out-of-order event arrival;
-- out-of-order synchronization;
-- resilient quote anchors;
-- rendered and source-editor comment highlighting, discussion cards with replies, and bidirectional anchor navigation;
-- Mermaid, image, table, link, and attachment discovery;
-- local and remote content capture with secret redaction;
-- fail-closed missing-image behavior;
-- atomic event collision handling;
-- persistent incremental event reconciliation, restart-safe cache recovery, bounded I/O, rewrite/deletion detection, and temporary shared-blob-unavailability fallback;
-- custom-named package storage and isolation between multiple reviews of one workspace;
-- PDF content, resource, Mermaid, comment, suggested-edit, approval/rejection, and digest generation.
+Accepted source edits are staged separately before replacing the source file; original bytes remain in the private recovery plan. A failed review-event publication after the source save is explicitly reported and retries only the pending evidence. Continue to use source control/backups: platform durability and external editor races are not fully qualified.
 
-The sample PDF is also rendered to PNG with Poppler and visually inspected for clipping, overlap, page numbering, diagrams, tables, and audit-layout quality.
+If an export fails, use Export again—even after reopening the same client—to resume its recorded operation. It does not invent another export event for that retry. Private binary recovery plans use compact base64; this is not a claim that the maximum PDF/history memory workload is qualified.
 
-## Pilot limits
+`client install --store PATH` adds a missing generic HTML file. `client update --store PATH --expect-client-digest sha256:HEX` explicitly replaces that exact current HTML and retains a backup outside protocol directories. In VS Code use **Update Portable Browser Client** and confirm. Do not install untrusted HTML supplied as a software update.
 
-- Actor IDs are self-asserted. The shared folder's access control is the authority for this pilot.
-- Events are hashed for export but are not cryptographically signed.
-- Raw HTML is disabled. Mermaid runs with strict security and a restrictive webview content-security policy.
-- Embedded images and `review:attach` links are frozen; ordinary linked web pages remain external references.
-- Protocol 0.4 keeps all decisions monotonic and does not edit or delete historical events. Conflicting decisions are surfaced rather than silently overwritten.
-- Very large or unusually wide tables should be included in pilot test cases before broad deployment.
+CLI export uses the same toolbox PDF engine through headless Chromium and requires the installed Playwright browser runtime. It does not require a server. CLI stdout is JSON; supported flags are checked per command. Exit codes follow the [CLI contract](spec/PROFESSIONAL-V1.md#10-authoring-service-and-cli-contract).
 
-See [PILOT.md](PILOT.md) for the test plan, [SECURITY.md](SECURITY.md) for the threat model, and [protocol/README.md](protocol/README.md) for normative rules.
+## Images, diagrams and references
 
-## License
+```markdown
+![Captured image](images/diagram.svg)
+[Captured attachment](evidence.pdf "review:attach")
+[Ordinary external reference](https://example.org/reference)
+```
 
-Open Markdown Review is dual-licensed. You may use it under either:
+Embedded images and explicit attachments must be captured successfully. Ordinary web links are described but are not archived. Parent-relative image/attachment paths work when their resolved location is inside an explicitly granted root. HTTPS capture is bounded and rejects embedded credentials/secret query parameters. Secrets already present in Markdown must be removed from source before sharing.
 
-- the standard [MIT License](LICENSE); or
-- [M.I.R.D.A. philosophy](PHILOSOPHY.md).
+Raw Markdown HTML is disabled. Mermaid uses strict configuration; embedded Mermaid configuration directives/front matter are rejected in this candidate. Invalid or unsupported rendering blocks a complete audit PDF rather than silently omitting the item.
 
-The package metadata expresses this choice as `MIT`.
+## Examples, protocol and assurance
+
+Run `node scripts/create-professional-example.mjs` after building to prepare the concrete example's HTML entry file. Open `examples/professional/review/OpenMarkdownReview.html`, not the unconnected build template.
+
+- [Protocol 0.5 contract](spec/PROTOCOL-0.5.md), [JSON schemas](protocol/schemas/v0.5), [shared TypeScript types](src/professional/types.ts)
+- [Professional requirements](spec/PROFESSIONAL-V1.md), [acceptance gates](spec/ACCEPTANCE.md), [current evidence and limitations](spec/IMPLEMENTATION-STATUS.md)
+- [Security model](SECURITY.md), [legacy 0.4 documentation](docs/LEGACY-0.4.md)
+
+Identities are self-asserted and events are unsigned. Audit hashes show exact captured bytes, not authenticated identity or global completeness. Organizational sign-off needs an additional identity/signing profile.
+
+Project code is available under [MIT](LICENSE); the non-binding project culture is described in [M.I.R.D.A. philosophy](PHILOSOPHY.md). Third-party runtime/font/data components retain their own licenses.

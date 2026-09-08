@@ -4,9 +4,11 @@ import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { vsixChannelArgs } from "./release-policy.mjs";
 
 const target = process.argv[2] === "portable" ? undefined : process.argv[2];
 const suffix = process.argv[3] ?? process.argv[2] ?? "portable";
+const channelArgs = vsixChannelArgs(process.env.OMR_RELEASE_CHANNEL);
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json");
 const repoRoot = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
@@ -41,7 +43,7 @@ if (target === "win32-x64") {
 }
 
 const filename = `open-markdown-review-${packageJson.version}-${suffix}.vsix`;
-const args = ["run", "package:vsix", "--", ...(target ? ["--target", target] : []), "--out", filename];
+const args = ["run", "package:vsix", "--", ...(target ? ["--target", target] : []), ...channelArgs, "--out", filename];
 const packaged = runNpm(args);
 assertCommandSucceeded(packaged, "VSIX packaging failed");
 

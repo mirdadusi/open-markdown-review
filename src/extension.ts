@@ -60,8 +60,10 @@ import { RenderedCommentRequest, RenderedReviewPanel } from "./renderedView";
 import { ReviewCache } from "./reviewCache";
 import { RegisteredReview, ReviewArgument, ReviewsProvider } from "./reviewsView";
 import { ReviewSetupPanel, ReviewSetupResult } from "./setupView";
+import { installPortableBrowserClient } from "./portableBrowser";
 import { SuggestionArgument, ThreadArgument, ThreadsProvider } from "./threadsView";
 import { createAnchor, revealThread } from "./vscodeAnchor";
+import { ProfessionalHost } from "./professional/extensionHost";
 
 interface ActiveReview {
   folder: vscode.WorkspaceFolder;
@@ -600,6 +602,7 @@ class ReviewController implements vscode.Disposable {
       await this.updateObservedFingerprint(storageRoot, manifest);
       this.output.appendLine(`[performance] refresh=${trigger} total=${Date.now() - refreshStarted}ms package=${packageReadyAt - refreshStarted}ms events=${eventsReadyAt - eventsStarted}ms content=${contentDurationMs}ms eventFiles=${loaded.loadedFileCount}.`);
       const pendingFiles = loaded.warnings.length + contextualWarnings.length + state.danglingEvents.length;
+      if (fullAudit && pendingFiles) throw new ReviewStoreError(`Audit blocked: ${pendingFiles} invalid or incomplete review files.`);
       const now = new Date();
       const lastUpdated = now.toISOString();
       const liveSyncEnabled = this.liveSyncConfiguration(folder).enabled;
@@ -649,6 +652,7 @@ class ReviewController implements vscode.Disposable {
       this.output.appendLine(`[live sync] ${message}`);
       this.scheduleSyncRetry(message);
       if (!isBackgroundRefresh(trigger)) this.reportError(error);
+      if (trigger === "manual") throw error;
     }
   }
 
@@ -744,6 +748,7 @@ class ReviewController implements vscode.Disposable {
       sourceRoot: folder.uri.fsPath,
       storageRoot,
       storageEditable: !manifest,
+      portableBrowserDefault: true,
     });
     if (!selection) return;
     storageRoot = path.resolve(selection.storageRoot);
@@ -796,8 +801,8 @@ class ReviewController implements vscode.Disposable {
     }
   }
 
-  async connectReview(): Promise<void> {
-    const selected = await vscode.window.showOpenDialog({
+  async connectReview(preselectedRoot?: string): Promise<void> {
+    const selected = preselectedRoot ? [vscode.Uri.file(preselectedRoot)] : await vscode.window.showOpenDialog({
       title: "Open a shared Markdown review package",
       defaultUri: this.workspaceFolderForDocument(vscode.window.activeTextEditor?.document)?.uri,
       canSelectFiles: false,
@@ -953,6 +958,16 @@ class ReviewController implements vscode.Disposable {
     await this.setupReview(false);
   }
 
+  async addPortableBrowserClient(): Promise<void> {
+    const review = await this.activeReview();
+    if (!review) return;
+    const artifact = path.join(this.context.extensionPath, "dist", "OpenMarkdownReview.html");
+    const target = await installPortableBrowserClient(review.storageRoot, artifact);
+    this.output.appendLine(`Installed portable browser client at ${target}.`);
+    const choice = await vscode.window.showInformationMessage("Portable browser client added to the active review package.", "Open browser client");
+    if (choice === "Open browser client") await vscode.env.openExternal(vscode.Uri.file(target));
+  }
+
   private async createRevisionFromSelection(
     folder: vscode.WorkspaceFolder,
     storageRoot: string,
@@ -976,9 +991,28 @@ class ReviewController implements vscode.Disposable {
         this.output.appendLine(`Created revision ${result.revision.id} with ${result.revision.documents.length} documents, ${result.revision.resources.length} frozen resources, and ${result.revision.mermaidDiagrams.length} Mermaid diagrams.`);
       },
     );
+    let portableBrowserPath: string | undefined;
+    if (selection.includePortableBrowser) {
+      const artifact = path.join(this.context.extensionPath, "dist", "OpenMarkdownReview.html");
+      try {
+        portableBrowserPath = await installPortableBrowserClient(storageRoot, artifact);
+        this.output.appendLine(`Installed portable browser client at ${portableBrowserPath}.`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.output.appendLine(`Portable browser client was not installed: ${message}`);
+        void vscode.window.showWarningMessage(`The review was created, but the portable browser client could not be added: ${message}`);
+      }
+    }
     await this.refresh(undefined, "startup");
-    const choice = await vscode.window.showInformationMessage("Auditable revision created.", "Open rendered review");
+    const actions = portableBrowserPath
+      ? ["Open rendered review", "Open browser client"]
+      : ["Open rendered review"];
+    const choice = await vscode.window.showInformationMessage(
+      portableBrowserPath ? "Auditable revision and portable browser client created." : "Auditable revision created.",
+      ...actions,
+    );
     if (choice === "Open rendered review") await this.openReview();
+    if (choice === "Open browser client" && portableBrowserPath) await vscode.env.openExternal(vscode.Uri.file(portableBrowserPath));
   }
 
   async openReview(): Promise<RenderedReviewPanel | undefined> {
@@ -1583,32 +1617,49 @@ export function activate(context: vscode.ExtensionContext): void {
   const threads = new ThreadsProvider();
   const reviews = new ReviewsProvider();
   const controller = new ReviewController(context, threads, reviews);
+  const professional = new ProfessionalHost(context);
   context.subscriptions.push(
     controller,
+    professional,
+    vscode.window.registerCustomEditorProvider('openMarkdownReview.entryFile', {
+      openCustomDocument: async (uri) => ({ uri, dispose() {} }),
+      resolveCustomEditor: async (document, panel) => professional.resolveEntryFile(document.uri, panel),
+    }, { webviewOptions: { retainContextWhenHidden: true }, supportsMultipleEditorsPerDocument: false }),
+    vscode.window.registerTreeDataProvider("openMarkdownReview.packages", professional),
     vscode.window.registerTreeDataProvider("openMarkdownReview.reviews", reviews),
     vscode.window.registerTreeDataProvider("openMarkdownReview.threads", threads),
   );
   const register = (command: string, callback: (...args: unknown[]) => Promise<void>) => {
-    context.subscriptions.push(vscode.commands.registerCommand(command, (...args) => void callback(...args).catch((error) => controller.reportError(error))));
+    context.subscriptions.push(vscode.commands.registerCommand(command, (...args) => callback(...args).catch((error) => controller.reportError(error))));
   };
-  register("openMarkdownReview.initialize", () => controller.initialize());
-  register("openMarkdownReview.connectReview", () => controller.connectReview());
-  register("openMarkdownReview.switchReview", (argument) => controller.switchReview(argument as ReviewArgument));
-  register("openMarkdownReview.setup", () => controller.setupReview());
-  register("openMarkdownReview.createRevision", () => controller.createRevision());
-  register("openMarkdownReview.openReview", () => controller.openReview().then(() => undefined));
-  register("openMarkdownReview.addComment", () => controller.addComment());
-  register("openMarkdownReview.addSuggestion", () => controller.addSuggestion());
-  register("openMarkdownReview.reply", (argument) => controller.reply(argument as ThreadArgument));
-  register("openMarkdownReview.resolveThread", (argument) => controller.resolve(argument as ThreadArgument));
-  register("openMarkdownReview.decideThread", (argument) => controller.decideThread(argument as ThreadArgument));
-  register("openMarkdownReview.approveReview", () => controller.approve());
-  register("openMarkdownReview.rejectReview", () => controller.rejectReview());
-  register("openMarkdownReview.acceptSuggestion", (argument) => controller.decideSuggestion(argument as SuggestionArgument, "accepted"));
-  register("openMarkdownReview.rejectSuggestion", (argument) => controller.decideSuggestion(argument as SuggestionArgument, "rejected"));
-  register("openMarkdownReview.applySuggestion", (argument) => controller.applySuggestion(argument as SuggestionArgument));
-  register("openMarkdownReview.exportPdf", () => controller.exportPdf());
-  register("openMarkdownReview.refresh", () => controller.refreshWithProgress());
+  register("openMarkdownReview.initialize", () => professional.create());
+  register("openMarkdownReview.openPackage05", (root) => professional.open(String(root)));
+  register("openMarkdownReview.updatePortableBrowserClient", () => professional.updateClient());
+  register("openMarkdownReview.connectReview", async () => {
+    const selected = await vscode.window.showOpenDialog({ title: "Choose a review package containing manifest.json", canSelectFolders: true, canSelectFiles: false, canSelectMany: false });
+    const root = selected?.[0]?.fsPath; if (!root) return;
+    let version: string | undefined;
+    try { version = JSON.parse(await readFile(path.join(root, "manifest.json"), "utf8")).protocolVersion; } catch { /* Legacy discovery can inspect nested folders. */ }
+    if (version === "0.5.0") await professional.open(root);
+    else { professional.active = undefined; await controller.connectReview(root); }
+  });
+  register("openMarkdownReview.switchReview", (argument) => { professional.active = undefined; return controller.switchReview(argument as ReviewArgument); });
+  register("openMarkdownReview.setup", () => professional.active ? professional.create(true) : professional.create());
+  register("openMarkdownReview.createRevision", () => professional.active ? professional.create(true) : controller.createRevision());
+  register("openMarkdownReview.addPortableBrowserClient", () => professional.active ? professional.installClient() : controller.addPortableBrowserClient());
+  register("openMarkdownReview.openReview", () => professional.active ? professional.open(professional.active.root) : controller.openReview().then(() => undefined));
+  register("openMarkdownReview.addComment", () => professional.active ? professional.forward('comment') : controller.addComment());
+  register("openMarkdownReview.addSuggestion", () => professional.active ? professional.forward('suggest') : controller.addSuggestion());
+  register("openMarkdownReview.reply", (argument) => professional.active ? professional.forward('threads') : controller.reply(argument as ThreadArgument));
+  register("openMarkdownReview.resolveThread", (argument) => professional.active ? professional.forward('threads') : controller.resolve(argument as ThreadArgument));
+  register("openMarkdownReview.decideThread", (argument) => professional.active ? professional.forward('threads') : controller.decideThread(argument as ThreadArgument));
+  register("openMarkdownReview.approveReview", () => professional.active ? professional.forward('approve') : controller.approve());
+  register("openMarkdownReview.rejectReview", () => professional.active ? professional.forward('reject') : controller.rejectReview());
+  register("openMarkdownReview.acceptSuggestion", (argument) => professional.active ? professional.forward('suggestions') : controller.decideSuggestion(argument as SuggestionArgument, "accepted"));
+  register("openMarkdownReview.rejectSuggestion", (argument) => professional.active ? professional.forward('suggestions') : controller.decideSuggestion(argument as SuggestionArgument, "rejected"));
+  register("openMarkdownReview.applySuggestion", (argument) => professional.active ? professional.forward('suggestions') : controller.applySuggestion(argument as SuggestionArgument));
+  register("openMarkdownReview.exportPdf", () => professional.active ? professional.forward('export') : controller.exportPdf());
+  register("openMarkdownReview.refresh", () => professional.active ? professional.forward('refresh') : controller.refreshWithProgress());
   register("openMarkdownReview.rebuildCache", () => controller.rebuildLocalCache());
   register("openMarkdownReview.showDiagnostics", () => controller.showDiagnostics());
   register("openMarkdownReview.openThread", (argument) => controller.openThread(argument as ThreadArgument));

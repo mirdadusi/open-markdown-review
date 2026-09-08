@@ -1,0 +1,83 @@
+{
+  "schemaVersion": "0.5.0",
+  "id": "revision_82c76e2ae8f74431a48f30742b6a7cc3",
+  "reviewId": "review_00e74973abaa401d89d1de855963c346",
+  "createdAt": "2026-09-08T12:42:21.655Z",
+  "createdBy": {
+    "id": "example-author",
+    "displayName": "Example author"
+  },
+  "rootDocument": "architecture.md",
+  "documents": [
+    {
+      "path": "architecture.md",
+      "digest": "sha256:7c5305a180ce55db0ab4eeef10fdd97b8b50c88888c0de59680f1a6a41fe5972",
+      "byteLength": 904,
+      "mediaType": "text/markdown",
+      "blobPath": "blobs/sha256/7c/7c5305a180ce55db0ab4eeef10fdd97b8b50c88888c0de59680f1a6a41fe5972"
+    },
+    {
+      "path": "checklist.md",
+      "digest": "sha256:aadd65b325ae0d99f931aa7f987308a879d617e8357b62f1577ff0525049324e",
+      "byteLength": 312,
+      "mediaType": "text/markdown",
+      "blobPath": "blobs/sha256/aa/aadd65b325ae0d99f931aa7f987308a879d617e8357b62f1577ff0525049324e"
+    }
+  ],
+  "resources": [
+    {
+      "id": "resource_c6ec605db36b8c0352660607",
+      "document": "architecture.md",
+      "originalReference": "project.svg",
+      "sourceKind": "workspace",
+      "role": "image",
+      "capturedAt": "2026-09-08T12:42:21.542Z",
+      "digest": "sha256:6d047e072758cb79fa46c6ffb38dbfd5c31a5b313f0dabecead7ca0b115ad746",
+      "byteLength": 259,
+      "mediaType": "image/svg+xml",
+      "blobPath": "blobs/sha256/6d/6d047e072758cb79fa46c6ffb38dbfd5c31a5b313f0dabecead7ca0b115ad746"
+    },
+    {
+      "id": "resource_ffbaab049c2072f2507ea2cc",
+      "document": "architecture.md",
+      "originalReference": "evidence.txt",
+      "sourceKind": "workspace",
+      "role": "attachment",
+      "capturedAt": "2026-09-08T12:42:21.570Z",
+      "digest": "sha256:a92996b4210f0568a7808d6d26519c020aa1e6ad5c17d6b6f1bfcd26f3f65eed",
+      "byteLength": 58,
+      "mediaType": "text/plain",
+      "blobPath": "blobs/sha256/a9/a92996b4210f0568a7808d6d26519c020aa1e6ad5c17d6b6f1bfcd26f3f65eed"
+    }
+  ],
+  "externalReferences": [
+    {
+      "id": "reference_e9766cac4170bb5455b18790",
+      "document": "architecture.md",
+      "uri": "https://spec.commonmark.org/",
+      "relation": "link"
+    }
+  ],
+  "mermaidDiagrams": [
+    {
+      "id": "diagram_a09c8c8cf4ec3ee86c4a50cf",
+      "document": "architecture.md",
+      "ordinal": 0,
+      "source": "flowchart LR\n  Author[VS Code or CLI author] --> Files[Shared review folder]\n  Browser[Browser participant] --> Files\n  Extension[VS Code participant] --> Files\n  Files --> Audit[Verified PDF and inventory]",
+      "sourceDigest": "sha256:7533f1929fba2a31a560a3714ef46316c264fe53bca320e5e4544c85eb14ad9d"
+    }
+  ],
+  "diagnostics": [],
+  "renderer": {
+    "markdownProfile": "commonmark-gfm",
+    "mermaidVersion": "11.16.1"
+  },
+  "parents": [],
+  "policy": {
+    "digest": "sha256:14b05e31c4d934c70bf949fd7d963ce63e595d074117ef7883adc5ffd716cc51",
+    "byteLength": 87,
+    "mediaType": "application/json",
+    "blobPath": "blobs/sha256/14/14b05e31c4d934c70bf949fd7d963ce63e595d074117ef7883adc5ffd716cc51"
+  },
+  "creationOperationId": "professional_example_v1"
+}

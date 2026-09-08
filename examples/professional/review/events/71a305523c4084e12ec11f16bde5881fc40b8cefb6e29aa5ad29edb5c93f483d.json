@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "0.5.0",
+  "id": "evt_f2f9c3b5b4af4ddab5a74a6b90762c87",
+  "type": "revision.created",
+  "reviewId": "review_00e74973abaa401d89d1de855963c346",
+  "revisionId": "revision_82c76e2ae8f74431a48f30742b6a7cc3",
+  "revisionDigest": "sha256:9c836ede96fc7b1d990ab1934d13c3cf5fb62bd1e22e5960c68dff03be35849b",
+  "revisionPath": "revisions/revision_82c76e2ae8f74431a48f30742b6a7cc3.json",
+  "occurredAt": "2026-09-08T12:42:21.680Z",
+  "actor": {
+    "id": "example-author",
+    "displayName": "Example author"
+  },
+  "operationId": "professional_example_v1_publication"
+}

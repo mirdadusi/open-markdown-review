@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.5.0 — evaluation pre-release
+
+User-authorized evaluation publication; professional-pilot qualification remains incomplete. See [release notes and limitations](docs/releases/0.5.0.md).
+
+### 0.5 implementation
+
+- Added an explicitly authorized evaluation release channel, GitHub/VSIX pre-release labels and release-policy regression tests without changing professional-pilot approval or removing outstanding gates.
+
+- Added one shared protocol/session/rendering/reviewer/export core for VS Code and generated file-based HTML, plus parameter-driven authoring, revision, inspection, validation, export and client-update CLI commands.
+- Added exact-byte 0.5 schemas/types, content-addressed independent events, causal lifecycle/revision rules, verification receipts, policy evaluation, pinned contexts and durable publication/capture recovery.
+- Made the generated HTML a VS Code custom-editor entry file as well as a double-clicked browser entry. Every successful new review includes it; review content remains solely in the package.
+- Added browser-side audited PDF/inventory publication with complete responses and event history; visually verified Mermaid, images and tables after correcting PDF SVG rendering.
+- Added global bounded file I/O, incremental warm refresh, deduplicated audit reads, discussion search/paging, raster header limits and backed-up explicit HTML updates.
+- Added cancellable/resumable GUI and CLI capture, drained parallel failure handling, separately staged source edits with exact recovery, and normal-button PDF retry across client reloads. Compact binary recovery encoding avoids numeric-array JSON expansion.
+- Added real Chromium and VS Code extension-host tests, 10,000-event reconstruction, and CI-only Windows validation. Linux validation/packaging and Windows core/browser/extension checks passed in CI; see the implementation status report for exact evidence and remaining gates.
+- Excluded SMB qualification from CI and release checks by user decision after runner share creation was denied. SMB and its dependent native-picker fixture remain untested; local Windows checks and other release blockers are preserved. The dormant share fixtures are retained for future authorized CI use.
+- Bundled dependency inventories and license notices, including the actual shipped Roboto font license and Unicode folding data. Precompiled validators remove the browser's unsafe-eval requirement.
+
+The following entries describe the preceding design/prototype stages; they are not additional qualification claims for 0.5.
+
+- Specified the next professional pilot: one authoritative review package, full HTML/VS Code reviewer parity, shared VS Code/CLI authoring, a concrete 0.5 wire draft, and 27 traceable acceptance gates covering the critical design review. These are target requirements, not implemented fixes or a protocol release.
+- Defined the client-neutral authority, cache, conformance-role, filesystem, browser-writer, identity, lifecycle, policy, audit, and protocol 0.5 standardization requirements.
+- Removed the VS Code-only restriction from `export.created.renderer.client` so independent browser and CLI exporters can produce conforming audit metadata.
+- Added a VS Code participant-access choice that can publish a generic, self-contained `OpenMarkdownReview.html` client after the first immutable revision.
+- Added browser-side schema/digest validation, lazy frozen Markdown/resource loading, GFM tables, captured images, Mermaid, attachments, highlighted threads, polling, comments, replies, resolution, decisions, approval, rejection, and print output containing responses.
+- Added a command for attaching the portable client to an existing active review without overwriting an existing file.
+- Remembered each portable HTML file's granted review-directory handle locally so subsequent double-clicks can enter the review without selecting the folder again while permission remains valid.
+
 ## 0.4.6
 
 - Moved Windows validation and release packaging to a managed downstream Windows runner pool used by `task-orchestrator`.

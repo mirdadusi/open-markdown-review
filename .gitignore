@@ -9,3 +9,6 @@ media/setup.js
 *.vsix
 *.vsix.sha256
 .DS_Store
+.vscode-test/
+examples/professional/review/OpenMarkdownReview.html
+examples/professional/review/client-backups/

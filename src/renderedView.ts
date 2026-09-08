@@ -99,7 +99,7 @@ export function renderDocument(
   contentPaths: ReadonlyMap<Sha256Digest, string> = new Map(),
 ): string {
   const md = new MarkdownIt({ html: false, linkify: true, typographer: false, breaks: false });
-  md.validateLink = (url) => /^(?:https?:|mailto:|#|\.\.?\/)/i.test(url);
+  // MarkdownIt's default rejects active schemes but accepts ordinary relative URLs.
   const tokens = md.parse(source, {});
   const resources = new Map(revision.resources.map((resource) => [resource.id, resource]));
   const suggestions = [...state.suggestions.values()].filter(

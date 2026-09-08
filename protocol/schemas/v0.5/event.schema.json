@@ -1,0 +1,1064 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-markdown-review:schema:event:0.5",
+  "title": "Open Markdown Review event 0.5",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/revisionCreated"
+    },
+    {
+      "$ref": "#/$defs/commentCreated"
+    },
+    {
+      "$ref": "#/$defs/commentReplied"
+    },
+    {
+      "$ref": "#/$defs/threadResolved"
+    },
+    {
+      "$ref": "#/$defs/threadDecided"
+    },
+    {
+      "$ref": "#/$defs/reviewApproved"
+    },
+    {
+      "$ref": "#/$defs/reviewRejected"
+    },
+    {
+      "$ref": "#/$defs/suggestionCreated"
+    },
+    {
+      "$ref": "#/$defs/suggestionAccepted"
+    },
+    {
+      "$ref": "#/$defs/suggestionRejected"
+    },
+    {
+      "$ref": "#/$defs/suggestionApplied"
+    },
+    {
+      "$ref": "#/$defs/exportCreated"
+    },
+    {
+      "$ref": "#/$defs/threadReopened"
+    },
+    {
+      "$ref": "#/$defs/reviewWithdrawn"
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "base": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "id",
+        "type",
+        "reviewId",
+        "revisionId",
+        "occurredAt",
+        "actor",
+        "revisionDigest",
+        "operationId"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "0.5.0"
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "type": {
+          "enum": [
+            "revision.created",
+            "comment.created",
+            "comment.replied",
+            "thread.resolved",
+            "thread.decided",
+            "review.approved",
+            "review.rejected",
+            "suggestion.created",
+            "suggestion.accepted",
+            "suggestion.rejected",
+            "suggestion.applied",
+            "export.created",
+            "thread.reopened",
+            "review.withdrawn"
+          ]
+        },
+        "reviewId": {
+          "$ref": "#/$defs/id"
+        },
+        "revisionId": {
+          "$ref": "#/$defs/id"
+        },
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "actor": {
+          "$ref": "#/$defs/actor"
+        },
+        "revisionDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "operationId": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,128}$"
+        }
+      }
+    },
+    "body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "text"
+      ],
+      "properties": {
+        "format": {
+          "const": "markdown"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "line",
+        "character"
+      ],
+      "properties": {
+        "line": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "character": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "semanticTarget": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "text"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "resourceId"
+          ],
+          "properties": {
+            "kind": {
+              "const": "image"
+            },
+            "resourceId": {
+              "$ref": "#/$defs/id"
+            },
+            "label": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "diagramId"
+          ],
+          "properties": {
+            "kind": {
+              "const": "mermaid"
+            },
+            "diagramId": {
+              "$ref": "#/$defs/id"
+            },
+            "label": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "tableId"
+          ],
+          "properties": {
+            "kind": {
+              "const": "table"
+            },
+            "tableId": {
+              "$ref": "#/$defs/tableId"
+            },
+            "label": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "tableId",
+            "row",
+            "column"
+          ],
+          "properties": {
+            "kind": {
+              "const": "table-cell"
+            },
+            "tableId": {
+              "$ref": "#/$defs/tableId"
+            },
+            "row": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "column": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "label": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "tableId": {
+      "type": "string",
+      "pattern": "^table_[a-f0-9]{24}$"
+    },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "document",
+        "range",
+        "quote",
+        "documentDigest"
+      ],
+      "properties": {
+        "document": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\).+$"
+        },
+        "range": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "start",
+            "end"
+          ],
+          "properties": {
+            "start": {
+              "$ref": "#/$defs/position"
+            },
+            "end": {
+              "$ref": "#/$defs/position"
+            }
+          }
+        },
+        "quote": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "exact"
+          ],
+          "properties": {
+            "exact": {
+              "type": "string",
+              "minLength": 1
+            },
+            "prefix": {
+              "type": "string"
+            },
+            "suffix": {
+              "type": "string"
+            }
+          }
+        },
+        "documentDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "target": {
+          "$ref": "#/$defs/semanticTarget"
+        }
+      }
+    },
+    "revisionCreated": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "required": [
+            "revisionPath",
+            "revisionDigest"
+          ],
+          "properties": {
+            "type": {
+              "const": "revision.created"
+            },
+            "revisionPath": {
+              "type": "string",
+              "pattern": "^(?:\\.review/)?revisions/[A-Za-z0-9_-]+\\.json$"
+            },
+            "revisionDigest": {
+              "$ref": "#/$defs/digest"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "commentCreated": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "required": [
+            "threadId",
+            "commentId",
+            "anchor",
+            "body"
+          ],
+          "properties": {
+            "type": {
+              "const": "comment.created"
+            },
+            "threadId": {
+              "$ref": "#/$defs/id"
+            },
+            "commentId": {
+              "$ref": "#/$defs/id"
+            },
+            "anchor": {
+              "$ref": "#/$defs/anchor"
+            },
+            "body": {
+              "$ref": "#/$defs/body"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "commentReplied": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "required": [
+            "threadId",
+            "commentId",
+            "body"
+          ],
+          "properties": {
+            "type": {
+              "const": "comment.replied"
+            },
+            "threadId": {
+              "$ref": "#/$defs/id"
+            },
+            "commentId": {
+              "$ref": "#/$defs/id"
+            },
+            "inReplyTo": {
+              "$ref": "#/$defs/id"
+            },
+            "body": {
+              "$ref": "#/$defs/body"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "threadResolved": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "required": [
+            "threadId",
+            "statusPredecessors"
+          ],
+          "properties": {
+            "type": {
+              "const": "thread.resolved"
+            },
+            "threadId": {
+              "$ref": "#/$defs/id"
+            },
+            "note": {
+              "type": "string"
+            },
+            "statusPredecessors": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 10000,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "threadDecided": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "required": [
+            "threadId",
+            "decision",
+            "decisionPredecessors"
+          ],
+          "properties": {
+            "type": {
+              "const": "thread.decided"
+            },
+            "threadId": {
+              "$ref": "#/$defs/id"
+            },
+            "decision": {
+              "enum": [
+                "accepted",
+                "rejected",
+                "wont-fix",
+                "duplicate"
+              ]
+            },
+            "reason": {
+              "type": "string"
+            },
+            "decisionPredecessors": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 10000,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "reviewApproved": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "review.approved"
+            },
+            "note": {
+              "type": "string"
+            },
+            "stancePredecessors": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 10000,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              }
+            },
+            "verification": {
+              "$ref": "#/$defs/stored"
+            }
+          },
+          "required": [
+            "stancePredecessors",
+            "verification"
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "reviewRejected": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "required": [
+            "reason",
+            "stancePredecessors",
+            "verification"
+          ],
+          "properties": {
+            "type": {
+              "const": "review.rejected"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "stancePredecessors": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 10000,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              }
+            },
+            "verification": {
+              "$ref": "#/$defs/stored"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "suggestedEditOperation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "delete"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "replacement"
+          ],
+          "properties": {
+            "kind": {
+              "const": "replace"
+            },
+            "replacement": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "replacement",
+            "position"
+          ],
+          "properties": {
+            "kind": {
+              "const": "insert"
+            },
+            "replacement": {
+              "type": "string",
+              "minLength": 1
+            },
+            "position": {
+              "enum": [
+                "before",
+                "after"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "suggestionCreated": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "required": [
+            "suggestionId",
+            "anchor",
+            "operation",
+            "rationale"
+          ],
+          "properties": {
+            "type": {
+              "const": "suggestion.created"
+            },
+            "suggestionId": {
+              "$ref": "#/$defs/id"
+            },
+            "anchor": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/anchor"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "target": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "const": "text"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "operation": {
+              "$ref": "#/$defs/suggestedEditOperation"
+            },
+            "rationale": {
+              "$ref": "#/$defs/body"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "suggestionAccepted": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "required": [
+            "suggestionId",
+            "decisionPredecessors"
+          ],
+          "properties": {
+            "type": {
+              "const": "suggestion.accepted"
+            },
+            "suggestionId": {
+              "$ref": "#/$defs/id"
+            },
+            "note": {
+              "type": "string"
+            },
+            "decisionPredecessors": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 10000,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "suggestionRejected": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "required": [
+            "suggestionId",
+            "decisionPredecessors",
+            "reason"
+          ],
+          "properties": {
+            "type": {
+              "const": "suggestion.rejected"
+            },
+            "suggestionId": {
+              "$ref": "#/$defs/id"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "decisionPredecessors": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 10000,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "suggestionApplied": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "required": [
+            "suggestionId",
+            "document",
+            "sourceDigestBefore",
+            "sourceDigestAfter",
+            "acceptanceIds"
+          ],
+          "properties": {
+            "type": {
+              "const": "suggestion.applied"
+            },
+            "suggestionId": {
+              "$ref": "#/$defs/id"
+            },
+            "document": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\).+$"
+            },
+            "sourceDigestBefore": {
+              "$ref": "#/$defs/digest"
+            },
+            "sourceDigestAfter": {
+              "$ref": "#/$defs/digest"
+            },
+            "acceptanceIds": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 10000,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "exportCreated": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "export.created"
+            },
+            "exportId": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            },
+            "format": {
+              "const": "application/pdf"
+            },
+            "pdf": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "digest",
+                "byteLength",
+                "mediaType"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                "byteLength": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "mediaType": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "inventory": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "digest",
+                "byteLength",
+                "mediaType"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                "byteLength": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "mediaType": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "renderer": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "client",
+                "clientVersion",
+                "markdownVersion",
+                "mermaidVersion",
+                "pdfEngine",
+                "fontSetDigest",
+                "sanitizerVersion",
+                "schemaSetDigest"
+              ],
+              "properties": {
+                "client": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "clientVersion": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "markdownVersion": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "mermaidVersion": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pdfEngine": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "fontSetDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                "sanitizerVersion": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "schemaSetDigest": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                }
+              }
+            }
+          },
+          "required": [
+            "exportId",
+            "format",
+            "pdf",
+            "inventory",
+            "renderer"
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "stored": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "digest",
+        "blobPath",
+        "mediaType",
+        "byteLength"
+      ],
+      "properties": {
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "blobPath": {
+          "type": "string",
+          "pattern": "^blobs/sha256/[a-f0-9]{2}/[a-f0-9]{64}$"
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "threadReopened": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "thread.reopened"
+            },
+            "threadId": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "statusPredecessors": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 10000,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "threadId",
+            "reason",
+            "statusPredecessors"
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "reviewWithdrawn": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "review.withdrawn"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "stancePredecessors": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 10000,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              },
+              "minItems": 1
+            },
+            "verification": {
+              "$ref": "#/$defs/stored"
+            }
+          },
+          "required": [
+            "reason",
+            "stancePredecessors",
+            "verification"
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    }
+  }
+}

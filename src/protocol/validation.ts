@@ -66,7 +66,7 @@ function validId(value: unknown): value is string {
 }
 
 function validTimestamp(value: unknown): value is string {
-  return nonEmptyString(value) && !Number.isNaN(Date.parse(value));
+  return nonEmptyString(value) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:[0-5]\d(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i.test(value) && !Number.isNaN(Date.parse(value));
 }
 
 function validDigest(value: unknown): value is string {
@@ -424,7 +424,7 @@ export function validateEvent(value: unknown): ValidationResult<ReviewEvent> {
       if (!validDigest(value.exportDigest)) errors.push("exportDigest must be a sha256 digest");
       if (!Array.isArray(value.includedEventIds) || value.includedEventIds.some((id) => !validId(id))) errors.push("includedEventIds must contain filename-safe ids");
       else if (new Set(value.includedEventIds).size !== value.includedEventIds.length) errors.push("includedEventIds must be unique");
-      if (!isRecord(value.renderer) || value.renderer.client !== "open-markdown-review-vscode" || !nonEmptyString(value.renderer.clientVersion) || !nonEmptyString(value.renderer.pdfEngine) || !nonEmptyString(value.renderer.mermaidVersion)) errors.push("renderer metadata is invalid");
+      if (!isRecord(value.renderer) || !nonEmptyString(value.renderer.client) || !nonEmptyString(value.renderer.clientVersion) || !nonEmptyString(value.renderer.pdfEngine) || !nonEmptyString(value.renderer.mermaidVersion)) errors.push("renderer metadata is invalid");
       if (!isRecord(value.renderedDiagramDigests) || Object.values(value.renderedDiagramDigests).some((digest) => !validDigest(digest))) errors.push("renderedDiagramDigests must map diagram ids to sha256 digests");
       break;
   }

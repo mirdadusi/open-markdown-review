@@ -1,0 +1,47 @@
+{
+  "protocol": "open-markdown-review",
+  "protocolVersion": "0.5.0",
+  "reviewId": "review_00e74973abaa401d89d1de855963c346",
+  "title": "source",
+  "createdAt": "2026-09-08T12:42:21.465Z",
+  "createdBy": {
+    "id": "example-author",
+    "displayName": "Example author"
+  },
+  "documents": [
+    "architecture.md",
+    "checklist.md"
+  ],
+  "eventDirectory": "events",
+  "revisionDirectory": "revisions",
+  "blobDirectory": "blobs/sha256",
+  "exportDirectory": "exports",
+  "eventLayout": "sha256-flat-v1",
+  "identityProfile": "self-asserted-v1",
+  "limitsProfile": "pilot-v1",
+  "creationOperationId": "professional_example_v1",
+  "capabilities": [
+    "quote-anchor-v1",
+    "range-anchor-v1",
+    "semantic-anchor-v1",
+    "content-addressed-resources-v1",
+    "revision-parents-v1",
+    "thread-lifecycle-v2",
+    "suggested-edit-v2",
+    "review-stance-v1",
+    "review-policy-v1",
+    "audit-inventory-v1"
+  ],
+  "requiredCapabilities": [
+    "quote-anchor-v1",
+    "range-anchor-v1",
+    "semantic-anchor-v1",
+    "content-addressed-resources-v1",
+    "revision-parents-v1",
+    "thread-lifecycle-v2",
+    "suggested-edit-v2",
+    "review-stance-v1",
+    "review-policy-v1",
+    "audit-inventory-v1"
+  ]
+}

@@ -18,6 +18,17 @@ h1 { margin: 5px 0 6px; font-size: 26px; line-height: 1.2; }
 .storage-control button { white-space: nowrap; }
 .storage-mode { display: block; margin-top: 2px; color: var(--vscode-testing-iconPassed, #3b8f52); font-size: 10px; }
 .storage-mode.external { color: var(--vscode-textLink-foreground); }
+.access-card { padding: 18px; }
+.recommended { align-self: flex-start; border-radius: 999px; padding: 3px 8px; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--vscode-textLink-foreground); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.access-options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px; }
+.access-option { display: flex; align-items: flex-start; gap: 10px; min-height: 86px; border: 1px solid var(--border); border-radius: 7px; padding: 13px; cursor: pointer; background: var(--vscode-editor-background); }
+.access-option:hover { border-color: var(--focus); }
+.access-option:has(input:checked) { border-color: var(--focus); box-shadow: inset 0 0 0 1px var(--focus); }
+.access-option input { margin-top: 3px; accent-color: var(--accent); }
+.access-option span, .access-option strong, .access-option small { display: block; }
+.access-option small { margin-top: 4px; color: var(--muted); line-height: 1.45; }
+.browser-boundary { display: flex; gap: 8px; margin-top: 10px; border-left: 3px solid var(--vscode-textLink-foreground); padding: 8px 10px; background: color-mix(in srgb, var(--vscode-textLink-foreground) 7%, transparent); color: var(--muted); font-size: 11px; }
+.browser-boundary strong { flex: 0 0 auto; color: var(--text); }
 input[type="text"], input[type="search"], select { width: 100%; height: 32px; border: 1px solid var(--vscode-input-border, var(--border)); border-radius: 4px; padding: 5px 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); outline: 0; }
 input:focus, select:focus { border-color: var(--focus); }
 input:disabled { opacity: .72; }
@@ -55,4 +66,4 @@ footer { display: flex; justify-content: space-between; gap: 20px; align-items: 
 .scope-note span { display: block; color: var(--text); font-weight: 600; }
 .footer-actions { display: flex; gap: 8px; }
 [hidden] { display: none !important; }
-@media (max-width: 620px) { .setup-shell { width: calc(100% - 24px); padding-top: 20px; } .hero { display: block; } .step-badge { display: inline-block; margin-top: 12px; } .details-card, .root-card, .storage-card { grid-template-columns: 1fr; } .field-help { grid-column: 1; } .file-path { display: none; } footer { align-items: stretch; flex-direction: column; } .footer-actions { justify-content: flex-end; } }
+@media (max-width: 620px) { .setup-shell { width: calc(100% - 24px); padding-top: 20px; } .hero { display: block; } .step-badge { display: inline-block; margin-top: 12px; } .details-card, .root-card, .storage-card { grid-template-columns: 1fr; } .field-help { grid-column: 1; } .access-options { grid-template-columns: 1fr; } .browser-boundary { display: block; } .browser-boundary strong { margin-bottom: 3px; } .file-path { display: none; } footer { align-items: stretch; flex-direction: column; } .footer-actions { justify-content: flex-end; } }

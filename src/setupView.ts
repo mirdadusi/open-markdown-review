@@ -13,6 +13,7 @@ export interface ReviewSetupDefaults {
   sourceRoot: string;
   storageRoot: string;
   storageEditable: boolean;
+  portableBrowserDefault: boolean;
 }
 
 export interface ReviewSetupResult {
@@ -20,6 +21,7 @@ export interface ReviewSetupResult {
   documentPaths: string[];
   rootDocument: string;
   storageRoot: string;
+  includePortableBrowser: boolean;
 }
 
 function escapeHtml(value: string): string {
@@ -38,6 +40,9 @@ function html(context: vscode.ExtensionContext, webview: vscode.Webview, default
 <main class="setup-shell"><header class="hero"><div><span class="eyebrow">OPEN MARKDOWN REVIEW</span><h1>${defaults.initialized ? "Choose documents for the next revision" : "Set up a Markdown review"}</h1><p>${defaults.initialized ? "The selected files will form one new immutable, auditable revision. The previous revision remains unchanged." : "Choose individual Markdown files or entire folders. Only selected files become part of the review."}</p></div><div class="step-badge">${defaults.initialized ? "New revision" : "Review setup"}</div></header>
 <section class="card details-card"><label for="review-title">Review title</label><input id="review-title" type="text" value="${escapeHtml(defaults.title)}" ${defaults.initialized ? "disabled" : ""}><span class="field-help">Shared with reviewers and shown in the audit PDF.</span></section>
 <section class="card storage-card"><div><label for="storage-location">Review package folder</label><span id="storage-mode" class="storage-mode"></span></div><div class="storage-control"><input id="storage-location" type="text" readonly value="${escapeHtml(defaults.storageRoot)}">${defaults.storageEditable ? '<button id="choose-storage" class="secondary">Choose or create folder…</button>' : ""}</div><span class="field-help">This selected folder is the complete review package. Keep the default <code>.review</code>, or choose any name and any normal local disk, mounted shared drive, NAS/SMB/NFS folder, Git workspace, or synchronized folder.</span></section>
+${defaults.initialized ? "" : `<section class="card access-card"><div class="picker-heading"><div><h2>Participant access</h2><p>Every new review includes both VS Code access and the HTML review toolbox.</p></div><span class="recommended">Included</span></div><div class="access-options">
+<label class="access-option"><input type="radio" name="participant-access" value="portable" checked disabled><span><strong>VS Code + portable browser</strong><small>Creates one self-contained <code>OpenMarkdownReview.html</code> beside the package. Reviewers grant it access to this folder; it never embeds a copy of the review. JavaScript, Mermaid, styling and PDF libraries are bundled runtime dependencies.</small></span></label>
+</div><div class="browser-boundary"><strong>Browser safety boundary</strong><span>The browser asks the participant to choose this review folder and to enter a review identity. It cannot silently inherit Windows identity, and unsupported browsers remain read-only or show a compatibility message.</span></div></section>`}
 <section class="card picker-card"><div class="picker-heading"><div><h2>Markdown documents</h2><p>Select a folder to include all Markdown below it, or choose individual files.</p></div><div class="summary"><strong id="selected-count">0</strong><span>selected</span></div></div>
 <div class="toolbar"><div class="search-wrap"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Filter files and folders…"></div><button id="select-all" class="secondary">Select all</button><button id="clear-all" class="secondary">Clear</button></div>
 <div id="empty-state" class="empty-state" hidden>No Markdown files were found in this workspace.</div><div id="document-tree" class="document-tree" role="tree" aria-label="Markdown documents"></div></section>
@@ -101,7 +106,13 @@ export class ReviewSetupPanel {
           void panel.webview.postMessage({ command: "validation", errors });
           return;
         }
-        finish({ title: defaults.initialized ? defaults.title : title, documentPaths, rootDocument, storageRoot });
+        finish({
+          title: defaults.initialized ? defaults.title : title,
+          documentPaths,
+          rootDocument,
+          storageRoot,
+          includePortableBrowser: !defaults.initialized && message.includePortableBrowser === true,
+        });
         panel.dispose();
       });
       panel.onDidDispose(() => {

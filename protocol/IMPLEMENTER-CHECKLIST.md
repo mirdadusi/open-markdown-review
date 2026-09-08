@@ -2,6 +2,17 @@
 
 This checklist is an implementation map for the normative requirements in [`README.md`](README.md). The protocol README takes precedence if wording differs.
 
+For the next professional pilot, use the [client specification](../spec/PROFESSIONAL-V1.md), [0.5 wire draft](../spec/PROTOCOL-0.5.md), and [traceable acceptance gates](../spec/ACCEPTANCE.md). This legacy checklist remains specific to 0.4; in particular, it must not be used to silently apply 0.5 lifecycle or publication behavior to old packages.
+
+## 0. Conformance role and authority
+
+- Declare whether the implementation is a core reader, participant writer, authoring writer, audit exporter, or a combination.
+- Treat the selected review package as the only authoritative shared review record, independent of VS Code, browser, CLI, or filesystem provider.
+- Keep active-review selection, directory handles, indexes, UI state, and caches outside protocol directories.
+- Make every cache reconstructible and disposable; a full audit must verify authoritative shared bytes.
+- Do not infer event identity or semantic order from Windows/SMB identity, ACL owner, modification time, enumeration order, or advisory locks.
+- Do not claim participant-writer conformance unless the storage API satisfies exclusive publication for protocol 0.4.
+
 ## 1. Package reader
 
 - Select an explicit review-package root; never infer it from a hard-coded `.review` name.
@@ -69,6 +80,7 @@ This checklist is an implementation map for the normative requirements in [`READ
 - Write and hash the PDF before publishing `export.created`.
 - Include each pre-existing represented event ID exactly once and every rendered Mermaid diagram digest exactly once.
 - Verify a received export path and digest before describing it as audited.
+- Accept a non-empty independent renderer client identifier; do not require the VS Code implementation name.
 
 ## 8. Required conformance tests
 
@@ -82,5 +94,9 @@ This checklist is an implementation map for the normative requirements in [`READ
 - Comment/reply/resolve/decision conflict and suggestion accept/reject/apply conflict tests.
 - Render and PDF tests containing multiple documents, external/local images, Mermaid, wide tables, attachments, replies, and revision approval/rejection.
 - Package-and-install smoke test that verifies all runtime assets are present in the VSIX.
+- Cross-client test in which two independently identified implementations fold the same fixture and alternately publish comments, replies, decisions, approval/rejection, and an export event.
+- Cache-deletion test proving that all shared semantic state reconstructs from the package alone.
+- Browser/file-client capability test proving real package-directory write, close, reread, exclusive collision handling, and partial-write quarantine before claiming participant-writer support.
 
 The reference client maps these responsibilities to `src/protocol/validation.ts`, `store.ts`, `state.ts`, `snapshot.ts`, `anchor.ts`, the VS Code client modules, and `test/protocol.test.ts`.
+The future wire-format requirements and signed/browser-writer gaps are tracked in [`STANDARDIZATION.md`](STANDARDIZATION.md).
