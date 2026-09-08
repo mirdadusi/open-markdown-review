@@ -31,6 +31,20 @@ test('release policy authorizes only explicit evaluation publication without mut
   }
 });
 
+test('explicit standard publication is not a pre-release and never grants professional approval', () => {
+  const qualification = record();
+  qualification.publication.channel = 'standard';
+  const before = structuredClone(qualification);
+  assert.deepEqual(releasePolicy(pkg, qualification, true), {
+    channel: 'standard', prerelease: false, notesFile: 'docs/releases/0.5.0.md',
+  });
+  assert.deepEqual(qualification, before);
+  assert.throws(() => releasePolicy(pkg, qualification), /Professional pilot release is not approved/);
+  for (const change of [{ approved: false }, { approved: 'true' }, { approvedBy: 'automation' }, { approvedOn: '' }]) {
+    assert.throws(() => releasePolicy(pkg, { ...qualification, publication: { ...qualification.publication, ...change } }, true), /explicit recorded user approval/);
+  }
+});
+
 test('release policy refuses unknown channels and malformed or stale qualification', () => {
   for (const change of [
     { version: '0.4.6' }, { schemaVersion: 'unknown' }, { blockingGates: null },
@@ -52,17 +66,21 @@ test('professional publication still requires approval and zero remaining gates'
 test('evaluation VSIX packages are marked pre-release and unknown channels fail closed', () => {
   assert.deepEqual(vsixChannelArgs('evaluation'), ['--pre-release']);
   assert.deepEqual(vsixChannelArgs('professional'), []);
+  assert.deepEqual(vsixChannelArgs('standard'), []);
   assert.deepEqual(vsixChannelArgs(), []);
   assert.throws(() => vsixChannelArgs('preview'), /Unknown VSIX release channel/);
 });
 
-test('checked-in evaluation release discloses limitations and cannot pass the professional CLI gate', async () => {
+test('checked-in release discloses limitations and cannot bypass the professional CLI gate', async () => {
   const actualPkg = JSON.parse(await readFile('package.json', 'utf8'));
   const qualification = JSON.parse(await readFile('release-qualification.json', 'utf8'));
   const policy = releasePolicy(actualPkg, qualification, true);
   const notes = await readFile(policy.notesFile, 'utf8');
   if (policy.prerelease) {
     assert.match(notes, /evaluation pre-release/i);
+  }
+  if (!qualification.professionalPilotApproved) {
+    assert.match(notes, /not approved for the professional pilot/i);
     assert.match(notes, /SMB.*untested/i);
   }
   const defaultGate = spawnSync(process.execPath, ['scripts/verify-release-qualification.mjs'], { encoding: 'utf8' });

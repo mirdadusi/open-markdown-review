@@ -1,4 +1,4 @@
-// Evaluation publication is explicit and never implies professional approval.
+// Publication classification is separate from professional-pilot qualification.
 export function releasePolicy(pkg, qualification, publication = false) {
   if (qualification.schemaVersion !== 'omr-release-qualification/1'
       || qualification.version !== pkg.version
@@ -9,11 +9,11 @@ export function releasePolicy(pkg, qualification, publication = false) {
     throw new Error('Invalid or version-mismatched release qualification record.');
   }
   const channel = publication ? (qualification.publication?.channel ?? 'professional') : 'professional';
-  if (channel === 'evaluation') {
+  if (channel === 'evaluation' || channel === 'standard') {
     const approval = qualification.publication;
     if (approval.approved !== true || approval.approvedBy !== 'user'
         || !/^\d{4}-\d{2}-\d{2}$/.test(approval.approvedOn ?? '')) {
-      throw new Error('Evaluation publication requires explicit recorded user approval.');
+      throw new Error('Evaluation or standard publication requires explicit recorded user approval.');
     }
   } else if (channel === 'professional') {
     if (qualification.professionalPilotApproved !== true || qualification.blockingGates.length) {
@@ -31,6 +31,6 @@ export function releasePolicy(pkg, qualification, publication = false) {
 
 export function vsixChannelArgs(channel = 'professional') {
   if (channel === 'evaluation') return ['--pre-release'];
-  if (channel === 'professional') return [];
+  if (channel === 'professional' || channel === 'standard') return [];
   throw new Error(`Unknown VSIX release channel: ${channel}`);
 }

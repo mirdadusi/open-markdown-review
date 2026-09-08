@@ -29,6 +29,10 @@ while (queue.length) {
   // Prebundled pdfmake and Mermaid contain dependencies not individually visible
   // in esbuild metadata. Include their conservative production closure as well.
   for (const name of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies })) {
+    // The pure Slidev parser has no prebundled code: its actual JS imports are
+    // individually visible in esbuild. Its types-only declaration dependency
+    // pulls an entire unused editor/Vue toolchain that is not shipped.
+    if (pkg.name === '@slidev/parser' && name === '@slidev/types') continue;
     const resolved = await dependency(directory, name);
     if (resolved) queue.push(resolved);
     else if (!pkg.optionalDependencies?.[name]) missing.push(`${pkg.name}: ${name}`);

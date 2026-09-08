@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:open-markdown-review:profile:slidev:1:schema",
+  "title": "Slidev static review profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "profile",
+    "entryDocument",
+    "parserVersion",
+    "rendererVersion",
+    "notes",
+    "capture",
+    "slides",
+    "limitations"
+  ],
+  "properties": {
+    "profile": {
+      "const": "urn:open-markdown-review:profile:slidev:1"
+    },
+    "entryDocument": {
+      "type": "string",
+      "minLength": 1
+    },
+    "parserVersion": {
+      "const": "52.19.1"
+    },
+    "rendererVersion": {
+      "const": "52.19.1"
+    },
+    "notes": {
+      "enum": [
+        "included",
+        "excluded"
+      ]
+    },
+    "capture": {
+      "const": "slidev-png-static"
+    },
+    "limitations": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      }
+    },
+    "slides": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "number",
+          "title",
+          "document",
+          "documentDigest",
+          "sourceIndex",
+          "occurrence",
+          "range",
+          "contentRange",
+          "previewResourceId"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "number": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "document": {
+            "type": "string",
+            "minLength": 1
+          },
+          "documentDigest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "sourceIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "occurrence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            }
+          },
+          "range": {
+            "$ref": "#/$defs/range"
+          },
+          "contentRange": {
+            "$ref": "#/$defs/range"
+          },
+          "noteRange": {
+            "$ref": "#/$defs/range"
+          },
+          "previewResourceId": {
+            "$ref": "#/$defs/id"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,128}$"
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2097152
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2097152
+        }
+      }
+    }
+  }
+}

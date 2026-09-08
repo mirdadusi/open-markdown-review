@@ -1,14 +1,14 @@
-# Open Markdown Review 0.5
+# Open Markdown Review 0.5.1
 
 A local-first Markdown review protocol with one shared reviewer toolbox for VS Code and a double-clicked HTML file. No application server, browser extension, cloud account, or separate review database.
 
-Version **0.5.0 is an evaluation pre-release**, not a qualified professional pilot. Download it from the [0.5.0 release page](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.0) and read the [release notes and limitations](docs/releases/0.5.0.md). Existing 0.4 packages keep their legacy VS Code reader; they are never silently migrated.
+Version **0.5.1 is a regular GitHub release with known limitations**, not a qualified professional pilot. Download it from the [0.5.1 release page](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.1) and read the [release notes and limitations](docs/releases/0.5.1.md). It adds optional Slidev static review while retaining framework-neutral core wire version 0.5.0. Existing 0.4 packages keep their legacy VS Code reader; they are never silently migrated.
 
-For Windows x64 install `open-markdown-review-0.5.0-win32-x64.vsix`; for other supported VS Code platforms install `open-markdown-review-0.5.0-portable.vsix`. Both release packages are marked pre-release and have SHA-256 checksum files. Use **Extensions: Install from VSIX** in VS Code.
+For Windows x64 install `open-markdown-review-0.5.1-win32-x64.vsix`; for other supported VS Code platforms install `open-markdown-review-0.5.1-portable.vsix`. Both have SHA-256 checksum files and standard VSIX metadata without a pre-release marker. Use **Extensions: Install from VSIX** in VS Code. The previous 0.5.0 tag and original assets remain unchanged.
 
 ## Install
 
-Download the VSIX and matching SHA-256 checksum from the [0.5.0 release](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.0). In VS Code run **Extensions: Install from VSIX**, select the package for your platform, and reload when prompted. Browser-only participants receive the review folder with its generated HTML launcher and do not install an extension.
+Download the VSIX and matching SHA-256 checksum from the [0.5.1 release](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.1). In VS Code run **Extensions: Install from VSIX**, select the package for your platform, and reload when prompted. Browser-only participants receive the review folder with its generated HTML launcher and do not install an extension.
 
 ## Tested status and known limits
 
@@ -48,6 +48,16 @@ Graphical creation is in VS Code; the same authoring service is available from t
 ## Create in VS Code
 
 Open a Markdown source workspace, select the Review icon in the left Activity Bar, and choose **Create New Review**. The visual setup selects individual documents or folders, the start document, title and storage folder/name. Additional prompts allow an approval quorum and explicitly granted external-resource folders.
+
+## Slidev presentations
+
+Choose **Slidev presentation** during creation to capture the root deck and its local `src:` imports with the installed, explicitly trusted Slidev 52.19.1 runtime. Select whether speaker notes are included or removed. Browser participants need no Slidev installation: they get slide navigation, frozen themed images, whole-slide comments, exact source-text comments/suggestions, replies, decisions and audited PDFs in the same toolbox as VS Code.
+
+This uses three layers: the unchanged core protocol, a separately versioned Slidev profile, and a shared client adapter. All source, profile data and frozen slides remain in the one review package. The HTML file remains a generic door/toolbox, not a second deck or discussion store.
+
+Static previews preserve Mermaid, tables, images and rendered theme/component styling. Interactive behavior, animations, video, custom preparsers/addons and pixel-region anchors are outside v1. Authors must inspect captures; excluded notes are not a general secret-removal guarantee. Ordinary Markdown clients must understand the optional profile to participate; old clients fail closed.
+
+See the [Slidev creation/review guide](docs/SLIDEV.md), [profile specification](spec/SLIDEV-PROFILE-V1.md), [transport rules](protocol/profiles/README.md) and [example deck](examples/slidev/slides.md). Author-only runtime dependencies and their narrow, isolated test-fixture advisory exceptions are documented there; they are not shipped to reviewers.
 
 Creation captures saved disk bytes. Unsaved editors require an explicit save/use-disk choice. Every successful creation installs the HTML entry file with JavaScript, Mermaid, fonts and PDF runtime bundled; reviewers need no CDN or npm installation.
 
@@ -93,6 +103,7 @@ Use Node.js 22 or newer.
 npm ci
 npm test
 npx playwright install chromium
+node scripts/install-slidev-fixture.mjs
 npm run test:browser
 npm run test:extension
 node scripts/package-release.mjs portable candidate

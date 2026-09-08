@@ -11,6 +11,8 @@ import { digest, newId, parseJson } from './bytes';
 import { ActorRef, LIMITS, Policy } from './types';
 import { validate } from './validation';
 import { applyAcceptedSuggestion } from './applySuggestion';
+import { SLIDEV_ID, SLIDEV_VERSION } from './profiles/slidev';
+import { SlidevOptions } from './profiles/slidevCapture';
 
 interface Entry { root: string; title: string; source?: string }
 class PackageItem extends vscode.TreeItem {
@@ -50,6 +52,20 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
     if (entry) { session = new ReviewSession(new NativeStorage(storageRoot, this.journalRoot)); await session.open(); }
     const selected = await ReviewSetupPanel.show(this.context, { initialized: !!entry, workspaceName: path.basename(source), title: entry?.title ?? path.basename(source), availableDocuments: files, selectedDocuments: session?.revision?.documents.map(d => d.path) ?? files, rootDocument: session?.revision?.rootDocument ?? files[0], sourceRoot: source, storageRoot, storageEditable: !entry, portableBrowserDefault: true });
     if (!selected) return;
+    const format = session ? session.manifest.extensions?.some(e => e.id === SLIDEV_ID) ? 'slidev' : 'markdown' : (await vscode.window.showQuickPick([
+      { label: 'Markdown documents', description: 'Standard Markdown, Mermaid, tables and images', key: 'markdown' },
+      { label: 'Slidev presentation', description: `Freeze the selected root deck with Slidev ${SLIDEV_VERSION}; imported slides are included automatically`, key: 'slidev' }
+    ], { title: 'Review format', ignoreFocusOut: true }))?.key;
+    if (!format) return;
+    let slidev: SlidevOptions | undefined;
+    if (format === 'slidev') {
+      const notes = await vscode.window.showQuickPick([
+        { label: 'Exclude speaker notes', description: 'Remove trailing note comments from shared Markdown; inspect slide images before sharing', value: 'excluded' as const },
+        { label: 'Include speaker notes', description: 'Notes are shared with reviewers and included in the audit PDF', value: 'included' as const }
+      ], { title: 'Speaker-note sharing policy', ignoreFocusOut: true });
+      if (!notes) return;
+      slidev = { notes: notes.value, trustProject: true };
+    }
     const options = await vscode.window.showQuickPick([{ label: 'Set an approval quorum', key: 'policy', description: 'Choose eligible reviewer IDs and required approvals' }, { label: 'Allow resources from additional folders', key: 'resources', description: 'Explicitly grant local images/attachments outside the source folder' }], { title: 'Optional review settings — leave empty to keep the current/default policy and source folder only', canPickMany: true, ignoreFocusOut: true });
     if (!options) return;
     let resourceRoots: string[] | undefined, policy: Policy | undefined;
@@ -72,10 +88,15 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
       if (!selectedParents?.length) return; parents = selectedParents.map(p => p.label);
     }
     const operationId = newId('author');
-    const request = { source, store: selected.storageRoot, title: selected.title, include: selected.documentPaths, rootDocument: selected.rootDocument, actor, operationId, parents, policy, resourceRoots, clientArtifact: this.artifact, journalRoot: this.journalRoot };
+    const request = { source, store: selected.storageRoot, title: selected.title, include: slidev ? [selected.rootDocument] : selected.documentPaths, rootDocument: selected.rootDocument, actor, operationId, parents, policy, resourceRoots, slidev, clientArtifact: this.artifact, journalRoot: this.journalRoot };
     await this.runCreation(request);
   }
   private async runCreation(request: AuthorRequest, resume = false): Promise<void> {
+    if (request.slidev) {
+      if (!vscode.workspace.isTrusted) throw new Error('Slidev authoring runs project code and requires a trusted workspace. Receiving/reviewing a frozen package does not.');
+      const accepted = await vscode.window.showWarningMessage(`Create a static Slidev review from ${request.rootDocument} and its imports? This runs the installed Slidev ${SLIDEV_VERSION}, themes and components with your permissions. Only run a project you trust. No dependencies are installed automatically.`, { modal: true }, 'Run trusted Slidev capture');
+      if (!accepted) return;
+    }
     const pending = this.context.globalState.get<AuthorRequest[]>('professional.pendingAuthoring', []);
     if (!pending.some(p => p.operationId === request.operationId && p.store === request.store)) await this.context.globalState.update('professional.pendingAuthoring', [...pending, request]);
     const result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Capturing Markdown, Mermaid, images and attachments', cancellable: true }, async (progress, token) => {

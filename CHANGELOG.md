@@ -1,8 +1,17 @@
 # Changelog
 
-## 0.5.0 — evaluation pre-release
+## 0.5.1
 
-User-authorized evaluation publication; professional-pilot qualification remains incomplete. See [release notes and limitations](docs/releases/0.5.0.md).
+- Implemented the three-layer Slidev design: framework-neutral core protocol, an optional versioned profile/schema and one shared VS Code/HTML adapter. Core wire version stays 0.5.0.
+- Added explicit trusted author-side capture through VS Code and CLI, pinned Slidev rendering, nested/ranged/repeated source imports and real speaker-note exclusion from shared snapshots.
+- Added frozen slide navigation, visual and exact-source comments, shared-source/repeated-occurrence semantics, and existing replies/decisions/suggestions/approval workflows without new event types.
+- Added frozen slides, included notes and profile/schema/image evidence to complete audit PDFs. Participant clients execute no Slidev project and need no network/runtime server.
+- Added parser, schema, consent, containment, Unicode/CRLF, rendering and real Slidev-to-browser-to-PDF tests, exercised by Linux/Windows CI. The author fixture has a separate lockfile and narrow documented PPTX-only dependency exceptions; the main application audit remains unmodified.
+- Prepared standard release packaging without a pre-release marker. Professional-pilot gates remain open and SMB remains untested/skipped. See [release notes](docs/releases/0.5.1.md).
+
+## 0.5.0
+
+Published as a regular GitHub release with a limitations note at the user's request; professional-pilot qualification remains incomplete. The original tag and CI-tested assets are unchanged, including their internal pre-release packaging marker. See [release notes and limitations](docs/releases/0.5.0.md).
 
 ### 0.5 implementation
 

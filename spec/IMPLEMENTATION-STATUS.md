@@ -1,6 +1,6 @@
 # 0.5 implementation and qualification status
 
-Date: 2026-09-08. Status: **0.5.0 evaluation pre-release authorized; not cleared for the professional pilot**.
+Date: 2026-09-08. Status: **0.5.0 regular GitHub publication authorized with limitations; not cleared for the professional pilot**.
 
 This report distinguishes implemented behavior from qualification evidence. Package version 0.5.0 identifies the candidate and its wire profile; it does not claim that all acceptance gates have passed. No remote push, merge or release is implied by a local build.
 
@@ -60,4 +60,4 @@ On 2026-09-08 the user confirmed that a CI-only SMB share cannot be arranged and
 
 The professional pilot remains on hold until the concrete blockers and all non-excluded required gates are closed. The SMB exclusion does not waive any other requirement or establish SMB compatibility.
 
-`release-qualification.json` explicitly keeps professional publication disabled and records both the SMB exclusion and the user's separate authorization for evaluation publication. The release workflow verifies that exact-version record, marks evaluation GitHub/VSIX packages as pre-release, runs browser/extension checks on local storage, and refuses to overwrite an existing release's assets. The default qualification command still refuses professional publication. A green CI run or evaluation release does not approve the professional pilot.
+`release-qualification.json` explicitly keeps professional-pilot approval disabled and records both the SMB exclusion and the user's separate authorization for regular publication with a limitations note. Publication classification does not establish qualification. The workflow marks evaluation builds as pre-release and standard builds as regular, runs browser/extension checks on local storage, and refuses to overwrite existing release assets. For 0.5.0 only the GitHub classification and notes changed: the source tag and CI-tested binaries retain their original evaluation metadata. The default qualification command still refuses professional-pilot approval.

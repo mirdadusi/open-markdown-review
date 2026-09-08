@@ -1,0 +1,8 @@
+{
+  "scope": "Isolated CI/example authoring fixture only, never the shipped extension, HTML toolbox or authoring CLI bundle",
+  "reason": "Slidev 52.19.1 includes pptxgenjs/image-size with no published fixed image-size version as of 2026-09-08. OMR invokes only the PNG export path. Received projects are never executed; author capture requires explicit trust. The application dependency audit remains unmodified.",
+  "advisories": ["https://github.com/advisories/GHSA-w3rx-r6r6-pgpr", "https://github.com/advisories/GHSA-5p2g-fcmc-qvqq"],
+  "propagatedPackages": ["image-size", "pptxgenjs", "@slidev/client", "@slidev/cli"],
+  "reviewAfter": "2026-10-08",
+  "remediation": "Remove these exceptions when a fixed upstream dependency becomes available; never broaden to other advisories or use this fixture for PPTX export."
+}

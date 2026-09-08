@@ -1,8 +1,10 @@
 import { BrowserStorage, localValue } from './browserStorage';
+import { SLIDEV_ID, SlidevProfile } from './profiles/slidev';
+import { renderSlide, sourceView, frozenReferenceLinks } from './profiles/slidevView';
 import { ReviewSession, ActionContext } from './session';
 import { JournalEntry, Storage } from './storage';
 import { ActorRef, Event, LIMITS, MarkdownAnchor, Payload, ProtocolError } from './types';
-import { decode, digest, jsonBytes, newId, parseJson, pointAt } from './bytes';
+import { decode, digest, jsonBytes, newId, parseJson, pointAt, offsetAt } from './bytes';
 import { fold, predecessors } from './state';
 import { annotate, escapeHtml as esc, renderDocument, RenderedSource, selectionAnchor } from './rendering';
 import { dataUrl, populateAssets } from './assets';
@@ -18,6 +20,8 @@ declare global {
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => { const el = document.getElementById(id); if (!el) throw new Error(`Missing UI element ${id}`); return el as T; };
 const sessions = new Map<string, ReviewSession>(); let current: ReviewSession | undefined;
 let activeDocument = '', source = '', rendered: RenderedSource | undefined, renderKey = '', semantic: HTMLElement | undefined;
+let activeSlide: string | undefined;
+function presentation(): SlidevProfile | undefined { return current?.revision ? current.profiles.get(current.revision.id)?.get(SLIDEV_ID) as SlidevProfile | undefined : undefined; }
 let remembered: { root: FileSystemDirectoryHandle; reviewId: string; manifestDigest: string } | undefined;
 let polling = false, nextPoll: number | undefined, generation = 0;
 let lastStateKey = '';
@@ -38,7 +42,7 @@ function progress() {
 }
 function chrome() {
   if (!current) return;
-  const key = `${current.storage.identity}:${activeDocument}:${current.pinnedRevisionId}:${[...current.revisions.keys()].join(',')}:${[...sessions.keys()].join(',')}`;
+  const key = `${current.storage.identity}:${activeDocument}:${activeSlide}:${current.pinnedRevisionId}:${[...current.revisions.keys()].join(',')}:${[...sessions.keys()].join(',')}`;
   if (key === lastChromeKey) { progress(); return; }
   lastChromeKey = key;
   $('title').textContent = current.manifest.title; $('welcome').hidden = true; $('toolbar').hidden = false; $('workspace').hidden = false;
@@ -46,8 +50,10 @@ function chrome() {
   $('revisions').innerHTML = `${!current.revision ? '<option value="">Choose a revision…</option>' : ''}${[...current.revisions.values()].map(r => `<option value="${r.id}" ${r.id === current!.pinnedRevisionId ? 'selected' : ''}>${r.id}${current!.heads.some(h => h.id === r.id) ? ' · head' : ' · history'}</option>`).join('')}`;
   const revision = current.revision;
   if (revision) {
+    const profile = presentation();
+    if (profile && activeSlide === undefined) { activeSlide = profile.slides[0].id; activeDocument = profile.slides[0].document; }
     if (!revision.documents.some(d => d.path === activeDocument)) activeDocument = revision.rootDocument;
-    $('documents').innerHTML = revision.documents.map(d => `<li><button data-document="${esc(d.path)}" class="${d.path === activeDocument ? 'active' : ''}">${esc(d.path)}</button></li>`).join('');
+    $('documents').innerHTML = (profile ? `<li><h3>Slides</h3></li>${profile.slides.map(s => `<li><button data-slide="${s.id}" class="${s.id === activeSlide ? 'active' : ''}">${s.number}. ${esc(s.title)}</button></li>`).join('')}<li><h3>Frozen source files</h3></li>` : '') + revision.documents.map(d => `<li><button data-document="${esc(d.path)}" class="${!activeSlide && d.path === activeDocument ? 'active' : ''}">${esc(d.path)}</button></li>`).join('');
   }
   for (const id of ['comment', 'suggest', 'approve', 'reject', 'withdraw', 'export']) $<HTMLButtonElement>(id).disabled = !revision || !current.storage.writable || id === 'export' && exportBusy;
   progress();
@@ -68,6 +74,13 @@ function stateView() {
   $('suggestions').innerHTML = matchingSuggestions.slice(0, discussionLimit).map(s => `<article class="suggestion" id="suggestion-${s.root.suggestionId}"><h3>${esc(s.root.operation.kind)} · ${esc(s.status)}</h3><blockquote>${s.root.operation.kind === 'insert' ? esc(s.root.anchor.quote.exact) : `<del>${esc(s.root.anchor.quote.exact)}</del>`}${s.root.operation.kind !== 'delete' ? `<ins>${esc(s.root.operation.replacement)}</ins>` : ''}</blockquote><p>${esc(s.root.rationale.text)}</p><div class="buttons"><button data-suggestion="${s.root.suggestionId}" data-action="accept-suggestion">Accept</button><button data-suggestion="${s.root.suggestionId}" data-action="reject-suggestion">Reject</button></div></article>`).join('') || '<p>No suggested edits.</p>';
   $('history').innerHTML = state.current.slice(-historyLimit).reverse().map(e => `<div class="history-item"><strong>${esc(e.type)}</strong><br>${esc(e.actor.displayName ?? e.actor.id)} · ${esc(e.occurredAt)}<details><summary>Full event and reasons</summary><pre>${esc(JSON.stringify(e, null, 2))}</pre></details></div>`).join('');
   $('more-discussions').hidden = Math.max(matchingThreads.length, matchingSuggestions.length) <= discussionLimit;
+  const profile = presentation();
+  if (profile) for (const thread of matchingThreads.slice(0, discussionLimit)) {
+    const target = thread.root.anchor.target;
+    const slide = target?.kind === 'image' ? profile.slides.find(s => s.previewResourceId === target.resourceId) : undefined;
+    const button = $('threads').querySelector<HTMLButtonElement>(`[data-action="locate"][data-thread="${thread.root.threadId}"]`);
+    if (slide && button) { button.textContent = `Slide ${slide.number} · ${slide.title}`; button.title = `${slide.document}:${thread.root.anchor.range.start.line + 1}`; }
+  }
   $('more-history').hidden = state.current.length <= historyLimit;
   $('discussion-count').textContent = `${matchingThreads.length} comments · ${matchingSuggestions.length} edits${query ? ' matching search' : ''}`;
   if (rendered) annotate($('document'), rendered, source, state.current, activeDocument);
@@ -84,18 +97,21 @@ function stateView() {
 async function showDocument() {
   const session = current, revision = session?.revision, selected = activeDocument, epoch = generation;
   if (!session || !revision || !selected) return;
-  const key = `${session.storage.identity}:${revision.id}:${selected}`;
+  const key = `${session.storage.identity}:${revision.id}:${selected}:${activeSlide}`;
   if (key === renderKey) { stateView(); return; }
   status(`Loading ${selected}…`);
   const doc = revision.documents.find(d => d.path === selected)!; const text = decode(await session.content(doc));
-  const render = renderDocument(text, selected, revision), host = document.createElement('article'); host.innerHTML = render.html;
+  const profile = presentation(), slide = profile?.slides.find(s => s.id === activeSlide);
+  const render = slide && profile ? renderSlide(profile, slide, text) : profile ? sourceView(text) : renderDocument(text, selected, revision), host = document.createElement('article'); host.innerHTML = render.html;
+  if (profile) host.insertAdjacentHTML('beforeend', frozenReferenceLinks(revision, selected));
   await populateAssets(host, revision, c => session.content(c));
   for (const figure of host.querySelectorAll<HTMLElement>('[data-diagram-id]')) { const zoom = document.createElement('button'); zoom.dataset.zoom = figure.dataset.diagramId; zoom.textContent = 'Zoom diagram'; figure.append(zoom); }
   if (session !== current || selected !== activeDocument || epoch !== generation || revision.id !== current.revision?.id) return;
   source = text; rendered = render; renderKey = key; semantic = undefined;
   $('document').replaceChildren(...host.childNodes); stateView(); progress();
 }
-async function activate(session: ReviewSession) { generation++; lastChromeKey = ''; discussionLimit = 50; historyLimit = 100; current = session; renderKey = ''; lastStateKey = ''; activeDocument = session.revision?.rootDocument ?? ''; chrome(); await showDocument(); schedulePoll(); }
+async function activate(session: ReviewSession) { generation++; lastChromeKey = ''; discussionLimit = 50; historyLimit = 100; current = session; renderKey = ''; lastStateKey = ''; activeSlide = undefined; activeDocument = session.revision?.rootDocument ?? ''; chrome(); await showDocument(); schedulePoll(); }
+async function showSlide(id: string) { const slide = presentation()?.slides.find(s => s.id === id); if (!slide) return; activeSlide = id; activeDocument = slide.document; generation++; chrome(); await showDocument(); }
 async function attach(storage: Storage, expected?: { reviewId: string; manifestDigest: string }): Promise<ReviewSession> {
   const session = new ReviewSession(storage); await session.open();
   if (expected && (session.manifest.reviewId !== expected.reviewId || digest(await storage.read('manifest.json', LIMITS.manifest)) !== expected.manifestDigest)) throw new Error('Remembered folder now contains a different review. Choose it explicitly to connect.');
@@ -180,7 +196,17 @@ async function stance(type: 'review.approved' | 'review.rejected' | 'review.with
 }
 async function action(button: HTMLButtonElement) {
   const ctx = context(), state = fold(ctx.session.events, ctx.revision.id), thread = state.threads.find(t => t.root.threadId === button.dataset.thread), suggestion = state.suggestions.find(s => s.root.suggestionId === button.dataset.suggestion), action = button.dataset.action;
-  if (action === 'locate' && thread) { activeDocument = thread.root.anchor.document; chrome(); await showDocument(); const target = $('document').querySelector<HTMLElement>(`[data-thread-ids~="${thread.root.threadId}"]`); if (target) target.scrollIntoView({ block: 'center', behavior: 'smooth' }); else toast('The anchor cannot be located in this rendering. The exact source quote is shown in the discussion.'); return; }
+  if (action === 'locate' && thread) {
+    activeDocument = thread.root.anchor.document;
+    const target = thread.root.anchor.target, profile = presentation();
+    const slides = profile?.slides.filter(s => s.document === activeDocument) ?? [];
+    const start = offsetAt(decode(await ctx.session.content(ctx.revision.documents.find(d => d.path === activeDocument)!)), thread.root.anchor.range.start);
+    activeSlide = (target?.kind === 'image' ? slides.find(s => s.previewResourceId === target.resourceId) : slides.find(s => s.id === activeSlide && s.range.start <= start && s.range.end > start) ?? slides.find(s => s.range.start <= start && s.range.end > start))?.id ?? '';
+    generation++; chrome(); await showDocument();
+    const element = $('document').querySelector<HTMLElement>(`[data-thread-ids~="${thread.root.threadId}"]`);
+    if (element) { const details = element.closest('details'); if (details) details.open = true; element.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+    else toast('The anchor cannot be located in this rendering. The exact source quote is shown in the discussion.'); return;
+  }
   if (thread) {
     const threadId = thread.root.threadId;
     if (action === 'reply') eventComposer(ctx, { title: 'Reply to comment', label: 'Reply', required: true }, text => ({ type: 'comment.replied', threadId, commentId: newId('comment'), inReplyTo: thread.root.commentId, body: { format: 'markdown', text } }));
@@ -235,15 +261,17 @@ $('open-only').addEventListener('change', stateView);
 $('discussion-search').addEventListener('input', () => { discussionLimit = 50; stateView(); });
 $('more-discussions').addEventListener('click', () => { discussionLimit += 50; stateView(); });
 $('more-history').addEventListener('click', () => { historyLimit += 100; stateView(); });
-$('documents').addEventListener('click', e => { const button = (e.target as Element).closest<HTMLElement>('[data-document]'); if (button) safely(async () => { activeDocument = button.dataset.document!; chrome(); await showDocument(); }); });
+$('documents').addEventListener('click', e => { const button = (e.target as Element).closest<HTMLElement>('[data-document],[data-slide]'); if (button) safely(async () => { if (button.dataset.slide) return showSlide(button.dataset.slide); activeSlide = ''; generation++; activeDocument = button.dataset.document!; chrome(); await showDocument(); }); });
 $('reviews').addEventListener('change', () => safely(() => activate(sessions.get($<HTMLSelectElement>('reviews').value)!)));
-$('revisions').addEventListener('change', () => safely(async () => { await current!.pin($<HTMLSelectElement>('revisions').value); activeDocument = current!.revision!.rootDocument; chrome(); await showDocument(); }));
+$('revisions').addEventListener('change', () => safely(async () => { await current!.pin($<HTMLSelectElement>('revisions').value); activeSlide = undefined; generation++; activeDocument = current!.revision!.rootDocument; chrome(); await showDocument(); }));
 for (const id of ['threads', 'suggestions']) $(id).addEventListener('click', e => { const button = (e.target as Element).closest<HTMLButtonElement>('button[data-action]'); if (button) safely(() => action(button)); });
 $('document').addEventListener('click', e => {
+  const slideButton = (e.target as Element).closest<HTMLElement>('[data-slide]');
+  if (slideButton?.dataset.slide) { safely(() => showSlide(slideButton.dataset.slide!)); return; }
   const zoom = (e.target as Element).closest<HTMLElement>('[data-zoom]');
   if (zoom) {
-    const svg = zoom.parentElement?.querySelector('svg'); if (!svg) return;
-    const clone = svg.cloneNode(true) as SVGElement; clone.style.maxWidth = 'none'; clone.style.width = '800px'; clone.style.height = 'auto';
+    const visual = zoom.parentElement?.querySelector('svg,img'); if (!visual) return;
+    const clone = visual.cloneNode(true) as SVGElement | HTMLImageElement; clone.style.maxWidth = 'none'; clone.style.width = '800px'; clone.style.height = 'auto';
     $('zoom-content').replaceChildren(clone); $<HTMLInputElement>('zoom-scale').value = '100'; $<HTMLDialogElement>('diagram-viewer').showModal(); return;
   }
   const target = e.target as Element, attachment = target.closest<HTMLElement>('[data-attachment]');
@@ -261,7 +289,7 @@ $('reconnect').addEventListener('click', () => safely(async () => {
   await attach(new BrowserStorage(remembered.root, remembered.reviewId, true), remembered);
 }));
 $('zoom-close').addEventListener('click', () => $<HTMLDialogElement>('diagram-viewer').close());
-$('zoom-scale').addEventListener('input', () => { const svg = $('zoom-content').querySelector<SVGElement>('svg'); if (svg) svg.style.width = `${Number($<HTMLInputElement>('zoom-scale').value) * 8}px`; });
+$('zoom-scale').addEventListener('input', () => { const visual = $('zoom-content').querySelector<SVGElement | HTMLImageElement>('svg,img'); if (visual) visual.style.width = `${Number($<HTMLInputElement>('zoom-scale').value) * 8}px`; });
 $('document').addEventListener('keydown', event => { const target = event.target as HTMLElement; if ((event.key === 'Enter' || event.key === ' ') && target.classList.contains('semantic')) { event.preventDefault(); target.click(); } });
 $('forget').addEventListener('click', () => safely(async () => { if (current) { for (const [key, s] of sessions) if (s === current) sessions.delete(key); } current = undefined; generation++; renderKey = ''; $('workspace').hidden = true; $('toolbar').hidden = true; $('welcome').hidden = false; remembered = undefined; $('reconnect').hidden = true; await localValue(`connection:${location.href}`, null); status('Connection forgotten. Shared review files are unchanged.'); }));
 try { const actor = JSON.parse(localStorage.getItem('omr.identity') ?? '{}'); $<HTMLInputElement>('actor-id').value = actor.id ?? ''; $<HTMLInputElement>('actor-name').value = actor.displayName ?? ''; } catch { /* Storage is optional for identity. */ }

@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { ActorRef, CAPABILITIES, Event, LIMITS, Manifest, Policy, ProtocolError, Revision } from './types';
-import { decode, digest, encode, jsonBytes, newId, parseJson, safePath } from './bytes';
+import { decode, digest, encode, jsonBytes, newId, parseJson, safePath, stableId } from './bytes';
 import { contained, NativeStorage } from './nativeStorage';
 import { blobEvidence, contentRef, evidence, publish, publishBlob, readOptional } from './storage';
 import { inspect, validate } from './validation';
@@ -10,11 +10,16 @@ import { findMarkdownFiles, sanitizeExternalUri } from '../protocol/snapshot';
 import { mapWithConcurrency } from '../protocol/concurrency';
 import mermaidPackage from 'mermaid/package.json';
 import { checkpoint, OperationControl } from './operation';
+import { collectSlidev, redactNotes } from './profiles/slidevSource';
+import { captureSlidev, SlidevOptions } from './profiles/slidevCapture';
+import { PRESENTATION_CAPABILITY, SLIDEV_ID, SLIDEV_SCHEMA_BYTES, SLIDEV_VERSION, SlidevProfile, slidevDeclaration } from './profiles/slidev';
+import { loadProfiles } from './profiles/registry';
 
 export interface AuthorRequest extends OperationControl {
   source: string; store: string; title?: string; include?: string[]; includeDir?: string[]; exclude?: string[];
   rootDocument: string; actor: ActorRef; operationId: string; parents?: string[]; resourceRoots?: string[];
   policy?: Policy; dryRun?: boolean; resume?: boolean; clientArtifact: string; journalRoot: string;
+  slidev?: SlidevOptions;
 }
 export interface AuthorResult { reviewId: string; revisionId?: string; store: string; browserClientPath: string; documentPaths: string[]; outcome: 'planned' | 'completed' | 'already-completed' | 'review-created-client-failed'; error?: string }
 interface Plan { fingerprint: string; manifest: Manifest; revision: Revision; publication: Event; blobs: Array<{ path: string; mediaType: string }> }
@@ -61,7 +66,8 @@ async function capture(reference: string, document: string, request: AuthorReque
     finally { clearTimeout(timeout); }
     throw new ProtocolError('invalid', 'Unresolved remote resource.');
   }
-  const relative = decodeURIComponent(reference.split(/[?#]/)[0]), target = path.resolve(request.source, path.dirname(document), relative);
+  const relative = decodeURIComponent(reference.split(/[?#]/)[0]);
+  const target = request.slidev && relative.startsWith('/') ? path.resolve(request.source, 'public', '.' + relative) : path.resolve(request.source, path.dirname(document), relative);
   const roots = [request.source, ...(request.resourceRoots ?? [])].map(r => path.resolve(r));
   const root = roots.find(r => isInside(r, target)); if (!root) throw new ProtocolError('permission', `Resource is outside explicitly granted roots: ${reference}`);
   const bytes = await new NativeStorage(root, request.journalRoot).read(path.relative(root, target).split(path.sep).join('/'), LIMITS.resource);
@@ -70,6 +76,7 @@ async function capture(reference: string, document: string, request: AuthorReque
 /** The only source-to-review authoring service; GUI and CLI call this same contract. */
 export async function authorReview(request: AuthorRequest): Promise<AuthorResult> {
   checkpoint(request, 'Planning the selected Markdown scope');
+  if (request.slidev && (!['included', 'excluded'].includes(request.slidev.notes) || !request.dryRun && request.slidev.trustProject !== true)) throw new ProtocolError('permission', 'Slidev requires an explicit notes policy and approval to run the trusted author project.');
   if (!/^[A-Za-z0-9_-]{1,96}$/.test(request.operationId)) throw new ProtocolError('invalid', 'Creation operation ID must be filename-safe (1–96 characters).');
   const store = new NativeStorage(request.store, request.journalRoot);
   const stagedRoot = path.join(request.journalRoot, 'authoring', digest(`${store.identity}\0${request.operationId}`).slice(7));
@@ -78,9 +85,12 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
   const savedPlan = prior ? parseJson<Plan>(prior, LIMITS.revision * 2) : undefined;
   const intent = request.dryRun || prior ? undefined : await readOptional(staged, 'intent.json', LIMITS.manifest * 2);
   const started = intent ? parseJson<{ fingerprint: string; manifest: Manifest; documentPaths: string[] }>(intent, LIMITS.manifest * 2) : undefined;
-  const documentPaths = savedPlan?.revision.documents.map(d => d.path) ?? started?.documentPaths ?? await scope(request);
+  const slidevSources = request.slidev && !savedPlan ? await collectSlidev(request.rootDocument, async p => decode(await new NativeStorage(request.source, request.journalRoot).read(p, LIMITS.markdown))) : undefined;
+  const documentPaths = savedPlan?.revision.documents.map(d => d.path) ?? started?.documentPaths ?? [...new Set([...await scope(request), ...(slidevSources?.documents.keys() ?? [])])];
+  if (documentPaths.length > LIMITS.documents) throw new ProtocolError('unsupported', 'Slidev imports exceed the document limit.');
+  if (slidevSources && [...slidevSources.documents.keys()].some(p => !documentPaths.includes(p) || (request.exclude ?? []).some(x => p === x || p.startsWith(x + '/')))) throw new ProtocolError('invalid', 'A required Slidev import is excluded or changed since authoring started.');
   const result: AuthorResult = { reviewId: '', store: path.resolve(request.store), browserClientPath: path.join(path.resolve(request.store), 'OpenMarkdownReview.html'), documentPaths, outcome: 'planned' };
-  const fingerprint = digest(jsonBytes({ source: path.resolve(request.source), store: path.resolve(request.store), title: request.title, documentPaths, include: request.include, includeDir: request.includeDir, exclude: request.exclude, rootDocument: request.rootDocument, actor: request.actor, parents: request.parents, policy: request.policy, resourceRoots: request.resourceRoots }));
+  const fingerprint = digest(jsonBytes({ source: path.resolve(request.source), store: path.resolve(request.store), title: request.title, documentPaths, include: request.include, includeDir: request.includeDir, exclude: request.exclude, rootDocument: request.rootDocument, actor: request.actor, parents: request.parents, policy: request.policy, resourceRoots: request.resourceRoots, slidev: request.slidev }));
   if (request.dryRun) {
     validate('policy', request.policy ?? { schemaVersion: '0.5.0', kind: 'review-policy', mode: 'assertions-only' });
     // Reads local Markdown only. No capture, output directory, journal or network access.
@@ -99,6 +109,7 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
     if (existing) {
       if (request.parents === undefined) throw new ProtocolError('invalid', 'This folder already contains a review. Use revision create with explicit parents.');
       manifest = validate('manifest', parseJson(existing, LIMITS.manifest));
+      if (!!request.slidev !== !!manifest.extensions?.some(e => e.id === SLIDEV_ID)) throw new ProtocolError('unsupported', 'A review retains its original presentation profile. Use the same profile for revisions, or create a separate review.');
       const session = new ReviewSession(store); await session.open();
       if (session.diagnostics.length || parents.some(p => !session.revisions.has(p))) throw new ProtocolError('invalid', 'Parent revisions are unavailable or invalid.');
       if (!parents.length) throw new ProtocolError('invalid', 'An existing review requires explicit parent revision IDs.');
@@ -106,7 +117,8 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
       let contents: string[] = []; try { contents = await readdir(request.store); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
       if (contents.length) throw new ProtocolError('invalid', 'A new review requires an empty or nonexistent target directory.');
       if (parents.length) throw new ProtocolError('invalid', 'A new review cannot have parents.');
-      manifest = started?.manifest ?? validate('manifest', { protocol: 'open-markdown-review', protocolVersion: '0.5.0', reviewId: newId('review'), title: request.title?.trim() || path.basename(request.source), createdAt: new Date().toISOString(), createdBy: request.actor, documents: documentPaths, eventDirectory: 'events', revisionDirectory: 'revisions', blobDirectory: 'blobs/sha256', exportDirectory: 'exports', eventLayout: 'sha256-flat-v1', identityProfile: 'self-asserted-v1', limitsProfile: 'pilot-v1', creationOperationId: request.operationId, capabilities: [...CAPABILITIES], requiredCapabilities: [...CAPABILITIES] });
+      const capabilities = [...CAPABILITIES, ...(request.slidev ? [PRESENTATION_CAPABILITY] : [])];
+      manifest = started?.manifest ?? validate('manifest', { protocol: 'open-markdown-review', protocolVersion: '0.5.0', reviewId: newId('review'), title: request.title?.trim() || path.basename(request.source), createdAt: new Date().toISOString(), createdBy: request.actor, documents: documentPaths, eventDirectory: 'events', revisionDirectory: 'revisions', blobDirectory: 'blobs/sha256', exportDirectory: 'exports', eventLayout: 'sha256-flat-v1', identityProfile: 'self-asserted-v1', limitsProfile: 'pilot-v1', creationOperationId: request.operationId, capabilities, requiredCapabilities: capabilities, ...(request.slidev ? { extensions: [slidevDeclaration()] } : {}) });
     }
     checkpoint(request);
     await mkdir(stagedRoot, { recursive: true, mode: 0o700 });
@@ -120,13 +132,25 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
       const documentCheckpoint = `capture/document_${digest(document).slice(7)}.json`, savedDocument = await readOptional(staged, documentCheckpoint, LIMITS.event);
       let frozen: Revision['documents'][number];
       if (savedDocument) frozen = parseJson(savedDocument);
-      else { frozen = { path: document, ...await put(await new NativeStorage(request.source, request.journalRoot).read(document, LIMITS.markdown), 'text/markdown') }; await staged.write(documentCheckpoint, jsonBytes(frozen), false); }
+      else {
+        let bytes = await new NativeStorage(request.source, request.journalRoot).read(document, LIMITS.markdown);
+        if (slidevSources?.documents.has(document)) {
+          if (digest(bytes) !== digest(slidevSources.documents.get(document)!)) throw new ProtocolError('changed', 'Slidev sources changed during planning.');
+          if (request.slidev?.notes === 'excluded') bytes = encode(redactNotes(decode(bytes), slidevSources.parsed.get(document)!));
+        }
+        frozen = { path: document, ...await put(bytes, 'text/markdown') }; await staged.write(documentCheckpoint, jsonBytes(frozen), false);
+      }
       const bytes = await staged.read(frozen.blobPath, LIMITS.markdown);
       if (digest(bytes) !== frozen.digest || bytes.length !== frozen.byteLength) throw new ProtocolError('integrity', 'Saved capture bytes changed.');
+      if (slidevSources?.documents.has(document)) {
+        const original = slidevSources.documents.get(document)!, expected = request.slidev?.notes === 'excluded' ? redactNotes(original, slidevSources.parsed.get(document)!) : original;
+        if (digest(expected) !== frozen.digest) throw new ProtocolError('changed', 'Slidev source differs from the saved capture. Start a new operation.');
+      }
       blobs.set(frozen.blobPath, { path: frozen.blobPath, mediaType: frozen.mediaType });
       const parsed = inspect(decode(bytes), document);
       documents.push(frozen); diagrams.push(...parsed.diagrams);
-      for (const ref of parsed.references) {
+      const extraImages = (slidevSources?.parsed.get(document) ?? []).flatMap(s => s.images).map(reference => ({ reference, role: 'image' as const, id: stableId('resource', `${document}\0${reference}`) }));
+      for (const ref of [...parsed.references, ...extraImages]) {
         checkpoint(request);
         if (resources.some(r => r.id === ref.id)) continue;
         const resourceCheckpoint = `capture/${ref.id}.json`, savedResource = await readOptional(staged, resourceCheckpoint, LIMITS.event);
@@ -142,8 +166,37 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
         if (uri && /^https?:/.test(uri) && child.attrGet('title') !== 'review:attach') references.push({ id: `reference_${digest(`${document}\0${uri}`).slice(7, 31)}`, document, uri: sanitizeExternalUri(uri), relation: 'link' });
       }
     }
+    if (request.slidev && slidevSources) {
+      const descriptorCheckpoint = await readOptional(staged, 'capture/slidev.json', LIMITS.revision);
+      if (descriptorCheckpoint) {
+        const saved = parseJson<{ resources: Revision['resources'] }>(descriptorCheckpoint, LIMITS.revision).resources;
+        for (const resource of saved) { resources.push(resource); blobs.set(resource.blobPath, { path: resource.blobPath, mediaType: resource.mediaType }); }
+      } else {
+        const pages = await captureSlidev({ source: request.source, entry: request.rootDocument, journalRoot: stagedRoot, options: request.slidev, sources: slidevSources.documents, count: slidevSources.slides.length, signal: request.signal, progress: request.progress });
+        const additional: Revision['resources'] = [];
+        const add = async (document: string, reference: string, bytes: Uint8Array, mediaType: string, role: 'image' | 'attachment') => {
+          const resource = { id: stableId('resource', `${document}\0${reference}`), document, originalReference: reference, role, sourceKind: 'data' as const, capturedAt: new Date().toISOString(), ...await put(bytes, mediaType) }; additional.push(resource); return resource;
+        };
+        const slides = [];
+        for (const [i, slide] of slidevSources.slides.entries()) {
+          const preview = await add(slide.document, `${SLIDEV_ID}:preview:${slide.id}`, pages[i], 'image/png', 'image');
+          slides.push({ ...slide, documentDigest: documents.find(d => d.path === slide.document)!.digest, previewResourceId: preview.id });
+        }
+        const profile: SlidevProfile = { profile: SLIDEV_ID, entryDocument: request.rootDocument, parserVersion: SLIDEV_VERSION, rendererVersion: SLIDEV_VERSION, notes: request.slidev.notes, capture: 'slidev-png-static', slides, limitations: [
+          'Static Slidev export only: animations, click steps, video, live data and interactive components are not reviewed as interactive behavior.',
+          'Frozen page pixels are the visual evidence. Source comments refer to the separately frozen Markdown; no pixel-to-word or rectangular region mapping is claimed.',
+          'Dynamic dependencies and the build environment are not archived as a reproducible Slidev project. Static Markdown, imported sources and discoverable image references are captured.',
+          request.slidev.notes === 'included' ? 'Speaker notes are included in the shared source and audit PDF.' : 'Trailing speaker-note comments are blanked in shared Markdown. Custom components can still display private content: inspect the capture before sharing.'
+        ] };
+        await add(request.rootDocument, slidevDeclaration().schemaUri, SLIDEV_SCHEMA_BYTES, 'application/json', 'attachment');
+        await add(request.rootDocument, SLIDEV_ID, jsonBytes(profile), 'application/json', 'attachment');
+        resources.push(...additional);
+        await staged.write('capture/slidev.json', jsonBytes({ resources: additional }), false);
+      }
+    }
     const policy = validate('policy', request.policy ?? { schemaVersion: '0.5.0', kind: 'review-policy', mode: 'assertions-only' });
     const revision = validate('revision', { schemaVersion: '0.5.0', id: newId('revision'), reviewId: manifest.reviewId, createdAt: new Date().toISOString(), createdBy: request.actor, rootDocument: request.rootDocument, documents, resources, externalReferences: [...new Map(references.map(r => [r.id, r])).values()], mermaidDiagrams: diagrams, diagnostics: [], renderer: { markdownProfile: 'commonmark-gfm', mermaidVersion: mermaidPackage.version }, parents, policy: await put(jsonBytes(policy), 'application/json'), creationOperationId: request.operationId });
+    if (request.slidev) await loadProfiles(manifest, revision, new Map(await Promise.all(documents.map(async d => [d.path, decode(await staged.read(d.blobPath, LIMITS.markdown))] as const))), c => staged.read(c.blobPath, c.byteLength));
     const publication = validate('event', { schemaVersion: '0.5.0', id: newId(), type: 'revision.created', reviewId: manifest.reviewId, revisionId: revision.id, revisionDigest: digest(jsonBytes(revision)), revisionPath: `revisions/${revision.id}.json`, occurredAt: new Date().toISOString(), actor: request.actor, operationId: `${request.operationId}_publication` });
     plan = { fingerprint, manifest, revision, publication, blobs: [...blobs.values()] };
     await staged.write('plan.json', jsonBytes(plan), false);

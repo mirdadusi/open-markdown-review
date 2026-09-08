@@ -7,7 +7,7 @@ import verificationSchema from './generated/verification';
 import inventorySchema from './generated/inventory';
 import folding from './case-folding-15.1.json';
 import { ascii, digest, encode, offsetAt, safePath, stableId } from './bytes';
-import { Event, Manifest, Revision, Policy, ProtocolError, CAPABILITIES, LIMITS, StoredContent, Verification, AuditInventory } from './types';
+import { Event, Manifest, Revision, Policy, ProtocolError, CAPABILITIES, OPTIONAL_CAPABILITIES, LIMITS, StoredContent, Verification, AuditInventory } from './types';
 
 const schemas = { event: eventSchema, manifest: manifestSchema, revision: revisionSchema, policy: policySchema, verification: verificationSchema, inventory: inventorySchema };
 type Shapes = { event: Event; manifest: Manifest; revision: Revision; policy: Policy; verification: Verification; inventory: AuditInventory };
@@ -29,7 +29,9 @@ export function validate<K extends keyof Shapes>(kind: K, value: unknown): Shape
   if (kind === 'manifest') {
     const m = value as Manifest; actor(m.createdBy);
     requireRule(CAPABILITIES.every(c => m.capabilities.includes(c) && m.requiredCapabilities.includes(c)), 'Missing core capability.');
-    if (m.requiredCapabilities.some(c => !(CAPABILITIES as readonly string[]).includes(c)) || m.extensions?.some(e => e.affectsState)) throw new ProtocolError('unsupported', 'Unsupported required semantics; inspect only.');
+    requireRule(new Set(m.extensions?.map(e => e.id)).size === (m.extensions?.length ?? 0), 'Duplicate extension declaration.');
+    if (m.requiredCapabilities.some(c => ![...CAPABILITIES, ...OPTIONAL_CAPABILITIES].includes(c as typeof CAPABILITIES[number])) || m.extensions?.some(e => e.affectsState)) throw new ProtocolError('unsupported', 'Unsupported required semantics; inspect only.');
+    requireRule(m.requiredCapabilities.every(c => m.capabilities.includes(c)), 'Required capabilities must be advertised.');
   }
   if (kind === 'event') {
     const e = value as Event; actor(e.actor);

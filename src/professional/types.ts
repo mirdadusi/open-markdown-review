@@ -2,6 +2,7 @@ import type { ActorRef, ReviewEvent, ReviewRevision, StoredContent, Sha256Digest
 export type { ActorRef, MarkdownAnchor, StoredContent, Sha256Digest } from "../protocol/types";
 
 export const VERSION = "0.5.0" as const;
+export const OPTIONAL_CAPABILITIES = ['presentation-profiles-v1'] as const;
 export const CAPABILITIES = ["quote-anchor-v1", "range-anchor-v1", "semantic-anchor-v1", "content-addressed-resources-v1", "revision-parents-v1", "thread-lifecycle-v2", "suggested-edit-v2", "review-stance-v1", "review-policy-v1", "audit-inventory-v1"] as const;
 export interface Manifest {
   protocol: "open-markdown-review"; protocolVersion: typeof VERSION;

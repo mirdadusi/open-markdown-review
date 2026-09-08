@@ -1,14 +1,14 @@
 {
   "schemaVersion": "omr-release-qualification/1",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "professionalPilotApproved": false,
   "statusReport": "spec/IMPLEMENTATION-STATUS.md",
   "publication": {
-    "channel": "evaluation",
+    "channel": "standard",
     "approved": true,
     "approvedBy": "user",
     "approvedOn": "2026-09-08",
-    "note": "Public upstream release 0.5.0; MIT is the sole project-code license and M.I.R.D.A. is a non-binding philosophy. Professional-pilot qualification remains unchanged."
+    "note": "Public upstream release 0.5.1; MIT is the sole project-code license and M.I.R.D.A. is a non-binding philosophy. Professional-pilot qualification remains unchanged."
   },
   "blockingGates": [
     "Interruptible Mermaid rendering deadline",

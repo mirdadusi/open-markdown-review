@@ -18,6 +18,7 @@ import policySchema from '../../protocol/schemas/v0.5/policy.schema.json';
 import verificationSchema from '../../protocol/schemas/v0.5/verification.schema.json';
 import inventorySchema from '../../protocol/schemas/v0.5/inventory.schema.json';
 import clientPackage from '../../package.json';
+import { loadSlidev } from './profiles/slidev';
 
 pdfMake.addVirtualFileSystem(fonts);
 type PdfNode = Record<string, unknown>;
@@ -94,11 +95,29 @@ export async function exportAudit(context: ActionContext, captured?: CapturedAud
   const diagrams: AuditInventory['renderedDiagrams'] = [];
   for (const diagnostic of audit.diagnostics) content.push({ text: `Notice: ${diagnostic.path ?? ''} ${diagnostic.message}`, fontSize: 9, margin: [0, 8, 0, 0] });
   const diagramBytes: ExportPlan['diagrams'] = [];
+  const frozenSources = new Map(audit.revision.documents.map(d => [d.path, decode(audit.bytes.get(d.blobPath)!)]));
+  const presentation = await loadSlidev(audit.manifest, audit.revision, frozenSources, async c => audit.bytes.get(c.blobPath)!);
+  if (presentation) {
+    content.push({ text: `Slidev presentation · ${presentation.slides.length} frozen slides · renderer ${presentation.rendererVersion} · notes ${presentation.notes}`, bold: true, margin: [0, 15, 0, 5] });
+    for (const limitation of presentation.limitations) content.push({ text: limitation, fontSize: 9, margin: [0, 4, 0, 0] });
+    for (const slide of presentation.slides) {
+      const resource = audit.revision.resources.find(r => r.id === slide.previewResourceId)!;
+      content.push({ text: `Slide ${slide.number} — ${slide.title}`, pageBreak: 'before', fontSize: 20, bold: true },
+        { image: `data:image/png;base64,${toBase64(audit.bytes.get(resource.blobPath)!)}`, fit: [475, 500], margin: [0, 14, 0, 10] },
+        { text: `${slide.id}\nSource: ${slide.document} · UTF-16 offsets ${slide.range.start}–${slide.range.end}\nFrozen image: ${resource.digest}`, fontSize: 8 });
+      if (presentation.notes === 'included' && slide.noteRange) content.push({ text: 'Speaker notes', bold: true, margin: [0, 10, 0, 5] }, { text: frozenSources.get(slide.document)!.slice(slide.noteRange.start, slide.noteRange.end), fontSize: 10 });
+      const related = fold(audit.events, audit.revision.id).threads.filter(t => t.root.anchor.target?.kind === 'image' && t.root.anchor.target.resourceId === slide.previewResourceId);
+      for (const thread of related) {
+        content.push({ text: `${thread.open ? 'OPEN' : 'RESOLVED'} · ${thread.root.actor.id}: ${thread.root.body.text}`, margin: [0, 8, 0, 0] });
+        for (const reply of thread.replies) if (reply.type === 'comment.replied') content.push({ text: `${reply.actor.id}: ${reply.body.text}`, margin: [12, 4, 0, 0] });
+      }
+    }
+  }
   const orderedDocuments = [...audit.revision.documents].sort((a, b) => a.path === audit.revision.rootDocument ? -1 : b.path === audit.revision.rootDocument ? 1 : ascii(a.path, b.path));
   for (const doc of orderedDocuments) {
     const host = document.createElement('article'); host.innerHTML = renderDocument(decode(audit.bytes.get(doc.blobPath)!), doc.path, audit.revision).html;
     const svgs = await populateAssets(host, audit.revision, async c => { const bytes = audit.bytes.get(c.blobPath); if (!bytes) throw new Error('Frozen export input is missing.'); return bytes; });
-    content.push({ text: doc.path, pageBreak: 'before', fontSize: 20, bold: true }, { text: doc.digest, fontSize: 7, margin: [0, 5, 0, 10] }, ...await pdfNodes(host));
+    content.push({ text: presentation ? `Frozen source: ${doc.path}` : doc.path, pageBreak: 'before', fontSize: 20, bold: true }, { text: doc.digest, fontSize: 7, margin: [0, 5, 0, 10] }, ...(presentation ? [{ text: frozenSources.get(doc.path), fontSize: 8 }] : await pdfNodes(host)));
     for (const resource of audit.revision.resources.filter(r => r.document === doc.path)) content.push({ text: `${resource.role}: ${resource.originalReference}\n${resource.digest} (${resource.byteLength} bytes; ${resource.mediaType})`, fontSize: 8, margin: [0, 5, 0, 0] });
     for (const reference of audit.revision.externalReferences.filter(r => r.document === doc.path)) content.push({ text: `External link (not captured): ${reference.uri}`, fontSize: 8, margin: [0, 5, 0, 0] });
     for (const [diagramId, svg] of svgs) {

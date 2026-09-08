@@ -1,0 +1,13 @@
+{
+  "name": "omr-slidev-authoring-fixture",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Isolated trusted author-side runtime; never shipped in the review client",
+  "scripts": { "dev": "slidev slides.md" },
+  "devDependencies": {
+    "@slidev/cli": "52.19.1",
+    "@slidev/theme-default": "0.25.0",
+    "playwright-chromium": "1.62.1"
+  },
+  "overrides": { "dompurify": "3.4.15" }
+}

@@ -74,3 +74,6 @@ for (const [name, schema] of Object.entries(schemas)) {
   const validator = ajv.compile(schema);
   await writeFile(new URL(`src/professional/generated/${name}.js`, base), standalone(ajv, validator));
 }
+// Optional profiles are independently versioned; they do not extend core events.
+const slidevSchema = JSON.parse(await readFile(new URL('protocol/profiles/slidev/v1.schema.json', base), 'utf8'));
+await writeFile(new URL('src/professional/generated/slidev.js', base), standalone(ajv, ajv.compile(slidevSchema)));

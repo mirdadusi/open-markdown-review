@@ -4,6 +4,7 @@ import { validate, validateAnchorEvent, validateSource } from './validation';
 import { ByteCache, Storage, evidence, contentRef, publish, publishBlob } from './storage';
 import { ActorRef, AuditInventory, Diagnostic, Event, FileEvidence, LIMITS, Manifest, Payload, Policy, ProtocolError, Revision, StoredContent, Verification } from './types';
 import { mapWithConcurrency } from '../protocol/concurrency';
+import { loadProfiles } from './profiles/registry';
 
 export interface ActionContext { readonly session: ReviewSession; readonly revision: Revision; readonly publication: Extract<Event, { type: 'revision.created' }>; readonly actor: ActorRef }
 export interface CapturedAudit { inventory: Verification; events: Event[]; revision: Revision; manifest: Manifest; bytes: ReadonlyMap<string, Uint8Array>; frontier: string; diagnostics: Diagnostic[] }
@@ -13,6 +14,7 @@ export class ReviewSession {
   revisions = new Map<string, Revision>();
   diagnostics: Diagnostic[] = [];
   pinnedRevisionId?: string;
+  readonly profiles = new Map<string, ReadonlyMap<string, unknown>>();
   private manifestBytes?: Uint8Array;
   private files = new Map<string, { event: Event; bytes: Uint8Array }>();
   private cache = new ByteCache();
@@ -55,6 +57,8 @@ export class ReviewSession {
     const result = new Map(await mapWithConcurrency(revision.documents, 4, async d => {
       const source = decode(await this.content(d, fresh)); validateSource(revision, d.path, source); return [d.path, source] as const;
     }));
+    const profiles = await loadProfiles(this.manifest, revision, result, c => this.content(c, fresh));
+    this.profiles.set(revision.id, profiles);
     // Keep a bounded number of decoded working sets. Blobs remain in the byte-budgeted LRU.
     this.sourceCache.set(key, result);
     while (this.sourceCache.size > 2) this.sourceCache.delete(this.sourceCache.keys().next().value!);

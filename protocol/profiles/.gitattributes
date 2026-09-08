@@ -1,0 +1,2 @@
+# The published schema file is exact evidence, including on Windows checkouts.
+*.schema.json -text -filter -working-tree-encoding
