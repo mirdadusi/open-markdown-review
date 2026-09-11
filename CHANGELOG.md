@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.2
+
+Regular release with known limitations; professional-pilot qualification remains incomplete. Core wire version remains 0.5.0. See [release notes](docs/releases/0.5.2.md).
+
+- Update Sharp/native/WASM packages to 0.35.4 and the affected js-yaml 4 dependency to 4.3.2 for newly reported high-severity advisories; preserve the dependency audit gates.
+- Normalize Windows path comparisons across current/legacy review registration, selection, removal and reconnection. Casing aliases do not create duplicate reviews or lose the active state; original display and journal paths are preserved.
+
+- Add **Remove Review from List** and confirmed **Delete Review…** actions for current and legacy packages. Delete only validated dedicated folders through OS Trash/Recycle Bin, never permanent fallback; protect source/workspace roots, reject links/foreign content, recheck the inventory, and coordinate local writes. Clear active/tab/resume state while preserving other reviews and supporting reconnection. Whole-package filesystem deletion does not change the append-only protocol.
+- Cover cancellation, changed folders, unsafe targets, unavailable storage, trash failure, local-operation exclusion, duplicate toolbox tabs, late writes, legacy rediscovery suppression and reconnection with unit and VS Code-host tests. OS trash transport and SMB are not qualified by simulated-trash tests.
+
+- Hand the creation Reviewer ID and Display Name to the VS Code review toolbox. Remember later identity edits privately per review, preserve deliberate edits during slow startup, and never adopt a received package's creator as the participant.
+- Replace the separate “Review Packages (0.5)” list with one Reviews list for current and legacy packages. Creation, opening and tab focus update Active Review and the status bar; closing the toolbox preserves the selection, and sidebar actions reopen it safely.
+- Add real-browser and VS Code-host regression coverage for identity handover, the first comment's author, private preferences, received reviews, active-review restoration and queued navigation. Slidev navigation tests wait for the selected slide's rendered evidence before checking anchors.
+
 ## 0.5.1
 
 - Implemented the three-layer Slidev design: framework-neutral core protocol, an optional versioned profile/schema and one shared VS Code/HTML adapter. Core wire version stays 0.5.0.

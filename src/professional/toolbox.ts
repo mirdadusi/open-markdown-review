@@ -9,6 +9,7 @@ import { fold, predecessors } from './state';
 import { annotate, escapeHtml as esc, renderDocument, RenderedSource, selectionAnchor } from './rendering';
 import { dataUrl, populateAssets } from './assets';
 import { exportAudit } from './export';
+import { reviewerIdentity } from './reviewer';
 
 declare global {
   interface Window {
@@ -29,11 +30,30 @@ let lastChromeKey = '';
 let discussionLimit = 50, historyLimit = 100;
 let canApply = false, externalAnchor: MarkdownAnchor | undefined;
 let exportBusy = false;
+let identityGeneration = 0, canRememberReviewer = false, lastRememberedReviewer = '';
+let identitySave: Promise<unknown> = Promise.resolve();
 function status(message: string, error = false) { $('status').textContent = message; $('status').classList.toggle('error', error); }
 function toast(message: string) { $('toast').textContent = message; $('toast').classList.add('visible'); setTimeout(() => $('toast').classList.remove('visible'), 4500); }
 function report(error: unknown) { status(error instanceof Error ? error.message : String(error), true); }
 const safely = (work: () => Promise<unknown>) => { void work().catch(report); };
-function identity(): ActorRef { const id = $<HTMLInputElement>('actor-id').value.trim(), displayName = $<HTMLInputElement>('actor-name').value.trim(); if (!id) { $('actor-id').focus(); throw new Error('Enter your reviewer ID first. It will be written to each event.'); } try { localStorage.setItem('omr.identity', JSON.stringify({ id, displayName })); } catch { /* Identity remains usable in memory. */ } return { id, ...(displayName ? { displayName } : {}) }; }
+function selectedReviewer() { return reviewerIdentity({ id: $<HTMLInputElement>('actor-id').value, displayName: $<HTMLInputElement>('actor-name').value }); }
+function cacheReviewer(actor: ActorRef) { try { localStorage.setItem('omr.identity', JSON.stringify(actor)); } catch { /* Identity remains usable in memory. */ } }
+function showReviewer(value: unknown) {
+  const actor = reviewerIdentity(value); if (!actor) return;
+  $<HTMLInputElement>('actor-id').value = actor.id; $<HTMLInputElement>('actor-name').value = actor.displayName ?? '';
+  cacheReviewer(actor);
+}
+function rememberReviewer(actor: ActorRef) {
+  cacheReviewer(actor);
+  const serialized = JSON.stringify(actor);
+  if (!rpc || !canRememberReviewer || serialized === lastRememberedReviewer) return;
+  lastRememberedReviewer = serialized;
+  // Preserve edit order without delaying review actions or writing shared evidence.
+  identitySave = identitySave.then(() => rpc('rememberReviewer', [actor])).catch(() => {
+    lastRememberedReviewer = ''; toast('Could not remember your reviewer identity in VS Code. Current actions still use the identity shown here.');
+  });
+}
+function identity(): ActorRef { const actor = selectedReviewer(); if (!actor) { $('actor-id').focus(); throw new Error('Enter a reviewer ID first (1–128 characters, no control characters). It will be written to each event.'); } rememberReviewer(actor); return actor; }
 function context(): ActionContext { if (!current) throw new Error('Open a review first.'); return current.context(identity()); }
 function progress() {
   if (!current) return;
@@ -231,10 +251,16 @@ function installHostRpc(): ((method: string, args: unknown[]) => Promise<unknown
 const rpc = installHostRpc();
 async function connectHost() {
   if (!rpc) throw new Error('Native bridge is unavailable.');
-  const metadata = await rpc('info', []) as { identity: string; writable: boolean; canApply?: boolean };
+  const initialIdentityGeneration = identityGeneration;
+  const metadata = await rpc('info', []) as { identity: string; writable: boolean; canApply?: boolean; canRememberReviewer?: boolean; canNotifyReady?: boolean; reviewer?: ActorRef };
   canApply = !!metadata.canApply;
+  canRememberReviewer = !!metadata.canRememberReviewer;
+  lastRememberedReviewer = JSON.stringify(reviewerIdentity(metadata.reviewer)) ?? '';
+  // A slow host handshake must not replace identity text already entered by the user.
+  if (identityGeneration === initialIdentityGeneration) showReviewer(metadata.reviewer);
   const storage: Storage = { ...metadata, read: async (p, l) => new Uint8Array(await rpc('read', [p, l]) as number[]), list: async p => await rpc('list', [p]) as string[], write: async (p, b, r) => { await rpc('write', [p, Array.from(b), r]); }, journalGet: async o => await rpc('journalGet', [o]) as JournalEntry | undefined, journalPut: async (o, e) => { await rpc('journalPut', [o, e]); } };
   await attach(storage);
+  if (metadata.canNotifyReady) await rpc('toolboxReady', []);
 }
 async function exportFromToolbox() {
   if (exportBusy) return;
@@ -292,14 +318,19 @@ $('zoom-close').addEventListener('click', () => $<HTMLDialogElement>('diagram-vi
 $('zoom-scale').addEventListener('input', () => { const visual = $('zoom-content').querySelector<SVGElement | HTMLImageElement>('svg,img'); if (visual) visual.style.width = `${Number($<HTMLInputElement>('zoom-scale').value) * 8}px`; });
 $('document').addEventListener('keydown', event => { const target = event.target as HTMLElement; if ((event.key === 'Enter' || event.key === ' ') && target.classList.contains('semantic')) { event.preventDefault(); target.click(); } });
 $('forget').addEventListener('click', () => safely(async () => { if (current) { for (const [key, s] of sessions) if (s === current) sessions.delete(key); } current = undefined; generation++; renderKey = ''; $('workspace').hidden = true; $('toolbar').hidden = true; $('welcome').hidden = false; remembered = undefined; $('reconnect').hidden = true; await localValue(`connection:${location.href}`, null); status('Connection forgotten. Shared review files are unchanged.'); }));
-try { const actor = JSON.parse(localStorage.getItem('omr.identity') ?? '{}'); $<HTMLInputElement>('actor-id').value = actor.id ?? ''; $<HTMLInputElement>('actor-name').value = actor.displayName ?? ''; } catch { /* Storage is optional for identity. */ }
+for (const id of ['actor-id', 'actor-name']) {
+  $(id).addEventListener('input', () => { identityGeneration++; });
+  $(id).addEventListener('change', () => { const actor = selectedReviewer(); if (actor) rememberReviewer(actor); });
+}
+try { showReviewer(JSON.parse(localStorage.getItem('omr.identity') ?? '{}')); } catch { /* Storage is optional for identity. */ }
 if (rpc) { $('another').hidden = true; $('forget').hidden = true; safely(connectHost); }
 else if (!window.showDirectoryPicker) { $<HTMLButtonElement>('connect').disabled = true; $<HTMLButtonElement>('read-only').disabled = true; $('compatibility').textContent = 'Direct folder access is unavailable here. Open this HTML file in a supported Edge/Chrome browser, or connect the package in VS Code.'; }
 else safely(async () => { try { remembered = await localValue(`connection:${location.href}`); } catch { return; } if (remembered) $('reconnect').hidden = false; });
 window.omrAutomation = { connect: connectHost, export: async (actor, revision, operation) => { if (!current) await connectHost(); await current!.pin(revision); return exportAudit(current!.context(actor), undefined, operation); }, session: () => current };
 document.documentElement.dataset.clientReady = 'true';
 window.addEventListener('message', event => {
-  if (rpc && event.data?.command === 'toolbox-action' && ['threads', 'suggestions'].includes(event.data.buttonId)) { $(event.data.buttonId).scrollIntoView({ block: 'start', behavior: 'smooth' }); toast('Choose the discussion or accepted edit in the review toolbox.'); return; }
+  if (rpc && event.data?.command === 'reviewer-identity' && reviewerIdentity(event.data.reviewer)) { identityGeneration++; showReviewer(event.data.reviewer); lastRememberedReviewer = JSON.stringify(reviewerIdentity(event.data.reviewer)); return; }
+  if (rpc && event.data?.command === 'toolbox-action' && ['threads', 'suggestions', 'history', 'status'].includes(event.data.buttonId)) { $(event.data.buttonId).scrollIntoView({ block: 'start', behavior: 'smooth' }); return; }
   if (rpc && event.data?.command === 'toolbox-action' && ['comment', 'suggest', 'approve', 'reject', 'withdraw', 'export', 'refresh'].includes(event.data.buttonId)) {
     const selection = event.data.selection;
     if (selection && typeof selection.source === 'string' && typeof selection.document === 'string' && Number.isInteger(selection.start) && Number.isInteger(selection.end) && selection.start >= 0 && selection.end > selection.start && selection.end <= selection.source.length) externalAnchor = { document: selection.document, documentDigest: digest(selection.source), range: { start: pointAt(selection.source, selection.start), end: pointAt(selection.source, selection.end) }, quote: { exact: selection.source.slice(selection.start, selection.end) }, target: { kind: 'text' } };

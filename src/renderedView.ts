@@ -35,6 +35,7 @@ export interface RenderData {
 }
 
 export interface RenderedViewHandlers {
+  activated?(): void;
   addComment(request: RenderedCommentRequest): Promise<void>;
   addSuggestion(request: RenderedCommentRequest): Promise<void>;
   replyThread(threadId: string): Promise<void>;
@@ -448,6 +449,7 @@ export class RenderedReviewPanel implements vscode.Disposable {
   ) {
     this.disposables.push(
       panel.onDidDispose(() => this.dispose()),
+      panel.onDidChangeViewState(event => { if (event.webviewPanel.active) this.handlers.activated?.(); }),
       panel.webview.onDidReceiveMessage((message) => void this.receive(message)),
     );
   }

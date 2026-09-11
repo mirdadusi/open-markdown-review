@@ -6,14 +6,18 @@ import path from 'node:path';
 import { authorReview } from '../src/professional/authoring';
 import { digest } from '../src/professional/bytes';
 import { chromium } from 'playwright';
+import { reviewerAndSidebar } from './reviewer.extension.integration';
+import { legacyRemoval } from './reviewRemoval.extension.integration';
 
 /** Actual extension host smoke test; browser tests separately exercise shared UI actions. */
 export async function run(): Promise<void> {
   const extension = vscode.extensions.getExtension('mirdadusi.open-markdown-review');
   assert.ok(extension); await extension.activate(); assert.ok(extension.isActive);
   const commands = await vscode.commands.getCommands(true);
-  for (const name of ['initialize', 'connectReview', 'openPackage05', 'updatePortableBrowserClient', 'addComment', 'exportPdf']) assert.ok(commands.includes(`openMarkdownReview.${name}`), `Missing command: ${name}`);
+  for (const name of ['initialize', 'connectReview', 'openPackage05', 'updatePortableBrowserClient', 'addComment', 'exportPdf', 'removeReview', 'deleteReview']) assert.ok(commands.includes(`openMarkdownReview.${name}`), `Missing command: ${name}`);
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'omr-extension-')), source = path.join(temporary, 'source'), root = path.join(temporary, 'review');
+  await reviewerAndSidebar(extension.extensionPath, temporary);
+  await legacyRemoval(extension.extensionPath, temporary);
   await mkdir(source); await writeFile(path.join(source, 'a.md'), '# Extension-host review\n\nExact frozen source.\n');
   await authorReview({ source, store: root, rootDocument: 'a.md', actor: { id: 'author' }, operationId: 'extension_test', journalRoot: path.join(temporary, 'journal'), clientArtifact: path.join(extension.extensionPath, 'dist/OpenMarkdownReview.html') });
   const before = digest(await readFile(path.join(root, 'manifest.json'))), names = await readdir(path.join(root, 'events'));

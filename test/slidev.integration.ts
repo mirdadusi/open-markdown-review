@@ -38,17 +38,19 @@ test('real Slidev capture → shared HTML/VS Code bundle → visual/source comme
     assert.ok(await page.locator('.slide-preview img').evaluate(img => (img as HTMLImageElement).naturalWidth > 500));
     await page.locator('#actor-id').fill('reviewer');
     const submit = async () => { await page.locator('#save').click(); await page.waitForFunction(() => !(document.getElementById('composer') as HTMLDialogElement).open || !!document.getElementById('composer-error')!.textContent); assert.equal(await page.locator('#composer-error').textContent(), ''); };
-    await page.locator('#documents [data-slide]').nth(2).click();
+    const waitForSlide = async (index: number) => { await page.waitForSelector(`.slide-preview[data-resource-id="${profile.slides[index].previewResourceId}"] img[src]`); };
+    const selectSlide = async (index: number) => { await page.locator('#documents [data-slide]').nth(index).click(); await waitForSlide(index); };
+    await selectSlide(2);
     await page.locator('.slide-preview').click(); await page.locator('#comment').click(); await page.locator('#body').fill('Visual layout needs more space.'); await submit();
     await page.locator('.thread [data-action="reply"]').click(); await page.locator('#body').fill('Response: spacing is intentional.'); await submit();
-    await page.locator('#documents [data-slide]').nth(3).click(); assert.equal(await page.locator('.slide-preview.commented').count(), 0, 'Repeated imports have independent visual anchors.');
-    await page.locator('.thread [data-action="locate"]').click(); assert.equal(await page.locator('.slide-preview.commented').count(), 1);
+    await selectSlide(3); assert.equal(await page.locator('.slide-preview.commented').count(), 0, 'Repeated imports have independent visual anchors.');
+    await page.locator('.thread [data-action="locate"]').click(); await waitForSlide(2); assert.equal(await page.locator('.slide-preview.commented').count(), 1);
     await page.locator('.slide-preview.commented').click(); assert.ok(await page.locator('.thread.focused').count());
     await page.locator('.slide-source [data-source-map]').filter({ hasText: 'This source is imported twice' }).evaluate(span => {
       const text = span.firstChild!, range = document.createRange(); range.setStart(text, 0); range.setEnd(text, 11); const selection = document.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
     });
     await page.locator('#comment').click(); await page.locator('#body').fill('Source wording comment.'); await submit();
-    await page.locator('#documents [data-slide]').nth(3).click(); assert.ok(await page.locator('.slide-source .commented').count(), 'Shared source wording comments follow both occurrences.');
+    await selectSlide(3); assert.ok(await page.locator('.slide-source .commented').count(), 'Shared source wording comments follow both occurrences.');
     await page.locator('#approve').click(); await page.locator('#save').click(); await page.waitForFunction(() => document.getElementById('composer-error')!.textContent!.includes('Press Save event again'));
     await submit();
     const exported = await page.evaluate(async revision => window.omrAutomation!.export({ id: 'reviewer' }, revision!, 'slidev_export'), created.revisionId) as { pdfPath: string; inventoryPath: string };

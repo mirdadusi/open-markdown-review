@@ -1,5 +1,6 @@
 import test from 'node:test';
 import './slidev.integration';
+import './reviewer.browser.integration';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
 import os from 'node:os';

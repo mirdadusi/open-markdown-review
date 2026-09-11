@@ -1,14 +1,14 @@
-# Open Markdown Review 0.5.1
+# Open Markdown Review 0.5.2
 
 A local-first Markdown review protocol with one shared reviewer toolbox for VS Code and a double-clicked HTML file. No application server, browser extension, cloud account, or separate review database.
 
-Version **0.5.1 is a regular GitHub release with known limitations**, not a qualified professional pilot. Download it from the [0.5.1 release page](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.1) and read the [release notes and limitations](docs/releases/0.5.1.md). It adds optional Slidev static review while retaining framework-neutral core wire version 0.5.0. Existing 0.4 packages keep their legacy VS Code reader; they are never silently migrated.
+Version **0.5.2 is a regular GitHub release with known limitations**, not a qualified professional pilot. Download it from the [0.5.2 release page](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.2) and read the [release notes and limitations](docs/releases/0.5.2.md). It adds safe review-removal actions and fixes reviewer identity handover and the unified VS Code sidebar. Markdown and optional Slidev review retain framework-neutral core wire version 0.5.0. Existing 0.4 packages keep their legacy VS Code reader; they are never silently migrated.
 
-For Windows x64 install `open-markdown-review-0.5.1-win32-x64.vsix`; for other supported VS Code platforms install `open-markdown-review-0.5.1-portable.vsix`. Both have SHA-256 checksum files and standard VSIX metadata without a pre-release marker. Use **Extensions: Install from VSIX** in VS Code. The previous 0.5.0 tag and original assets remain unchanged.
+For Windows x64 install `open-markdown-review-0.5.2-win32-x64.vsix`; for other supported VS Code platforms install `open-markdown-review-0.5.2-portable.vsix`. Both have SHA-256 checksum files and standard VSIX metadata without a pre-release marker. Use **Extensions: Install from VSIX** in VS Code. Previous release tags and original assets remain unchanged.
 
 ## Install
 
-Download the VSIX and matching SHA-256 checksum from the [0.5.1 release](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.1). In VS Code run **Extensions: Install from VSIX**, select the package for your platform, and reload when prompted. Browser-only participants receive the review folder with its generated HTML launcher and do not install an extension.
+Download the VSIX and matching SHA-256 checksum from the [0.5.2 release](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.2). In VS Code run **Extensions: Install from VSIX**, select the package for your platform, and reload when prompted. Browser-only participants receive the review folder with its generated HTML launcher and do not install an extension.
 
 ## Tested status and known limits
 
@@ -49,6 +49,21 @@ Graphical creation is in VS Code; the same authoring service is available from t
 
 Open a Markdown source workspace, select the Review icon in the left Activity Bar, and choose **Create New Review**. The visual setup selects individual documents or folders, the start document, title and storage folder/name. Additional prompts allow an approval quorum and explicitly granted external-resource folders.
 
+## Remove or delete a review in VS Code
+
+Right-click a review in the **Reviews** list, or use the matching **Markdown Review** command from the Command Palette:
+
+- **Remove Review from List** disconnects it locally. Shared files remain unchanged; use **Connect Existing Review** to add it again. This also works when its folder is unavailable.
+- **Delete Review…** checks the folder and asks before moving the **entire review package** to OS Trash/Recycle Bin, including comments, replies, revisions, frozen content, exports and HTML. The confirmation shows the exact folder and file count. Original source files outside that package are untouched.
+
+Both actions close that review's toolbox tabs and discard unsaved drafts after confirmation. They clear the removed review's active selection and local authoring-resume shortcuts; private recovery journals remain on disk. Other reviews stay connected. Legacy reviews are not rediscovered automatically after removal; reconnect explicitly.
+
+Deletion refuses source/workspace roots, linked folders/junctions, Git metadata, unexpected top-level files and detected unfinished writes. If you opened the review package itself as the VS Code workspace, open its parent/source workspace first. Local review operations must finish before deletion, and the folder is checked again after confirmation. Inspection is bounded to 100,000 entries and 32 levels.
+
+**Stop all other browser, VS Code and CLI writers before deleting a shared review.** Deletion can propagate to other participants through sync; these checks do not lock other machines or eliminate filesystem races. On a share without Trash/Recycle Bin support, the operation reports failure and does **not** retry with permanent deletion. Inspect the folder after any storage error. To recover a successfully trashed package, restore it using the OS and reconnect it. OS trash behavior on Windows/shared drives is not locally qualified; SMB testing remains skipped.
+
+No protocol events are edited or removed individually and no `review.deleted` event is invented: whole-package deletion is filesystem lifecycle, outside the append-only review history. In Git, inspect and commit the resulting deletions yourself; the extension never commits or pushes them.
+
 ## Slidev presentations
 
 Choose **Slidev presentation** during creation to capture the root deck and its local `src:` imports with the installed, explicitly trusted Slidev 52.19.1 runtime. Select whether speaker notes are included or removed. Browser participants need no Slidev installation: they get slide navigation, frozen themed images, whole-slide comments, exact source-text comments/suggestions, replies, decisions and audited PDFs in the same toolbox as VS Code.
@@ -64,6 +79,12 @@ Creation captures saved disk bytes. Unsaved editors require an explicit save/use
 Creation can be cancelled before final publication. Its private capture checkpoints remain intact; run Create again to choose a saved operation to resume. Once final publication starts, the client finishes and reports the actual result.
 
 To update documents, choose **Choose Documents and Create Revision**. Existing review evidence stays immutable. Parents are selected explicitly; a merge revision does not transfer earlier comments or approvals to new content.
+
+### Reviewer identity and active review
+
+Version 0.5.2 uses one **Reviews** list for current and legacy packages. Creating/opening a review or focusing its toolbox selects it in **Active Review** and the status bar. The selection remains when the toolbox is closed and is restored in the same workspace; sidebar actions reopen the toolbox when needed.
+
+The identity entered during creation prefills the VS Code toolbox. Later ID/name edits are remembered privately per review in the local VS Code profile. A fresh participant never inherits the creator identity from the shared manifest, HTML or received workspace settings. Browser participants continue choosing their own identity.
 
 ## One source of truth
 

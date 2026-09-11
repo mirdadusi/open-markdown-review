@@ -1,6 +1,7 @@
 import path from "node:path";
 import * as vscode from "vscode";
 import { ReviewManifest } from "./protocol/types";
+import { reviewPathKey, sameReviewPath } from './reviewPaths';
 
 export interface RegisteredReview {
   reviewRoot: string;
@@ -36,7 +37,7 @@ export class ReviewsProvider implements vscode.TreeDataProvider<ReviewItem> {
   readonly onDidChangeTreeData = this.changed.event;
 
   setReviews(reviews: RegisteredReview[], activeRoot: string | undefined, sourceRoot: string): void {
-    this.reviews = reviews;
+    this.reviews = [...new Map(reviews.map(review => [reviewPathKey(review.reviewRoot), review])).values()];
     this.activeRoot = activeRoot;
     this.sourceRoot = sourceRoot;
     this.changed.fire();
@@ -48,7 +49,7 @@ export class ReviewsProvider implements vscode.TreeDataProvider<ReviewItem> {
 
   reviewFromArgument(argument: ReviewArgument): RegisteredReview | undefined {
     if (!argument) return undefined;
-    if (typeof argument === "string") return this.reviews.find((item) => item.reviewRoot === argument || item.manifest.reviewId === argument);
+    if (typeof argument === "string") return this.reviews.find((item) => sameReviewPath(item.reviewRoot, argument) || item.manifest.reviewId === argument);
     if (argument instanceof ReviewItem) return argument.review;
     return argument;
   }
@@ -58,6 +59,6 @@ export class ReviewsProvider implements vscode.TreeDataProvider<ReviewItem> {
   }
 
   getChildren(): ReviewItem[] {
-    return this.reviews.map((review) => new ReviewItem(review, review.reviewRoot === this.activeRoot, this.sourceRoot));
+    return this.reviews.map((review) => new ReviewItem(review, sameReviewPath(review.reviewRoot, this.activeRoot), this.sourceRoot));
   }
 }

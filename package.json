@@ -2,7 +2,7 @@
   "name": "open-markdown-review",
   "displayName": "Open Markdown Review",
   "description": "A serverless, local-first Markdown review protocol and usable VS Code pilot client.",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "license": "MIT",
   "publisher": "mirdadusi",
@@ -27,7 +27,6 @@
   },
   "activationEvents": [
     "onCustomEditor:openMarkdownReview.entryFile",
-    "onView:openMarkdownReview.packages",
     "onView:openMarkdownReview.reviews",
     "onView:openMarkdownReview.threads",
     "onCommand:openMarkdownReview.initialize",
@@ -87,6 +86,16 @@
         "command": "openMarkdownReview.switchReview",
         "title": "Markdown Review: Switch Active Review",
         "icon": "$(list-selection)"
+      },
+      {
+        "command": "openMarkdownReview.removeReview",
+        "title": "Markdown Review: Remove Review from List",
+        "icon": "$(close)"
+      },
+      {
+        "command": "openMarkdownReview.deleteReview",
+        "title": "Markdown Review: Delete Review…",
+        "icon": "$(trash)"
       },
       {
         "command": "openMarkdownReview.setup",
@@ -200,10 +209,6 @@
     "views": {
       "openMarkdownReview": [
         {
-          "id": "openMarkdownReview.packages",
-          "name": "Review Packages (0.5)"
-        },
-        {
           "id": "openMarkdownReview.reviews",
           "name": "Reviews"
         },
@@ -214,10 +219,6 @@
       ]
     },
     "viewsWelcome": [
-      {
-        "view": "openMarkdownReview.packages",
-        "contents": "Open OpenMarkdownReview.html from a review folder, or create a new review.\n[Create new review](command:openMarkdownReview.initialize)\n[Connect existing review](command:openMarkdownReview.connectReview)"
-      },
       {
         "view": "openMarkdownReview.reviews",
         "contents": "Create a review package or connect one from a local/shared drive.\n[Create new review](command:openMarkdownReview.initialize)\n[Connect existing review](command:openMarkdownReview.connectReview)"
@@ -304,6 +305,16 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "openMarkdownReview.removeReview",
+          "when": "view == openMarkdownReview.reviews && (viewItem == markdownReviewActive || viewItem == markdownReviewInactive)",
+          "group": "reviewRemoval@1"
+        },
+        {
+          "command": "openMarkdownReview.deleteReview",
+          "when": "view == openMarkdownReview.reviews && (viewItem == markdownReviewActive || viewItem == markdownReviewInactive)",
+          "group": "reviewRemoval@2"
+        },
         {
           "command": "openMarkdownReview.switchReview",
           "when": "view == openMarkdownReview.reviews && viewItem == markdownReviewInactive",
@@ -426,12 +437,12 @@
     "package:vsix": "npm run compile && vsce package --no-rewrite-relative-links"
   },
   "dependencies": {
-    "@img/sharp-wasm32": "0.35.3",
+    "@img/sharp-wasm32": "0.35.4",
     "@noble/hashes": "1.8.0",
     "markdown-it": "^14.1.0",
     "pdfkit": "^0.17.2",
     "pdfmake": "0.3.11",
-    "sharp": "^0.35.3",
+    "sharp": "^0.35.4",
     "svg-to-pdfkit": "^0.1.8"
   },
   "overrides": {

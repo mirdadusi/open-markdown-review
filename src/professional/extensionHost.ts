@@ -13,18 +13,85 @@ import { validate } from './validation';
 import { applyAcceptedSuggestion } from './applySuggestion';
 import { SLIDEV_ID, SLIDEV_VERSION } from './profiles/slidev';
 import { SlidevOptions } from './profiles/slidevCapture';
+import { reviewerIdentity } from './reviewer';
+import { ReviewActivity } from '../reviewRemoval';
+import { reviewPathKey, sameReviewPath } from '../reviewPaths';
 
-interface Entry { root: string; title: string; source?: string }
-class PackageItem extends vscode.TreeItem {
-  constructor(readonly entry: Entry) { super(entry.title, vscode.TreeItemCollapsibleState.None); this.description = entry.root; this.iconPath = new vscode.ThemeIcon('archive'); this.command = { command: 'openMarkdownReview.openPackage05', title: 'Open review', arguments: [entry.root] }; }
+export interface Entry { root: string; title: string; source?: string; reviewer?: ActorRef; reviewId?: string }
+export class PackageItem extends vscode.TreeItem {
+  constructor(readonly entry: Entry, active: boolean) {
+    super(entry.title, vscode.TreeItemCollapsibleState.None);
+    this.id = entry.root; this.description = `${active ? 'Active · ' : ''}${entry.root}`; this.tooltip = entry.root;
+    this.iconPath = new vscode.ThemeIcon(active ? 'pass-filled' : 'archive');
+    this.contextValue = active ? 'markdownReviewActive' : 'markdownReviewInactive';
+    this.command = { command: 'openMarkdownReview.switchReview', title: 'Make review active', arguments: [this] };
+  }
 }
 export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, vscode.Disposable {
   private readonly changed = new vscode.EventEmitter<void>(); readonly onDidChangeTreeData = this.changed.event;
-  private entries: Entry[]; private panels = new Map<string, vscode.WebviewPanel>(); active?: Entry;
-  constructor(private readonly context: vscode.ExtensionContext) { this.entries = context.globalState.get<Entry[]>('professional.packages', []); }
-  getChildren() { return this.entries.map(e => new PackageItem(e)); }
+  private entries: Entry[]; private panels = new Map<string, vscode.WebviewPanel>(); private selected?: Entry;
+  private readonly revisions = new Map<string, boolean>();
+  private readonly readyPanels = new Set<vscode.WebviewPanel>();
+  private readonly pendingActions = new Map<vscode.WebviewPanel, unknown[]>();
+  private readonly panelRoots = new Map<vscode.WebviewPanel, string>();
+  private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+  get active() { return this.selected; }
+  constructor(private readonly context: vscode.ExtensionContext, private readonly activity = new ReviewActivity()) {
+    const saved = context.globalState.get<Entry[]>('professional.packages', []), seen = new Set<string>();
+    this.entries = saved.filter(entry => { const key = reviewPathKey(entry.root); if (seen.has(key)) return false; seen.add(key); return true; });
+  }
+  get sourceRoots(): string[] { return this.entries.flatMap(e => e.source ? [e.source] : []); }
+  closeReview(root: string): void {
+    for (const [panel, panelRoot] of this.panelRoots) if (sameReviewPath(panelRoot, root)) panel.dispose();
+  }
+  async forgetReview(root: string): Promise<void> {
+    this.closeReview(root);
+    this.entries = this.entries.filter(e => !sameReviewPath(e.root, root));
+    for (const key of this.revisions.keys()) if (sameReviewPath(key, root)) this.revisions.delete(key);
+    await this.context.globalState.update('professional.packages', this.entries);
+    // Retain private journals as evidence, but do not offer a resume that recreates this folder.
+    const pending = this.context.globalState.get<AuthorRequest[]>('professional.pendingAuthoring', []);
+    await this.context.globalState.update('professional.pendingAuthoring', pending.filter(p => !sameReviewPath(p.store, root)));
+    if (sameReviewPath(this.active?.root, root)) await this.deactivate();
+    else this.changed.fire();
+  }
+  getChildren() { return this.entries.map(e => new PackageItem(e, sameReviewPath(e.root, this.active?.root))); }
   getTreeItem(item: PackageItem) { return item; }
-  dispose() { this.changed.dispose(); for (const panel of this.panels.values()) panel.dispose(); }
+  getActiveChildren(): vscode.TreeItem[] {
+    if (!this.active) return [];
+    const title = new vscode.TreeItem(this.active.title); title.description = 'Active review'; title.tooltip = this.active.root;
+    title.iconPath = new vscode.ThemeIcon('pass-filled'); title.command = { command: 'openMarkdownReview.openReview', title: 'Open review toolbox' };
+    return [title, ...[['Comments', 'threads', 'comment-discussion'], ['Suggested edits', 'suggestions', 'diff'], ['Review history', 'history', 'history']].map(([label, section, icon]) => {
+      const item = new vscode.TreeItem(label); item.iconPath = new vscode.ThemeIcon(icon);
+      item.command = { command: 'openMarkdownReview.showPackageSection', title: `Open ${label.toLowerCase()}`, arguments: [section] }; return item;
+    })];
+  }
+  private async select(entry: Entry): Promise<void> {
+    this.selected = entry; this.changed.fire();
+    this.status.text = `$(comment-discussion) ${entry.title}`; this.status.tooltip = `Active review: ${entry.root}`;
+    this.status.command = 'openMarkdownReview.openReview'; this.status.show();
+    await Promise.all([
+      this.context.workspaceState.update('professional.activeRoot', entry.root),
+      vscode.commands.executeCommand('setContext', 'openMarkdownReview.initialized', true),
+      vscode.commands.executeCommand('setContext', 'openMarkdownReview.hasRevision', !!this.revisions.get(entry.root)),
+      vscode.commands.executeCommand('setContext', 'openMarkdownReview.hasUnresolved', false),
+    ]);
+  }
+  async deactivate(): Promise<void> {
+    this.selected = undefined; this.status.hide(); this.changed.fire();
+    await this.context.workspaceState.update('professional.activeRoot', undefined);
+  }
+  async restore(): Promise<void> {
+    return this.activity.run(() => this.restoreImpl());
+  }
+  private async restoreImpl(): Promise<void> {
+    const saved = this.context.workspaceState.get<string>('professional.activeRoot'), entry = this.entries.find(e => sameReviewPath(e.root, saved));
+    if (!entry || this.active) return;
+    const session = new ReviewSession(new NativeStorage(entry.root, this.journalRoot)); await session.open();
+    if (this.active) return;
+    this.revisions.set(entry.root, !!session.revision); await this.select(entry);
+  }
+  dispose() { this.changed.dispose(); this.status.dispose(); for (const panel of this.panelRoots.keys()) panel.dispose(); }
   private get journalRoot() { return path.join(this.context.globalStorageUri.fsPath, 'professional'); }
   private get artifact() { return path.join(this.context.extensionPath, 'dist', 'OpenMarkdownReview.html'); }
   private async actor(): Promise<ActorRef | undefined> {
@@ -107,24 +174,52 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
     });
     if (result.outcome === 'review-created-client-failed') throw new Error(`Revision was published, but HTML installation failed: ${result.error}. Use Add Portable Browser Client to finish.`);
     await this.context.globalState.update('professional.pendingAuthoring', this.context.globalState.get<AuthorRequest[]>('professional.pendingAuthoring', []).filter(p => p.operationId !== request.operationId || p.store !== request.store));
-    await this.open(result.store, request.source);
+    await this.open(result.store, request.source, undefined, request.actor);
   }
-  async open(root: string, source?: string, editorPanel?: vscode.WebviewPanel): Promise<void> {
-    const storage = new NativeStorage(root, this.journalRoot), session = new ReviewSession(storage); await session.open();
-    const entry = { root: path.resolve(root), title: session.manifest.title, source: source ?? this.entries.find(e => e.root === path.resolve(root))?.source };
-    this.entries = [entry, ...this.entries.filter(e => e.root !== entry.root)]; this.active = entry;
-    await this.context.globalState.update('professional.packages', this.entries); this.changed.fire();
-    const existing = this.panels.get(entry.root); if (existing && !editorPanel) { existing.reveal(); return; }
+  async open(root: string, source?: string, editorPanel?: vscode.WebviewPanel, initialReviewer?: ActorRef): Promise<void> {
+    return this.activity.run(() => this.openImpl(root, source, editorPanel, initialReviewer));
+  }
+  private async openImpl(root: string, source?: string, editorPanel?: vscode.WebviewPanel, initialReviewer?: ActorRef): Promise<void> {
+    const previous = this.entries.find(e => sameReviewPath(e.root, root));
+    // Preserve the original connection/journal identity across Windows casing aliases.
+    const storage = new NativeStorage(previous?.root ?? root, this.journalRoot), session = new ReviewSession(storage); await session.open();
+    const configuration = vscode.workspace.getConfiguration('openMarkdownReview');
+    // Only locally chosen identities may prefill the toolbox, never manifest.createdBy.
+    const reviewer = reviewerIdentity(initialReviewer) ?? reviewerIdentity(previous?.reviewer) ?? reviewerIdentity({ id: configuration.inspect<string>('actorId')?.globalValue, displayName: configuration.inspect<string>('actorName')?.globalValue });
+    const entry: Entry = { root: storage.identity, title: session.manifest.title, reviewId: session.manifest.reviewId, source: source ?? previous?.source, ...(reviewer ? { reviewer } : {}) };
+    this.entries = [entry, ...this.entries.filter(e => !sameReviewPath(e.root, entry.root))];
+    this.revisions.set(entry.root, session.revisions.size > 0); await this.select(entry);
+    await this.context.globalState.update('professional.packages', this.entries);
+    const existing = this.panels.get(entry.root);
+    if (existing && !editorPanel) {
+      existing.reveal();
+      if (initialReviewer && reviewer) await existing.webview.postMessage({ command: 'reviewer-identity', reviewer });
+      return;
+    }
     const panel = editorPanel ?? vscode.window.createWebviewPanel('openMarkdownReview.professional', `${entry.title} — Review`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [] });
     panel.title = `${entry.title} — Review`;
     panel.webview.options = { enableScripts: true, localResourceRoots: [] };
     this.panels.set(entry.root, panel);
-    panel.onDidDispose(() => { if (this.panels.get(entry.root) === panel) { this.panels.delete(entry.root); if (this.active?.root === entry.root) this.active = undefined; } });
-    panel.onDidChangeViewState(e => { if (e.webviewPanel.active) this.active = entry; });
+    this.panelRoots.set(panel, entry.root);
+    panel.onDidDispose(() => { this.panelRoots.delete(panel); if (this.panels.get(entry.root) === panel) this.panels.delete(entry.root); this.readyPanels.delete(panel); this.pendingActions.delete(panel); });
+    panel.onDidChangeViewState(e => { const current = this.entries.find(item => item.root === entry.root); if (e.webviewPanel.active && current && this.panelRoots.has(panel)) void this.select(current); });
     panel.webview.onDidReceiveMessage(async message => {
       if (!message || typeof message.id !== 'string' || typeof message.method !== 'string' || !Array.isArray(message.args)) return;
+      let finish = () => {};
       try {
-        if (message.method === 'applySuggestion') {
+        if (!this.panelRoots.has(panel)) throw new Error('This review toolbox has been closed. Reconnect the review to continue.');
+        if (['write', 'journalPut', 'applySuggestion', 'rememberReviewer'].includes(message.method)) finish = this.activity.begin();
+        if (message.method === 'toolboxReady') {
+          this.readyPanels.add(panel);
+          for (const action of this.pendingActions.get(panel) ?? []) await panel.webview.postMessage(action);
+          this.pendingActions.delete(panel); await panel.webview.postMessage({ id: message.id, value: true });
+        } else if (message.method === 'rememberReviewer') {
+          const reviewer = message.args.length === 1 ? reviewerIdentity(message.args[0]) : undefined;
+          if (!reviewer) throw new Error('Enter a reviewer ID of 1–128 characters without control characters, and an optional display name.');
+          this.entries = this.entries.map(e => e.root === entry.root ? { ...e, reviewer } : e);
+          await this.context.globalState.update('professional.packages', this.entries);
+          await panel.webview.postMessage({ id: message.id, value: true });
+        } else if (message.method === 'applySuggestion') {
           if (!entry.source) throw new Error('This connection has no source workspace. Use the author CLI with an explicit --source folder.');
           const [revisionId, suggestionId, operationId] = message.args;
           if (![revisionId, suggestionId, operationId].every(v => typeof v === 'string')) throw new Error('Invalid source-apply request.');
@@ -140,9 +235,10 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
           if (editor?.isDirty) throw new Error('The source editor changed during confirmation.');
           const value = await applyAcceptedSuggestion({ store: storage, source: entry.source, revisionId, suggestionId, operationId, expectedSourceDigest: root.anchor.documentDigest, actor, resume: true });
           await panel.webview.postMessage({ id: message.id, value });
-        } else await panel.webview.postMessage({ id: message.id, value: message.method === 'info' ? { identity: storage.identity, writable: true, canApply: !!entry.source } : await storageRequest(storage, message.method, message.args) });
+        } else await panel.webview.postMessage({ id: message.id, value: message.method === 'info' ? { identity: storage.identity, writable: true, canApply: !!entry.source, canRememberReviewer: true, canNotifyReady: true, reviewer: this.entries.find(e => e.root === entry.root)?.reviewer } : await storageRequest(storage, message.method, message.args) });
       }
       catch (error) { await panel.webview.postMessage({ id: message.id, error: error instanceof Error ? error.message : String(error), code: (error as { code?: string }).code }); }
+      finally { finish(); }
     });
     panel.webview.html = await readFile(this.artifact, 'utf8');
   }
@@ -167,6 +263,12 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
       const document = path.relative(this.active.source, editor.document.uri.fsPath).split(path.sep).join('/');
       if (!document.startsWith('../') && /\.md$/i.test(document)) selection = { document, source: editor.document.getText(), start: editor.document.offsetAt(editor.selection.start), end: editor.document.offsetAt(editor.selection.end) };
     }
-    const panel = this.panels.get(this.active.root); panel?.reveal(); await panel?.webview.postMessage({ command: 'toolbox-action', buttonId, selection });
+    const root = this.active.root;
+    if (!this.panels.has(root)) await this.open(root);
+    const panel = this.panels.get(root); if (!panel) return;
+    panel.reveal();
+    const action = { command: 'toolbox-action', buttonId, selection };
+    if (this.readyPanels.has(panel)) await panel.webview.postMessage(action);
+    else this.pendingActions.set(panel, [...this.pendingActions.get(panel) ?? [], action]);
   }
 }
