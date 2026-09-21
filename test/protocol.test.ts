@@ -710,6 +710,7 @@ test("portable browser client is generic, self-contained, bounded, and installed
   const bytes = await readFile(artifact);
   const html = bytes.toString("utf8");
   assert.match(html, /name="open-markdown-review-portable-client"/);
+  assert.equal([...html.matchAll(/__OPEN_MARKDOWN_REVIEW_BOOTSTRAP__/g)].length, 1, 'generic build template exposes exactly one inert binding slot');
   assert.match(html, /showDirectoryPicker/);
   assert.match(html, /open-markdown-review-portable/);
   assert.ok(html.includes('omr-professional-local'), 'portable client includes local permission/recovery storage');

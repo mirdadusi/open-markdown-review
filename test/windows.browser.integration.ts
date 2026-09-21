@@ -17,10 +17,10 @@ test('Windows CI real file entry and native folder permission: comment persists 
   const local = await mkdtemp(path.join(os.tmpdir(), 'omr-permission-source-')), source = path.join(local, 'source'); await mkdir(source);
   await writeFile(path.join(source, 'a.md'), '# Real folder grant\n\nSelect this reviewed sentence.\n');
   const root = path.join(await mkdtemp(path.join(share, 'omr-permissions-')), 'review');
-  await authorReview({ source, store: root, rootDocument: 'a.md', actor: { id: 'author' }, operationId: 'real_grant', journalRoot: path.join(local, 'journal'), clientArtifact: path.resolve('dist/OpenMarkdownReview.html') });
+  const created = await authorReview({ source, store: root, rootDocument: 'a.md', actor: { id: 'author' }, operationId: 'real_grant', journalRoot: path.join(local, 'journal'), clientArtifact: path.resolve('dist/OpenMarkdownReview.html') });
   const server = await chromium.launchServer({ headless: false }), browser = await chromium.connect(server.wsEndpoint());
   try {
-    const page = await browser.newPage(); await page.goto(pathToFileURL(path.join(root, 'OpenMarkdownReview.html')).href);
+    const page = await browser.newPage(); await page.goto(pathToFileURL(created.browserClientPath).href);
     assert.equal(await page.evaluate(() => !!window.omrHost), false, 'No native storage bridge is permitted in this qualification.');
     const grant = promisify(execFile)('powershell.exe', ['-NoProfile', '-File', path.resolve('scripts/select-ci-review-folder.ps1'), '-BrowserPid', String(server.process().pid), '-Folder', root], { timeout: 35000 });
     // Start both promises before waiting so failures cannot become unhandled.
@@ -34,6 +34,7 @@ test('Windows CI real file entry and native folder permission: comment persists 
     assert.equal(session.events.filter(e => e.type === 'comment.created').length, 1);
     assert.equal((await readdir(path.join(root, 'events'))).length, 2);
     await page.reload(); await page.waitForFunction(() => document.documentElement.dataset.clientReady === 'true');
-    assert.ok(await page.locator('#reconnect').isVisible(), 'The remembered handle should remain available after reload in the same browser profile.');
+    await page.waitForFunction(() => !document.getElementById('workspace')!.hidden || !document.getElementById('reconnect')!.hidden);
+    assert.ok(await page.locator('#workspace').isVisible() || await page.locator('#reconnect').isVisible(), 'A granted folder reopens automatically when permission persists; otherwise one Resume action remains.');
   } finally { await browser.close(); await server.close(); }
 });

@@ -1,15 +1,23 @@
 import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
-import { access } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 const require = createRequire(import.meta.url);
-const { authorReview, installClient } = require('../out/src/professional/authoring.js');
+const { authorReview, installClient, installedClientFile, updateClient } = require('../out/src/professional/authoring.js');
+const { digest } = require('../out/src/professional/bytes.js');
 const { NativeStorage } = require('../out/src/professional/nativeStorage.js');
 const { ReviewSession } = require('../out/src/professional/session.js');
 const root = path.resolve('examples/professional/review'), actor = { id: 'example-author', displayName: 'Example author' };
 let existing = false;
 try { await access(path.join(root, 'manifest.json')); existing = true; } catch (error) { if (error.code !== 'ENOENT') throw error; }
-const created = existing ? { outcome: 'completed', browserClientPath: await installClient(new NativeStorage(root, path.join(os.tmpdir(), 'omr-example-authoring')), path.resolve('dist/OpenMarkdownReview.html')) } : await authorReview({ source: path.resolve('examples/professional/source'), store: root, rootDocument: 'architecture.md', actor, operationId: 'professional_example_v1', clientArtifact: path.resolve('dist/OpenMarkdownReview.html'), journalRoot: path.join(os.tmpdir(), 'omr-example-authoring'), resume: true });
+const journal = path.join(os.tmpdir(), 'omr-example-authoring'), store = new NativeStorage(root, journal), artifact = path.resolve('dist/OpenMarkdownReview.html');
+let created;
+if (existing) {
+  let browserClientPath;
+  try { const current = await installedClientFile(store); browserClientPath = (await updateClient(store, artifact, digest(await readFile(path.join(root, current))))).path; }
+  catch (error) { if (error?.code !== 'missing') throw error; browserClientPath = await installClient(store, artifact); }
+  created = { outcome: 'completed', browserClientPath };
+} else created = await authorReview({ source: path.resolve('examples/professional/source'), store: root, rootDocument: 'architecture.md', actor, operationId: 'professional_example_v1', clientArtifact: artifact, journalRoot: journal, resume: true });
 if (created.outcome !== 'completed') throw new Error(JSON.stringify(created));
 const session = new ReviewSession(new NativeStorage(root, path.join(os.tmpdir(), 'omr-example-events'))); await session.open();
 const context = session.context(actor);

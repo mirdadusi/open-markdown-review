@@ -31,7 +31,7 @@ test('real Slidev capture → shared HTML/VS Code bundle → visual/source comme
     page.on('pageerror', e => errors.push(e.message));
     page.on('request', r => { if (/^https?:/.test(r.url())) requests.push(r.url()); });
     await page.exposeFunction('omrHost', (method: string, args: unknown[]) => storageResponse(store, method, args));
-    await page.goto(pathToFileURL(path.join(root, 'OpenMarkdownReview.html')).href);
+    await page.goto(pathToFileURL(created.browserClientPath).href);
     await page.waitForSelector('.slide-preview img[src]', { timeout: 45000 });
     await page.locator('[data-zoom]').click(); assert.equal(await page.locator('#zoom-content img').count(), 1); await page.locator('#zoom-close').click();
     assert.equal(await page.locator('#documents [data-slide]').count(), 4);

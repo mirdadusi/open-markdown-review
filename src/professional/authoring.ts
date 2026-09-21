@@ -1,6 +1,6 @@
-import { mkdir, readdir, readFile, rename } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { ActorRef, CAPABILITIES, Event, LIMITS, Manifest, Policy, ProtocolError, Revision } from './types';
+import { ActorRef, CAPABILITIES, CREATOR_THREAD_CONTROL, Event, LIMITS, Manifest, Policy, ProtocolError, Revision, SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE } from './types';
 import { decode, digest, encode, jsonBytes, newId, parseJson, safePath, stableId } from './bytes';
 import { contained, NativeStorage } from './nativeStorage';
 import { blobEvidence, contentRef, evidence, publish, publishBlob, readOptional } from './storage';
@@ -23,10 +23,39 @@ export interface AuthorRequest extends OperationControl {
 }
 export interface AuthorResult { reviewId: string; revisionId?: string; store: string; browserClientPath: string; documentPaths: string[]; outcome: 'planned' | 'completed' | 'already-completed' | 'review-created-client-failed'; error?: string }
 interface Plan { fingerprint: string; manifest: Manifest; revision: Revision; publication: Event; blobs: Array<{ path: string; mediaType: string }> }
+export interface LauncherBinding { schemaVersion: 'omr-launcher/1'; reviewId: string; title: string; manifestDigest: string }
+const LAUNCHER_MARKER = '__OPEN_MARKDOWN_REVIEW_BOOTSTRAP__';
+const LEGACY_CLIENT = 'OpenMarkdownReview.html';
+export function clientFilename(title: string, reviewId = 'review'): string {
+  const base = title.replace(/\s+review\s*$/i, '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[._-]+|[._-]+$/g, '').slice(0, 64) || reviewId.replace(/^review_/, '').slice(0, 24) || 'Review';
+  return `Review-${base}.html`;
+}
+export function parseClientBinding(bytes: Uint8Array): LauncherBinding | undefined {
+  const value = /<meta\s+name=["']open-markdown-review-bootstrap["']\s+content=["']([A-Za-z0-9+/]+={0,2})["']\s*\/?\s*>/i.exec(decode(bytes))?.[1];
+  if (!value) return;
+  try {
+    const parsed = parseJson<Partial<LauncherBinding>>(Buffer.from(value, 'base64'), 4096);
+    if (parsed.schemaVersion !== 'omr-launcher/1' || typeof parsed.reviewId !== 'string' || typeof parsed.title !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(parsed.manifestDigest ?? '')) return;
+    if (Object.keys(parsed).sort().join(',') !== 'manifestDigest,reviewId,schemaVersion,title') return;
+    return parsed as LauncherBinding;
+  } catch { return; }
+}
+async function manifestForClient(store: NativeStorage): Promise<{ manifest: Manifest; bytes: Uint8Array; filename: string }> {
+  const bytes = await store.read('manifest.json', LIMITS.manifest), manifest = validate('manifest', parseJson(bytes, LIMITS.manifest));
+  return { manifest, bytes, filename: clientFilename(manifest.title, manifest.reviewId) };
+}
+function bindClient(bytes: Uint8Array, manifest: Manifest, manifestBytes: Uint8Array): Uint8Array {
+  const html = decode(bytes);
+  if (!html.includes('name="open-markdown-review-portable-client"')) throw new ProtocolError('invalid', 'Not a bundled portable review client.');
+  const occurrences = html.split(LAUNCHER_MARKER).length - 1;
+  if (occurrences !== 1) throw new ProtocolError('invalid', 'Portable review client has an invalid launcher bootstrap marker.');
+  const binding: LauncherBinding = { schemaVersion: 'omr-launcher/1', reviewId: manifest.reviewId, title: manifest.title, manifestDigest: digest(manifestBytes) };
+  return encode(html.replace(LAUNCHER_MARKER, Buffer.from(JSON.stringify(binding), 'utf8').toString('base64')));
+}
 function isInside(root: string, target: string) { const p = path.relative(root, target); return p !== '..' && !p.startsWith(`..${path.sep}`) && !path.isAbsolute(p); }
 function media(reference: string, supplied?: string | null): string {
   const type = supplied?.split(';')[0].trim();
-  return type && type !== 'application/octet-stream' ? type : ({ '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf', '.txt': 'text/plain', '.json': 'application/json', '.html': 'text/html', '.js': 'application/javascript' }[path.extname(reference.split(/[?#]/)[0]).toLowerCase()] ?? 'application/octet-stream');
+  return type && type !== 'application/octet-stream' ? type : ({ '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.emf': 'image/emf', '.pdf': 'application/pdf', '.txt': 'text/plain', '.json': 'application/json', '.html': 'text/html', '.js': 'application/javascript', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.vsd': 'application/vnd.visio', '.vsdx': 'application/vnd.ms-visio.drawing.main+xml' }[path.extname(reference.split(/[?#]/)[0]).toLowerCase()] ?? 'application/octet-stream');
 }
 export async function scope(request: AuthorRequest): Promise<string[]> {
   const available = await findMarkdownFiles(request.source);
@@ -89,12 +118,12 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
   const documentPaths = savedPlan?.revision.documents.map(d => d.path) ?? started?.documentPaths ?? [...new Set([...await scope(request), ...(slidevSources?.documents.keys() ?? [])])];
   if (documentPaths.length > LIMITS.documents) throw new ProtocolError('unsupported', 'Slidev imports exceed the document limit.');
   if (slidevSources && [...slidevSources.documents.keys()].some(p => !documentPaths.includes(p) || (request.exclude ?? []).some(x => p === x || p.startsWith(x + '/')))) throw new ProtocolError('invalid', 'A required Slidev import is excluded or changed since authoring started.');
-  const result: AuthorResult = { reviewId: '', store: path.resolve(request.store), browserClientPath: path.join(path.resolve(request.store), 'OpenMarkdownReview.html'), documentPaths, outcome: 'planned' };
+  const result: AuthorResult = { reviewId: '', store: path.resolve(request.store), browserClientPath: path.join(path.resolve(request.store), clientFilename(request.title?.trim() || path.basename(request.source))), documentPaths, outcome: 'planned' };
   const fingerprint = digest(jsonBytes({ source: path.resolve(request.source), store: path.resolve(request.store), title: request.title, documentPaths, include: request.include, includeDir: request.includeDir, exclude: request.exclude, rootDocument: request.rootDocument, actor: request.actor, parents: request.parents, policy: request.policy, resourceRoots: request.resourceRoots, slidev: request.slidev }));
   if (request.dryRun) {
     validate('policy', request.policy ?? { schemaVersion: '0.5.0', kind: 'review-policy', mode: 'assertions-only' });
     // Reads local Markdown only. No capture, output directory, journal or network access.
-    for (const p of documentPaths) { checkpoint(request, `Planning ${p}`); inspect(decode(await new NativeStorage(request.source, request.journalRoot).read(p, LIMITS.markdown)), p); }
+    for (const p of documentPaths) { checkpoint(request, `Planning ${p}`); inspect(decode(await new NativeStorage(request.source, request.journalRoot).read(p, LIMITS.markdown)), p, SANITIZED_HTML_PROFILE); }
     return result;
   }
   let plan: Plan;
@@ -117,7 +146,7 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
       let contents: string[] = []; try { contents = await readdir(request.store); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
       if (contents.length) throw new ProtocolError('invalid', 'A new review requires an empty or nonexistent target directory.');
       if (parents.length) throw new ProtocolError('invalid', 'A new review cannot have parents.');
-      const capabilities = [...CAPABILITIES, ...(request.slidev ? [PRESENTATION_CAPABILITY] : [])];
+      const capabilities = [...CAPABILITIES, CREATOR_THREAD_CONTROL, SANITIZED_HTML_CAPABILITY, ...(request.slidev ? [PRESENTATION_CAPABILITY] : [])];
       manifest = started?.manifest ?? validate('manifest', { protocol: 'open-markdown-review', protocolVersion: '0.5.0', reviewId: newId('review'), title: request.title?.trim() || path.basename(request.source), createdAt: new Date().toISOString(), createdBy: request.actor, documents: documentPaths, eventDirectory: 'events', revisionDirectory: 'revisions', blobDirectory: 'blobs/sha256', exportDirectory: 'exports', eventLayout: 'sha256-flat-v1', identityProfile: 'self-asserted-v1', limitsProfile: 'pilot-v1', creationOperationId: request.operationId, capabilities, requiredCapabilities: capabilities, ...(request.slidev ? { extensions: [slidevDeclaration()] } : {}) });
     }
     checkpoint(request);
@@ -126,7 +155,8 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
     else if (digest(jsonBytes(started.manifest)) !== digest(jsonBytes(manifest))) throw new ProtocolError('changed', 'The review changed since this capture started.');
     const blobs = new Map<string, { path: string; mediaType: string }>();
     const put = async (bytes: Uint8Array, mediaType: string) => { const f = blobEvidence(bytes, mediaType); await publish(staged, f.digest, f, bytes); blobs.set(f.path, { path: f.path, mediaType }); return contentRef(f); };
-    const documents: Revision['documents'] = [], resources: Revision['resources'] = [], diagrams: Revision['mermaidDiagrams'] = [], references: Revision['externalReferences'] = [];
+    const markdownProfile: Revision['renderer']['markdownProfile'] = manifest.requiredCapabilities.includes(SANITIZED_HTML_CAPABILITY) ? SANITIZED_HTML_PROFILE : 'commonmark-gfm';
+    const documents: Revision['documents'] = [], resources: Revision['resources'] = [], diagrams: Revision['mermaidDiagrams'] = [], references: Revision['externalReferences'] = [], diagnostics: Revision['diagnostics'] = [];
     for (const document of documentPaths) {
       checkpoint(request, `Capturing ${document}`);
       const documentCheckpoint = `capture/document_${digest(document).slice(7)}.json`, savedDocument = await readOptional(staged, documentCheckpoint, LIMITS.event);
@@ -147,8 +177,9 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
         if (digest(expected) !== frozen.digest) throw new ProtocolError('changed', 'Slidev source differs from the saved capture. Start a new operation.');
       }
       blobs.set(frozen.blobPath, { path: frozen.blobPath, mediaType: frozen.mediaType });
-      const parsed = inspect(decode(bytes), document);
+      const parsed = inspect(decode(bytes), document, markdownProfile);
       documents.push(frozen); diagrams.push(...parsed.diagrams);
+      if (parsed.unsupportedHtmlTags.length) diagnostics.push({ severity: 'warning', code: 'html.unsupported-tags', document, message: `Unsupported HTML is displayed as literal text: ${parsed.unsupportedHtmlTags.join(', ')}` });
       const extraImages = (slidevSources?.parsed.get(document) ?? []).flatMap(s => s.images).map(reference => ({ reference, role: 'image' as const, id: stableId('resource', `${document}\0${reference}`) }));
       for (const ref of [...parsed.references, ...extraImages]) {
         checkpoint(request);
@@ -157,14 +188,11 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
         if (savedResource) { const resource = parseJson<Revision['resources'][number]>(savedResource); resources.push(resource); blobs.set(resource.blobPath, { path: resource.blobPath, mediaType: resource.mediaType }); continue; }
         const captured = await capture(ref.reference, document, request);
         if (ref.role === 'image' && !/^image\/(?:png|jpeg|gif|webp|svg\+xml)$/.test(captured.mediaType)) throw new ProtocolError('unsupported', `Unsupported frozen image: ${captured.mediaType}`);
-        if (ref.role === 'attachment' && !/^(?:application\/pdf|text\/plain|application\/json|application\/vnd\.)/.test(captured.mediaType)) throw new ProtocolError('unsupported', `Attachment type is not allowed: ${captured.mediaType}`);
+        if (ref.role === 'attachment' && !/^(?:application\/pdf|text\/plain|application\/json|application\/vnd\.|image\/emf$)/.test(captured.mediaType)) throw new ProtocolError('unsupported', `Attachment type is not allowed: ${captured.mediaType}`);
         const resource = { id: ref.id, document, originalReference: sanitizeExternalUri(ref.reference), sourceKind: captured.sourceKind, role: ref.role, capturedAt: new Date().toISOString(), ...await put(captured.bytes, captured.mediaType) };
         await staged.write(resourceCheckpoint, jsonBytes(resource), false); resources.push(resource);
       }
-      for (const token of parsed.tokens) for (const child of token.children ?? []) {
-        const uri = child.type === 'link_open' ? child.attrGet('href') : undefined;
-        if (uri && /^https?:/.test(uri) && child.attrGet('title') !== 'review:attach') references.push({ id: `reference_${digest(`${document}\0${uri}`).slice(7, 31)}`, document, uri: sanitizeExternalUri(uri), relation: 'link' });
-      }
+      for (const link of parsed.links) references.push({ id: link.id, document, uri: sanitizeExternalUri(link.uri), ...(link.label ? { label: link.label } : {}), relation: 'link' });
     }
     if (request.slidev && slidevSources) {
       const descriptorCheckpoint = await readOptional(staged, 'capture/slidev.json', LIMITS.revision);
@@ -195,7 +223,7 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
       }
     }
     const policy = validate('policy', request.policy ?? { schemaVersion: '0.5.0', kind: 'review-policy', mode: 'assertions-only' });
-    const revision = validate('revision', { schemaVersion: '0.5.0', id: newId('revision'), reviewId: manifest.reviewId, createdAt: new Date().toISOString(), createdBy: request.actor, rootDocument: request.rootDocument, documents, resources, externalReferences: [...new Map(references.map(r => [r.id, r])).values()], mermaidDiagrams: diagrams, diagnostics: [], renderer: { markdownProfile: 'commonmark-gfm', mermaidVersion: mermaidPackage.version }, parents, policy: await put(jsonBytes(policy), 'application/json'), creationOperationId: request.operationId });
+    const revision = validate('revision', { schemaVersion: '0.5.0', id: newId('revision'), reviewId: manifest.reviewId, createdAt: new Date().toISOString(), createdBy: request.actor, rootDocument: request.rootDocument, documents, resources, externalReferences: [...new Map(references.map(r => [r.id, r])).values()], mermaidDiagrams: diagrams, diagnostics, renderer: { markdownProfile, mermaidVersion: mermaidPackage.version }, parents, policy: await put(jsonBytes(policy), 'application/json'), creationOperationId: request.operationId });
     if (request.slidev) await loadProfiles(manifest, revision, new Map(await Promise.all(documents.map(async d => [d.path, decode(await staged.read(d.blobPath, LIMITS.markdown))] as const))), c => staged.read(c.blobPath, c.byteLength));
     const publication = validate('event', { schemaVersion: '0.5.0', id: newId(), type: 'revision.created', reviewId: manifest.reviewId, revisionId: revision.id, revisionDigest: digest(jsonBytes(revision)), revisionPath: `revisions/${revision.id}.json`, occurredAt: new Date().toISOString(), actor: request.actor, operationId: `${request.operationId}_publication` });
     plan = { fingerprint, manifest, revision, publication, blobs: [...blobs.values()] };
@@ -217,33 +245,40 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
   const attrs = encode('# Exact review evidence: never normalize, filter, or re-encode.\n* -text -filter -working-tree-encoding\n**/* -text -filter -working-tree-encoding\n');
   if (!await readOptional(store, '.gitattributes', 1048576)) await store.write('.gitattributes', attrs, false);
   Object.assign(result, { reviewId: plan.manifest.reviewId, revisionId: plan.revision.id, outcome: 'completed' });
-  try { await installClient(store, request.clientArtifact); }
+  result.browserClientPath = path.join(store.root, clientFilename(plan.manifest.title, plan.manifest.reviewId));
+  try { result.browserClientPath = await installClient(store, request.clientArtifact); }
   catch (error) { result.outcome = 'review-created-client-failed'; result.error = String(error); }
   return result;
 }
 export async function installClient(store: NativeStorage, artifact: string): Promise<string> {
-  const bytes = await readFile(artifact);
-  if (!decode(bytes).includes('name="open-markdown-review-portable-client"')) throw new ProtocolError('invalid', 'Not a bundled portable review client.');
-  const old = await readOptional(store, 'OpenMarkdownReview.html', 64 * 1024 * 1024);
-  if (old) { if (digest(old) === digest(bytes)) return path.join(store.root, 'OpenMarkdownReview.html'); throw new ProtocolError('changed', 'HTML already exists with different bytes. Keep a backup and explicitly approve a trusted update; it is not silently replaced.'); }
-  await store.write('OpenMarkdownReview.html', bytes, false);
-  if (digest(await store.read('OpenMarkdownReview.html', bytes.length)) !== digest(bytes)) throw new ProtocolError('uncertain', 'Client installation could not be verified.');
-  return path.join(store.root, 'OpenMarkdownReview.html');
+  const descriptor = await manifestForClient(store), bytes = bindClient(await readFile(artifact), descriptor.manifest, descriptor.bytes);
+  const old = await readOptional(store, descriptor.filename, 64 * 1024 * 1024);
+  if (old) { if (digest(old) === digest(bytes)) return path.join(store.root, descriptor.filename); throw new ProtocolError('changed', 'HTML already exists with different bytes. Keep a backup and explicitly approve a trusted update; it is not silently replaced.'); }
+  if (await readOptional(store, LEGACY_CLIENT, 64 * 1024 * 1024)) throw new ProtocolError('changed', 'A legacy HTML client is installed. Use the explicit client update so it is backed up before migration.');
+  await store.write(descriptor.filename, bytes, false);
+  if (digest(await store.read(descriptor.filename, bytes.length)) !== digest(bytes)) throw new ProtocolError('uncertain', 'Client installation could not be verified.');
+  return path.join(store.root, descriptor.filename);
+}
+export async function installedClientFile(store: NativeStorage): Promise<string> {
+  const { filename } = await manifestForClient(store);
+  if (await readOptional(store, filename, 64 * 1024 * 1024)) return filename;
+  if (await readOptional(store, LEGACY_CLIENT, 64 * 1024 * 1024)) return LEGACY_CLIENT;
+  throw new ProtocolError('missing', `Portable review client is missing (expected ${filename}).`);
 }
 /** Only an explicitly expected current hash authorizes replacement of executable HTML. */
 export async function updateClient(store: NativeStorage, artifact: string, expectedDigest: string): Promise<{ path: string; backupPath?: string }> {
-  const bytes = await readFile(artifact);
-  if (!decode(bytes).includes('name="open-markdown-review-portable-client"')) throw new ProtocolError('invalid', 'The installed client artifact is not recognized.');
-  const old = await store.read('OpenMarkdownReview.html', 64 * 1024 * 1024), oldDigest = digest(old);
+  const descriptor = await manifestForClient(store), currentFile = await installedClientFile(store), bytes = bindClient(await readFile(artifact), descriptor.manifest, descriptor.bytes);
+  const old = await store.read(currentFile, 64 * 1024 * 1024), oldDigest = digest(old);
   if (oldDigest !== expectedDigest) throw new ProtocolError('changed', 'HTML changed since update confirmation. No replacement was made.');
-  if (oldDigest === digest(bytes)) return { path: path.join(store.root, 'OpenMarkdownReview.html') };
+  if (currentFile === descriptor.filename && oldDigest === digest(bytes)) return { path: path.join(store.root, descriptor.filename) };
   const backupPath = `client-backups/${oldDigest.slice(7)}.html`;
   await publish(store, `client_backup_${oldDigest.slice(7)}`, evidence(backupPath, old, 'text/html'), old);
   const updateId = newId('client_update'), temporary = `client-backups/${updateId}.html`;
   await publish(store, updateId, evidence(temporary, bytes, 'text/html'), bytes);
-  if (digest(await store.read('OpenMarkdownReview.html', 64 * 1024 * 1024)) !== expectedDigest) throw new ProtocolError('changed', 'HTML changed during the update. The backup was retained.');
+  if (digest(await store.read(currentFile, 64 * 1024 * 1024)) !== expectedDigest) throw new ProtocolError('changed', 'HTML changed during the update. The backup was retained.');
   // Backup and closed, verified temporary file precede the one atomic replacement.
-  await rename(await contained(store.root, temporary), await contained(store.root, 'OpenMarkdownReview.html'));
-  if (digest(await store.read('OpenMarkdownReview.html', bytes.length)) !== digest(bytes)) throw new ProtocolError('uncertain', 'Updated HTML could not be verified. The prior file remains in client-backups.');
-  return { path: path.join(store.root, 'OpenMarkdownReview.html'), backupPath: path.join(store.root, backupPath) };
+  await rename(await contained(store.root, temporary), await contained(store.root, descriptor.filename));
+  if (digest(await store.read(descriptor.filename, bytes.length)) !== digest(bytes)) throw new ProtocolError('uncertain', 'Updated HTML could not be verified. The prior file remains in client-backups.');
+  if (currentFile !== descriptor.filename) await unlink(await contained(store.root, currentFile));
+  return { path: path.join(store.root, descriptor.filename), backupPath: path.join(store.root, backupPath) };
 }

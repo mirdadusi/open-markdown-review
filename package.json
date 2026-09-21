@@ -2,7 +2,7 @@
   "name": "open-markdown-review",
   "displayName": "Open Markdown Review",
   "description": "A serverless, local-first Markdown review protocol and usable VS Code pilot client.",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "private": true,
   "license": "MIT",
   "publisher": "mirdadusi",
@@ -32,6 +32,8 @@
     "onCommand:openMarkdownReview.initialize",
     "onCommand:openMarkdownReview.connectReview",
     "onCommand:openMarkdownReview.switchReview",
+    "onCommand:openMarkdownReview.linkSourceWorkspace",
+    "onCommand:openMarkdownReview.publishReviewPackage",
     "onCommand:openMarkdownReview.setup",
     "onCommand:openMarkdownReview.createRevision",
     "onCommand:openMarkdownReview.addPortableBrowserClient",
@@ -61,6 +63,9 @@
         "selector": [
           {
             "filenamePattern": "**/OpenMarkdownReview.html"
+          },
+          {
+            "filenamePattern": "**/Review-*.html"
           }
         ],
         "priority": "default"
@@ -96,6 +101,16 @@
         "command": "openMarkdownReview.deleteReview",
         "title": "Markdown Review: Delete Review…",
         "icon": "$(trash)"
+      },
+      {
+        "command": "openMarkdownReview.linkSourceWorkspace",
+        "title": "Markdown Review: Link Local Source Workspace…",
+        "icon": "$(link)"
+      },
+      {
+        "command": "openMarkdownReview.publishReviewPackage",
+        "title": "Markdown Review: Publish Verified Review Copy…",
+        "icon": "$(cloud-upload)"
       },
       {
         "command": "openMarkdownReview.setup",
@@ -274,6 +289,16 @@
           "group": "navigation@2"
         },
         {
+          "command": "openMarkdownReview.linkSourceWorkspace",
+          "when": "view == openMarkdownReview.threads && openMarkdownReview.initialized",
+          "group": "navigation@2.1"
+        },
+        {
+          "command": "openMarkdownReview.publishReviewPackage",
+          "when": "view == openMarkdownReview.threads && openMarkdownReview.initialized",
+          "group": "navigation@2.2"
+        },
+        {
           "command": "openMarkdownReview.addPortableBrowserClient",
           "when": "view == openMarkdownReview.threads && openMarkdownReview.hasRevision",
           "group": "navigation@3"
@@ -307,17 +332,27 @@
       "view/item/context": [
         {
           "command": "openMarkdownReview.removeReview",
-          "when": "view == openMarkdownReview.reviews && (viewItem == markdownReviewActive || viewItem == markdownReviewInactive)",
+          "when": "view == openMarkdownReview.reviews && (viewItem == markdownReviewActive || viewItem == markdownReviewInactive || viewItem == markdownReview05Active || viewItem == markdownReview05Inactive)",
           "group": "reviewRemoval@1"
         },
         {
           "command": "openMarkdownReview.deleteReview",
-          "when": "view == openMarkdownReview.reviews && (viewItem == markdownReviewActive || viewItem == markdownReviewInactive)",
+          "when": "view == openMarkdownReview.reviews && (viewItem == markdownReviewActive || viewItem == markdownReviewInactive || viewItem == markdownReview05Active || viewItem == markdownReview05Inactive)",
           "group": "reviewRemoval@2"
         },
         {
+          "command": "openMarkdownReview.linkSourceWorkspace",
+          "when": "view == openMarkdownReview.reviews && (viewItem == markdownReview05Active || viewItem == markdownReview05Inactive)",
+          "group": "reviewSharing@1"
+        },
+        {
+          "command": "openMarkdownReview.publishReviewPackage",
+          "when": "view == openMarkdownReview.reviews && (viewItem == markdownReview05Active || viewItem == markdownReview05Inactive)",
+          "group": "reviewSharing@2"
+        },
+        {
           "command": "openMarkdownReview.switchReview",
-          "when": "view == openMarkdownReview.reviews && viewItem == markdownReviewInactive",
+          "when": "view == openMarkdownReview.reviews && (viewItem == markdownReviewInactive || viewItem == markdownReview05Inactive)",
           "group": "inline"
         },
         {

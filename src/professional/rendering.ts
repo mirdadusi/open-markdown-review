@@ -3,13 +3,14 @@ import { digest, offsetAt, pointAt, stableId } from './bytes';
 import { inspect, markdown } from './validation';
 import { Event, MarkdownAnchor, Revision } from './types';
 import { fold } from './state';
-export const escapeHtml = (text: string): string => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+import { escapeHtml, renderSanitizedHtml, SANITIZED_HTML_PROFILE, scanHtml } from './html';
+export { escapeHtml } from './html';
 export interface RenderedSource { html: string; textMaps: Map<string, number[]> }
 /** Stable source spans are independent of comments. New events update annotations, not Mermaid. */
 export function renderDocument(source: string, document: string, revision: Revision): RenderedSource {
-  const md = markdown(), { tokens, tables, diagrams } = inspect(source, document);
+  const md = markdown(revision.renderer.markdownProfile), { tokens, tables, diagrams } = inspect(source, document, revision.renderer.markdownProfile);
   const lines = [...source.matchAll(/\r\n|\r|\n/g)], lineOffset = (line: number) => line === 0 ? 0 : lines[line - 1] ? lines[line - 1].index! + lines[line - 1][0].length : source.length;
-  const textMaps = new Map<string, number[]>(); let mapId = 0, tableIndex = -1, row = -1, column = -1, diagramIndex = 0;
+  const textMaps = new Map<string, number[]>(); let mapId = 0, row = -1, column = -1, diagramIndex = 0, tableOrdinal = 0;
   const inlineCursors = new Map<number, number>();
   // Skip non-visible destinations/titles. Searching their text would attach a
   // later repeated phrase to a URL rather than to the visible document phrase.
@@ -57,12 +58,17 @@ export function renderDocument(source: string, document: string, revision: Revis
   for (const token of tokens) {
     if (token.map && token.nesting === 1) { token.attrSet('data-start', String(lineOffset(token.map[0]))); token.attrSet('data-end', String(lineOffset(token.map[1]))); }
     if (token.type === 'heading_open' && token.map) token.attrSet('id', `heading-${token.map[0]}`);
-    if (token.type === 'table_open') { tableIndex++; row = -1; token.attrSet('tabindex', '0'); token.attrSet('data-kind', 'table'); token.attrSet('data-table-id', tables[tableIndex].id); token.attrJoin('class', 'semantic'); }
+    if (token.type === 'table_open') { const table = tables[tableOrdinal++]; row = -1; token.attrSet('tabindex', '0'); token.attrSet('data-kind', 'table'); token.attrSet('data-table-id', table.id); token.attrJoin('class', 'semantic'); }
     if (token.type === 'tr_open') { row++; column = -1; }
     if (token.type === 'td_open' || token.type === 'th_open') {
-      column++; token.attrSet('tabindex', '0'); token.attrSet('data-kind', 'table-cell'); token.attrSet('data-table-id', tables[tableIndex].id); token.attrSet('data-row', String(row)); token.attrSet('data-column', String(column)); token.attrJoin('class', 'semantic');
+      column++; const table = tables[tableOrdinal - 1]; token.attrSet('tabindex', '0'); token.attrSet('data-kind', 'table-cell'); token.attrSet('data-table-id', table.id); token.attrSet('data-row', String(row)); token.attrSet('data-column', String(column)); token.attrJoin('class', 'semantic');
     }
     if (token.type === 'fence' && token.info.trim().split(/\s+/)[0].toLowerCase() === 'mermaid') token.meta = { diagram: diagrams[diagramIndex++], start: lineOffset(token.map![0]), end: lineOffset(token.map![1]) };
+    if (token.type === 'html_block' && token.map) {
+      const from = lineOffset(token.map[0]), start = source.indexOf(token.content, from), htmlTableOrdinal = tableOrdinal;
+      tableOrdinal += scanHtml(token.content).filter(part => part.kind === 'tag' && !part.closing && part.name === 'table').length;
+      token.meta = { start: start < 0 ? from : start, htmlTableOrdinal };
+    }
     if (token.type === 'inline') {
       const line = token.map?.[0] ?? 0;
       let cursor = inlineCursors.get(line) ?? lineOffset(line); const end = lineOffset(token.map?.[1] ?? source.split(/\r\n|\r|\n/).length);
@@ -73,6 +79,11 @@ export function renderDocument(source: string, document: string, revision: Revis
         }
         if (child.type === 'link_close' && !['autolink', 'linkify'].includes(child.markup)) cursor = afterLink(cursor, end);
         if (child.type === 'image') { child.meta = { start: lineOffset(token.map?.[0] ?? 0), end }; cursor = afterLink(cursor, end, true); }
+        if (child.type === 'html_inline') {
+          const start = source.indexOf(child.content, cursor), htmlTableOrdinal = tableOrdinal;
+          tableOrdinal += scanHtml(child.content).filter(part => part.kind === 'tag' && !part.closing && part.name === 'table').length;
+          if (start >= cursor && start + child.content.length <= end) { child.meta = { start, htmlTableOrdinal }; cursor = start + child.content.length; }
+        }
       }
       inlineCursors.set(line, cursor);
     }
@@ -89,6 +100,15 @@ export function renderDocument(source: string, document: string, revision: Revis
     if (!resource) return '<span class="error">Missing frozen image</span>';
     return `<span class="semantic" tabindex="0" data-kind="image" data-resource-id="${id}" data-start="${token.meta.start}" data-end="${token.meta.end}"><img data-resource="${id}" alt="${escapeHtml(token.content)}"></span>`;
   };
+  if (revision.renderer.markdownProfile === SANITIZED_HTML_PROFILE) {
+    const renderHtml = (token: Token) => renderSanitizedHtml(token.content, {
+      document, revision, sourceOffset: token.meta?.start ?? 0, state: { tableOrdinal: token.meta?.htmlTableOrdinal ?? 0 },
+      decodeText: value => md.utils.unescapeAll(value),
+      mapText: (visible, start, end) => { const offsets = mapText(visible, start, end); if (!offsets) return undefined; const id = `source-${mapId++}`; textMaps.set(id, offsets); return id; },
+    });
+    md.renderer.rules.html_block = (items, index) => renderHtml(items[index]);
+    md.renderer.rules.html_inline = (items, index) => renderHtml(items[index]);
+  }
   const fence = md.renderer.rules.fence!;
   md.renderer.rules.fence = (items, i, options, env, self) => {
     const t = items[i]; if (!t.meta?.diagram) return fence(items, i, options, env, self);
@@ -98,8 +118,9 @@ export function renderDocument(source: string, document: string, revision: Revis
   md.renderer.rules.link_open = (items, i, options, env, self) => {
     const t = items[i], href = t.attrGet('href') ?? '';
     if (t.attrGet('title')?.trim().toLowerCase() === 'review:attach') { t.attrSet('data-attachment', stableId('resource', `${document}\0${href}`)); t.attrSet('href', '#'); }
-    else if (/^(?:https?:|mailto:)/i.test(href)) { t.attrSet('rel', 'noopener noreferrer'); t.attrSet('target', '_blank'); }
-    else { t.attrSet('data-document-link', href); t.attrSet('href', '#'); }
+    else if (/^(?:https:|mailto:)/i.test(href)) { t.attrSet('rel', 'noopener noreferrer'); t.attrSet('target', '_blank'); }
+    else if (/^(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\/\/).+/.test(href)) { t.attrSet('data-document-link', href); t.attrSet('href', '#'); }
+    else { t.attrSet('class', 'blocked-reference'); t.attrSet('title', 'This external reference is retained in the audit record but is not opened by the review client.'); t.attrSet('href', '#'); }
     return link ? link(items, i, options, env, self) : self.renderToken(items, i, options);
   };
   return { html: md.renderer.render(tokens, md.options, {}), textMaps };
@@ -135,11 +156,13 @@ function documentRange(span: Element, node: Node, offset: number): number { cons
 /** CSS annotations retain document DOM, selection, scroll and rendered diagrams. */
 export function annotate(host: HTMLElement, rendered: RenderedSource, source: string, events: readonly Event[], document: string): void {
   const commentRanges: Range[] = [], suggestionRanges: Range[] = [];
+  const suggestionMarkers: Array<{ id: string; end: number; range: Range }> = [];
   const openEdits = new Set(fold(events, events[0]?.revisionId ?? '').suggestions.filter(s => s.open && s.root.operation.kind !== 'insert').map(s => s.root.id));
-  host.querySelectorAll('.commented').forEach(e => { e.classList.remove('commented'); e.removeAttribute('data-thread-ids'); });
+  host.querySelectorAll('.suggestion-marker').forEach(element => element.remove());
+  host.querySelectorAll('.commented,.suggested').forEach(e => { e.classList.remove('commented', 'suggested'); e.removeAttribute('data-thread-ids'); e.removeAttribute('data-suggestion-ids'); e.removeAttribute('title'); });
   for (const event of events) {
     if ((event.type !== 'comment.created' && event.type !== 'suggestion.created') || event.anchor.document !== document) continue;
-    if (event.type === 'suggestion.created' && !openEdits.has(event.id)) continue;
+    const highlightSuggestion = event.type === 'suggestion.created' && openEdits.has(event.id);
     const a = event.anchor; let elements: Element[] = [];
     if (a.target?.kind && a.target.kind !== 'text') {
       const t = a.target, attrs = t.kind === 'image' ? `[data-resource-id="${t.resourceId}"]` : t.kind === 'mermaid' ? `[data-diagram-id="${t.diagramId}"]` : t.kind === 'table-cell' ? `[data-table-id="${t.tableId}"][data-row="${t.row}"][data-column="${t.column}"]` : `table[data-table-id="${t.tableId}"]`;
@@ -154,13 +177,27 @@ export function annotate(host: HTMLElement, rendered: RenderedSource, source: st
           const walker = span.ownerDocument.createTreeWalker(span, NodeFilter.SHOW_TEXT), nodes: Text[] = [];
           while (walker.nextNode()) nodes.push(walker.currentNode as Text);
           const locate = (offset: number): [Text, number] => { for (const node of nodes) { if (offset <= node.length) return [node, offset]; offset -= node.length; } return [nodes.at(-1)!, nodes.at(-1)!.length]; };
-          if (nodes.length && last > first) { const range = host.ownerDocument.createRange(); range.setStart(...locate(first)); range.setEnd(...locate(last)); (event.type === 'comment.created' ? commentRanges : suggestionRanges).push(range); }
+          if (nodes.length && last > first) {
+            const range = host.ownerDocument.createRange(); range.setStart(...locate(first)); range.setEnd(...locate(last));
+            if (event.type === 'comment.created') commentRanges.push(range);
+            else {
+              if (highlightSuggestion) suggestionRanges.push(range);
+              const marker = range.cloneRange(); marker.collapse(false); suggestionMarkers.push({ id: event.suggestionId, end, range: marker });
+            }
+          }
         }
       }
     }
     if (event.type === 'comment.created') for (const element of elements) { element.classList.add('commented'); const previous = element.getAttribute('data-thread-ids'); element.setAttribute('data-thread-ids', `${previous ? previous + ' ' : ''}${event.threadId}`); element.setAttribute('title', 'Click to open attached review comments'); }
+    if (event.type === 'suggestion.created') for (const element of elements) { element.classList.add('suggested'); const previous = element.getAttribute('data-suggestion-ids'); element.setAttribute('data-suggestion-ids', `${previous ? previous + ' ' : ''}${event.suggestionId}`); element.setAttribute('title', 'Click to open attached suggested edits'); }
   }
   const api = globalThis as typeof globalThis & { Highlight?: new (...ranges: Range[]) => unknown };
   const registry = (CSS as typeof CSS & { highlights?: Map<string, unknown> }).highlights;
   if (registry && api.Highlight) { registry.set('omr-comments', new api.Highlight(...commentRanges)); registry.set('omr-edits', new api.Highlight(...suggestionRanges)); host.classList.add('exact-highlights'); }
+  // CSS highlights do not participate in hit testing. An empty button rendered
+  // through ::before gives each exact edit range an accessible, unambiguous
+  // source-to-card link without adding text that would corrupt source mapping.
+  for (const marker of suggestionMarkers.sort((a, b) => b.end - a.end)) {
+    const button = host.ownerDocument.createElement('button'); button.type = 'button'; button.className = 'suggestion-marker'; button.dataset.suggestionJump = marker.id; button.setAttribute('aria-label', 'Open suggested edit at this text'); button.title = 'Open corresponding suggested edit'; marker.range.insertNode(button);
+  }
 }

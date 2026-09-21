@@ -8,7 +8,7 @@ Filesystem/provider access control governs who can read or alter the package. Ac
 
 ## Client protections
 
-- Raw Markdown HTML is disabled.
+- Undeclared raw Markdown HTML is inert. New reviews may require the closed [`sanitized-html-v1`](protocol/profiles/sanitized-html-v1.md) subset: tags are reconstructed from an allowlist; source scripts, styles, handlers, forms, frames, media/embed elements, raw SVG/MathML, unsafe schemes and non-allowlisted attributes cannot execute. Images and attachments resolve only to verified frozen resources.
 - Mermaid runs locally with `securityLevel: strict`.
 - The rendered review uses a restrictive VS Code webview content-security policy.
 - The portable HTML client blocks network connections and arbitrary external scripts. Its fixed bundled script is authorized by a build-time CSP hash. JSON Schema validators are precompiled; `unsafe-eval` is not used. The client never fetches code or schema URLs supplied by a review.

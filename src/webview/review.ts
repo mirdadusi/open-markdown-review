@@ -10,6 +10,7 @@ let selectedTarget: HTMLElement | undefined;
 
 interface PersistedViewState {
   document?: string;
+  discussionScope?: "all" | "document";
   windowScrollY?: number;
   leftScrollTop?: number;
   rightScrollTop?: number;
@@ -66,6 +67,32 @@ function activateDocument(path: string, persist = true): void {
   document.querySelectorAll(".document").forEach((item) => item.classList.toggle("active", item.getAttribute("data-document") === path));
   document.querySelectorAll(".document-button").forEach((item) => item.classList.toggle("active", item.getAttribute("data-document") === path));
   if (persist) saveViewState({ document: path });
+  applyDiscussionScope(false);
+}
+
+function applyDiscussionScope(persist = true): void {
+  const select = document.querySelector<HTMLSelectElement>("#discussion-scope");
+  if (!select) return;
+  const scope: "all" | "document" = select.value === "document" ? "document" : "all";
+  const activeDocument = document.querySelector<HTMLElement>(".document.active")?.dataset.document ?? "";
+  const threads = [...document.querySelectorAll<HTMLElement>("#review-thread-list .thread")];
+  const suggestions = [...document.querySelectorAll<HTMLElement>("#review-suggestion-list .suggestion")];
+  const threadVisible = (item: HTMLElement) => scope === "all" || item.dataset.document === activeDocument;
+  const suggestionVisible = (item: HTMLElement) => scope === "all" || item.dataset.document === activeDocument;
+  for (const item of threads) item.hidden = !threadVisible(item);
+  for (const item of suggestions) item.hidden = !suggestionVisible(item);
+  const visibleThreads = threads.filter(threadVisible).length;
+  const visibleSuggestions = suggestions.filter(suggestionVisible).length;
+  const count = document.querySelector<HTMLElement>("#review-discussion-count");
+  if (count) count.textContent = scope === "all"
+    ? `${visibleThreads} comments and ${visibleSuggestions} edits across the review`
+    : `${visibleThreads} comments and ${visibleSuggestions} edits on ${activeDocument}`;
+  const scopedEmpty = document.querySelector<HTMLElement>("#review-discussion-empty");
+  if (scopedEmpty) {
+    scopedEmpty.hidden = scope !== "document" || visibleThreads + visibleSuggestions > 0 || threads.length + suggestions.length === 0;
+    scopedEmpty.textContent = `No comments or suggested edits on ${activeDocument}. Switch to All review documents to inspect the complete review.`;
+  }
+  if (persist) saveViewState({ discussionScope: scope });
 }
 
 function threadIds(element: HTMLElement): string[] {
@@ -218,6 +245,7 @@ function applyReviewState(message: ReviewStateMessage): void {
       : anchor.target.kind === "text" ? findOrCreateTextAnchor(anchor) : findSemanticAnchor(anchor);
     if (target) setAnchorState(target, anchor, anchorsById);
   }
+  applyDiscussionScope(false);
   const activeThreadId = viewState().activeThreadId;
   if (activeThreadId) document.getElementById(`thread-${activeThreadId}`)?.classList.add("active");
 }
@@ -433,8 +461,14 @@ window.addEventListener("scroll", persistScrollPosition, { passive: true });
 document.querySelectorAll<HTMLElement>(".sidebar").forEach((sidebar) => sidebar.addEventListener("scroll", persistScrollPosition, { passive: true }));
 
 const saved = viewState();
+const discussionScope = document.querySelector<HTMLSelectElement>("#discussion-scope");
+if (discussionScope) {
+  discussionScope.value = saved.discussionScope === "document" ? "document" : "all";
+  discussionScope.addEventListener("change", () => applyDiscussionScope());
+}
 const firstDocument = saved?.document ?? document.querySelector<HTMLElement>(".document-button")?.dataset.document;
 if (firstDocument) activateDocument(firstDocument, false);
+else applyDiscussionScope(false);
 const initialSync = document.querySelector<HTMLElement>("#live-sync-status");
 if (initialSync) {
   updateSyncStatus({

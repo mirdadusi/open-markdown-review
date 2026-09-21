@@ -26,7 +26,7 @@ export function dependencies(e: Event, all: readonly Event[], revisions: Readonl
   return [...new Set(result)];
 }
 /** Order-independent graph admission. Missing dependencies stay pending, never become approvals. */
-export function admit(events: readonly Event[], revisions: ReadonlyMap<string, Revision>, receiptDependencies = new Map<string, string[]>()) {
+export function admit(events: readonly Event[], revisions: ReadonlyMap<string, Revision>, receiptDependencies = new Map<string, string[]>(), lifecycleCreatorId?: string) {
   const errors = new Map<string, string>(); const byId = new Map(events.map(e => [e.id, e]));
   const bad = (e: Event, why: string) => { errors.set(e.id, why); };
   const unique = (key: (e: Event) => string | undefined) => {
@@ -43,6 +43,7 @@ export function admit(events: readonly Event[], revisions: ReadonlyMap<string, R
   const suggestionRoots = new Map(events.filter((e): e is Extract<Event, { type: 'suggestion.created' }> => e.type === 'suggestion.created').map(e => [e.suggestionId, e]));
   const comments = new Map(events.filter((e): e is Extract<Event, { type: 'comment.created' | 'comment.replied' }> => 'commentId' in e).map(e => [e.commentId, e]));
   for (const e of events) {
+    if (lifecycleCreatorId && (e.type === 'thread.decided' || e.type === 'thread.resolved' || e.type === 'thread.reopened') && e.actor.id !== lifecycleCreatorId) bad(e, 'Only the declared review initiator can decide or change a thread lifecycle under creator-thread-control-v1.');
     const publication = publications.get(e.revisionId), revision = revisions.get(e.revisionId);
     if (!publication || !revision) bad(e, 'Missing revision publication/descriptor.');
     else {
@@ -106,7 +107,9 @@ export function fold(events: readonly Event[], revisionId: string) {
   const register = (key: string) => { const history = registers.get(key) ?? []; return { history, heads: heads(history), conflict: conflicted(history) }; };
   const threads = current.filter((e): e is Extract<Event, { type: 'comment.created' }> => e.type === 'comment.created').map(root => {
     const status = register(`status:${root.threadId}`), decision = register(`decision:${root.threadId}`);
-    return { root, status, decision, open: status.conflict || decision.conflict || !status.heads.length || status.heads.some(e => e.type === 'thread.reopened'), replies: replies.get(root.threadId) ?? [] };
+    // Decisions and their conflicts do not mutate the independent lifecycle
+    // register. Once closed, a thread stays closed until an admitted reopen.
+    return { root, status, decision, open: status.conflict || !status.heads.length || status.heads.some(e => e.type === 'thread.reopened'), replies: replies.get(root.threadId) ?? [] };
   });
   const suggestions = current.filter((e): e is Extract<Event, { type: 'suggestion.created' }> => e.type === 'suggestion.created').map(root => {
     const decision = register(`suggestion:${root.suggestionId}`), applications = applicationsBySuggestion.get(root.suggestionId) ?? [];

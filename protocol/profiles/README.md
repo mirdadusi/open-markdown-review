@@ -1,10 +1,14 @@
-# Optional presentation profiles, transport v1
+# Optional protocol profiles
 
-Core Open Markdown Review 0.5 remains framework-neutral. It defines frozen documents/resources, exact source anchors, events, causal decisions and audit evidence. It does not define Slidev, Vue, themes, slide syntax or presentation layouts.
+Core Open Markdown Review 0.5 remains framework-neutral. It defines frozen documents/resources, exact source anchors, events, causal decisions and audit evidence. This directory contains optional, independently versioned rendering and presentation profiles. A required profile is immutable package semantics; an unsupported participant client fails closed.
+
+The [sanitized Markdown HTML profile v1](sanitized-html-v1.md) is selected directly by the `sanitized-html-v1` required capability and the revision's `renderer.markdownProfile`. It defines deterministic safe rendering/resource discovery and does not use `manifest.extensions` or add profile files to the package.
+
+The presentation-profile transport below is separate. Core does not define Slidev, Vue, themes, slide syntax or presentation layouts.
 
 An independently versioned profile describes how a particular presentation format binds its source and frozen views to those existing core primitives. A client adapter interprets that profile. Rendering code and caches are never review authority.
 
-## Normative file binding
+## Normative presentation-profile file binding
 
 The key words MUST, MUST NOT and SHOULD express conformance requirements.
 
@@ -26,6 +30,7 @@ Schema validation alone is insufficient: implementations also verify digests, ow
 
 ## Implemented profile
 
+- [Sanitized Markdown HTML v1](sanitized-html-v1.md), a rendering profile with no descriptor blob.
 - [Slidev static review v1](../../spec/SLIDEV-PROFILE-V1.md), with its [JSON schema](slidev/v1.schema.json).
 
-The application release is 0.5.1. Core wire version remains 0.5.0; profile versioning is separate. Ordinary 0.5 packages retain their existing format and behavior.
+Core wire version remains 0.5.0; profile versioning is separate. Ordinary 0.5 packages retain their declared format and behavior.

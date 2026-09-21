@@ -53,6 +53,7 @@ Object.assign(manifest.properties, {
 manifest.required.push('eventLayout', 'identityProfile', 'limitsProfile', 'creationOperationId', 'requiredCapabilities');
 delete manifest.allOf;
 Object.assign(revision.properties, { schemaVersion: { const: '0.5.0' }, parents: ids, policy: stored, creationOperationId: id });
+revision.properties.renderer.properties.markdownProfile = { enum: ['commonmark-gfm', 'commonmark-gfm+sanitized-html-v1'] };
 revision.required.push('parents', 'policy', 'creationOperationId');
 revision.$defs.resource.allOf[1].properties.sourceKind.enum.push('granted-root');
 revision.properties.documents.maxItems = 100;

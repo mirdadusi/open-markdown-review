@@ -168,7 +168,6 @@ export class ReviewController implements vscode.Disposable {
     this.disposables.push(
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         this.registeredReviewCache.clear();
-        void this.refresh(undefined, "startup");
       }),
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (!event.affectsConfiguration("openMarkdownReview.liveSync")) return;
@@ -336,7 +335,6 @@ export class ReviewController implements vscode.Disposable {
         if (sameReviewPath(this.context.workspaceState.get<string>(this.activeStateKey(folder)), root)) await this.context.workspaceState.update(this.activeStateKey(folder), undefined);
       }
       this.registeredReviewCache.clear();
-      const remaining = this.reviews.getReviews().filter(r => !sameReviewPath(r.reviewRoot, root));
       if (sameReviewPath(this.currentStorageRoot, root)) {
         this.currentStorageRoot = undefined; this.currentSourceRoot = undefined;
         this.currentManifest = undefined; this.currentRevision = undefined;
@@ -345,11 +343,12 @@ export class ReviewController implements vscode.Disposable {
         this.threads.setState(undefined); this.commentDecorations.clear(); this.status.hide();
         await this.setContext(false, false, false);
       }
-      this.reviews.setReviews(remaining, this.currentStorageRoot, vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '');
+      this.reviews.removeReview(root);
+      this.reviews.setActiveReview(this.currentStorageRoot);
     });
   }
 
-  private async registeredReviews(folder: vscode.WorkspaceFolder, force = false): Promise<RegisteredReview[]> {
+  private async registeredReviews(folder: vscode.WorkspaceFolder, force = false, discoveredRoots?: readonly string[]): Promise<RegisteredReview[]> {
     const cacheKey = folder.uri.toString();
     const cached = this.registeredReviewCache.get(cacheKey);
     if (!force && cached) return cached;
@@ -363,12 +362,16 @@ export class ReviewController implements vscode.Disposable {
     // Opening a received review package as the VS Code folder should work directly.
     roots.add(folder.uri.fsPath);
     roots.add(path.join(folder.uri.fsPath, ".review"));
-    const manifests = await vscode.workspace.findFiles(
-      new vscode.RelativePattern(folder, "**/manifest.json"),
-      "**/{.git,node_modules,out,dist}/**",
-      50,
-    );
-    for (const manifest of manifests) roots.add(path.dirname(manifest.fsPath));
+    if (discoveredRoots) {
+      for (const root of discoveredRoots) roots.add(root);
+    } else {
+      const manifests = await vscode.workspace.findFiles(
+        new vscode.RelativePattern(folder, "**/manifest.json"),
+        "**/{.git,node_modules,out,dist}/**",
+        50,
+      );
+      for (const manifest of manifests) roots.add(path.dirname(manifest.fsPath));
+    }
     const result = (await mapWithConcurrency(uniqueReviewPaths(roots).filter(root => !this.isHiddenRoot(root)), this.ioConcurrency(folder), async (reviewRoot): Promise<RegisteredReview | undefined> => {
       try {
         const manifest = await loadManifest(reviewRoot);
@@ -383,6 +386,27 @@ export class ReviewController implements vscode.Disposable {
     await this.context.workspaceState.update(this.rootsStateKey(folder), uniqueReviewPaths(savedRoots));
     this.registeredReviewCache.set(cacheKey, result);
     return result;
+  }
+
+  /** Rebuild the sidebar registry across every workspace root without changing the active review. */
+  async refreshReviewList(force = true): Promise<string[]> {
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    if (!folders.length) {
+      this.reviews.setWorkspaceSnapshot([], undefined);
+      return [];
+    }
+    const manifests = await vscode.workspace.findFiles('**/manifest.json', '**/{.git,node_modules,out,dist}/**', 200);
+    const rootsByFolder = new Map(folders.map((folder) => [folder.uri.toString(), [] as string[]]));
+    for (const manifest of manifests) {
+      const folder = vscode.workspace.getWorkspaceFolder(manifest);
+      if (folder) rootsByFolder.get(folder.uri.toString())?.push(path.dirname(manifest.fsPath));
+    }
+    const groups = await Promise.all(folders.map(async (folder) => ({
+      sourceRoot: folder.uri.fsPath,
+      reviews: await this.registeredReviews(folder, force, rootsByFolder.get(folder.uri.toString()) ?? []),
+    })));
+    this.reviews.setWorkspaceSnapshot(groups, this.currentStorageRoot);
+    return manifests.map((manifest) => path.dirname(manifest.fsPath));
   }
 
   private async activeStorageRootFor(folder: vscode.WorkspaceFolder): Promise<string> {
@@ -1688,6 +1712,12 @@ export function activate(context: vscode.ExtensionContext): void {
     reviewSidebar, activeSidebar,
     professional.onDidChangeTreeData(() => controller.useProfessional(!!professional.active)),
     controller.onDidActivateLegacy(() => { void professional.deactivate(); }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      void controller.refreshReviewList(true)
+        .then((roots) => professional.refreshList(roots))
+        .then(() => controller.refresh(undefined, 'startup'))
+        .catch(error => controller.reportError(error));
+    }),
     vscode.window.registerCustomEditorProvider('openMarkdownReview.entryFile', {
       openCustomDocument: async (uri) => ({ uri, dispose() {} }),
       resolveCustomEditor: async (document, panel) => professional.resolveEntryFile(document.uri, panel),
@@ -1737,6 +1767,8 @@ export function activate(context: vscode.ExtensionContext): void {
   register("openMarkdownReview.openPackage05", (root) => professional.open(String(root)));
   register("openMarkdownReview.showPackageSection", (section) => professional.forward(String(section)));
   register("openMarkdownReview.updatePortableBrowserClient", () => professional.updateClient());
+  register("openMarkdownReview.linkSourceWorkspace", (argument) => professional.linkSourceWorkspace(argument).then(() => undefined));
+  register("openMarkdownReview.publishReviewPackage", (argument) => professional.publishReviewPackage(argument), true);
   register("openMarkdownReview.connectReview", async () => {
     const selected = await vscode.window.showOpenDialog({ title: "Choose a review package containing manifest.json", canSelectFolders: true, canSelectFiles: false, canSelectMany: false });
     const root = selected?.[0]?.fsPath; if (!root) return;
@@ -1767,12 +1799,24 @@ export function activate(context: vscode.ExtensionContext): void {
   register("openMarkdownReview.rejectSuggestion", (argument) => professional.active ? professional.forward('suggestions') : controller.decideSuggestion(argument as SuggestionArgument, "rejected"));
   register("openMarkdownReview.applySuggestion", (argument) => professional.active ? professional.forward('suggestions') : controller.applySuggestion(argument as SuggestionArgument));
   register("openMarkdownReview.exportPdf", () => professional.active ? professional.forward('export') : controller.exportPdf());
-  register("openMarkdownReview.refresh", () => professional.active ? professional.forward('refresh') : controller.refreshWithProgress());
+  register("openMarkdownReview.refresh", async () => {
+    const roots = await controller.refreshReviewList(true);
+    await professional.refreshList(roots);
+    if (professional.active) await professional.forward('refresh');
+    else await controller.refreshWithProgress();
+  });
   register("openMarkdownReview.rebuildCache", () => controller.rebuildLocalCache());
   register("openMarkdownReview.showDiagnostics", () => professional.active ? professional.forward('status') : controller.showDiagnostics());
   register("openMarkdownReview.openThread", (argument) => controller.openThread(argument as ThreadArgument));
   register("openMarkdownReview.showThread", (argument) => controller.showThread(argument as ThreadArgument));
-  void professional.restore().catch(error => controller.reportError(error)).finally(() => controller.refresh(undefined, "startup"));
+  void (async () => {
+    try { await professional.restore(); } catch (error) { controller.reportError(error); }
+    try {
+      const roots = await controller.refreshReviewList(true);
+      await professional.refreshList(roots);
+    } catch (error) { controller.reportError(error); }
+    await controller.refresh(undefined, "startup");
+  })();
 }
 
 export function deactivate(): void {}

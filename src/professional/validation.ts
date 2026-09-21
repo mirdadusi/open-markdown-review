@@ -8,6 +8,7 @@ import inventorySchema from './generated/inventory';
 import folding from './case-folding-15.1.json';
 import { ascii, digest, encode, offsetAt, safePath, stableId } from './bytes';
 import { Event, Manifest, Revision, Policy, ProtocolError, CAPABILITIES, OPTIONAL_CAPABILITIES, LIMITS, StoredContent, Verification, AuditInventory } from './types';
+import { attribute, isAllowedHtmlTag, isAuditedExternalReference, SANITIZED_HTML_PROFILE, scanHtml } from './html';
 
 const schemas = { event: eventSchema, manifest: manifestSchema, revision: revisionSchema, policy: policySchema, verification: verificationSchema, inventory: inventorySchema };
 type Shapes = { event: Event; manifest: Manifest; revision: Revision; policy: Policy; verification: Verification; inventory: AuditInventory };
@@ -69,30 +70,61 @@ export function validate<K extends keyof Shapes>(kind: K, value: unknown): Shape
 export function checkStored(c: StoredContent): void {
   requireRule(c.blobPath === `blobs/sha256/${c.digest.slice(7, 9)}/${c.digest.slice(7)}`, 'Blob path must encode its digest.');
 }
-export const markdown = () => new MarkdownIt({ html: false, linkify: false, typographer: false });
-export function inspect(source: string, document: string) {
-  const tokens = markdown().parse(source, {}); let tableOrdinal = 0, diagramOrdinal = 0;
+export const markdown = (profile: Revision['renderer']['markdownProfile'] = 'commonmark-gfm') => new MarkdownIt({ html: profile === SANITIZED_HTML_PROFILE, linkify: false, typographer: false });
+export function inspect(source: string, document: string, profile: Revision['renderer']['markdownProfile'] = 'commonmark-gfm') {
+  const parser = markdown(profile), tokens = parser.parse(source, {}); let tableOrdinal = 0, diagramOrdinal = 0, hasHtml = false;
   const tables: Array<{ id: string; rows: number[] }> = [], diagrams: Revision['mermaidDiagrams'] = [];
   const references: Array<{ reference: string; role: 'image' | 'attachment'; id: string }> = [];
+  const links: Array<{ uri: string; label?: string; id: string }> = [], unsupportedHtmlTags = new Set<string>();
+  const addReference = (reference: string, role: 'image' | 'attachment') => references.push({ reference, role, id: stableId('resource', `${document}\0${reference}`) });
+  const addLink = (uri: string, label?: string) => links.push({ uri, ...(label?.trim() ? { label: label.trim() } : {}), id: `reference_${digest(`${document}\0${uri}`).slice(7, 31)}` });
+  const inspectHtml = (fragment: string) => {
+    hasHtml = true;
+    const stack: Array<{ table: { id: string; rows: number[] } }> = [];
+    for (const part of scanHtml(fragment)) {
+      if (part.kind !== 'tag') continue;
+      const read = (name: string) => { const value = attribute(part, name); return value === undefined ? undefined : parser.utils.unescapeAll(value); };
+      if (!isAllowedHtmlTag(part.name)) unsupportedHtmlTags.add(part.name);
+      if (part.closing) { if (part.name === 'table') stack.pop(); continue; }
+      if (part.name === 'table') { const table = { id: stableId('table', `${document}\0${tableOrdinal++}`), rows: [] as number[] }; tables.push(table); stack.push({ table }); }
+      else if (part.name === 'tr') stack.at(-1)?.table.rows.push(0);
+      else if (part.name === 'td' || part.name === 'th') { const rows = stack.at(-1)?.table.rows; if (rows?.length) rows[rows.length - 1]++; }
+      else if (part.name === 'img') { const reference = read('src'); if (reference) addReference(reference, 'image'); }
+      else if (part.name === 'a') {
+        const reference = read('href'), attachment = read('title')?.trim().toLowerCase() === 'review:attach';
+        if (reference && attachment) addReference(reference, 'attachment');
+        else if (reference && isAuditedExternalReference(reference)) addLink(reference);
+      }
+    }
+  };
+  const markdownTables: Array<{ id: string; rows: number[] }> = [];
   for (const t of tokens) {
-    if (t.type === 'table_open') tables.push({ id: stableId('table', `${document}\0${tableOrdinal++}`), rows: [] });
-    if (t.type === 'tr_open') tables.at(-1)?.rows.push(0);
-    if (t.type === 'td_open' || t.type === 'th_open') { const rows = tables.at(-1)?.rows; if (rows?.length) rows[rows.length - 1]++; }
+    if (t.type === 'table_open') { const table = { id: stableId('table', `${document}\0${tableOrdinal++}`), rows: [] as number[] }; tables.push(table); markdownTables.push(table); }
+    if (t.type === 'table_close') markdownTables.pop();
+    if (t.type === 'tr_open') markdownTables.at(-1)?.rows.push(0);
+    if (t.type === 'td_open' || t.type === 'th_open') { const rows = markdownTables.at(-1)?.rows; if (rows?.length) rows[rows.length - 1]++; }
+    if (t.type === 'html_block') inspectHtml(t.content);
     if (t.type === 'fence' && t.info.trim().split(/\s+/)[0].toLowerCase() === 'mermaid') {
       const text = t.content.trimEnd(), ordinal = diagramOrdinal++;
       diagrams.push({ id: stableId('diagram', `${document}\0${ordinal}\0${text}`), document, ordinal, source: text, sourceDigest: digest(text) });
     }
+    const linkStack: Array<{ href: string; label: string; attachment: boolean }> = [];
     for (const c of t.children ?? []) {
       const role = c.type === 'image' ? 'image' : c.type === 'link_open' && c.attrGet('title')?.trim().toLowerCase() === 'review:attach' ? 'attachment' : undefined;
-      if (role) { const reference = c.attrGet(role === 'image' ? 'src' : 'href')!; references.push({ reference, role, id: stableId('resource', `${document}\0${reference}`) }); }
+      if (role) { const reference = c.attrGet(role === 'image' ? 'src' : 'href')!; addReference(reference, role); }
+      if (c.type === 'link_open') { const href = c.attrGet('href'); if (href) linkStack.push({ href, label: '', attachment: c.attrGet('title')?.trim().toLowerCase() === 'review:attach' }); }
+      else if (c.type === 'link_close') { const link = linkStack.pop(); if (link && !link.attachment && isAuditedExternalReference(link.href)) addLink(link.href, link.label); }
+      else if (linkStack.length && (c.type === 'text' || c.type === 'code_inline')) linkStack.at(-1)!.label += c.content;
+      if (c.type === 'html_inline') inspectHtml(c.content);
     }
   }
-  return { tokens, tables, diagrams, references };
+  return { tokens, tables, diagrams, references, links, hasHtml, unsupportedHtmlTags: [...unsupportedHtmlTags].sort() };
 }
 export function validateSource(revision: Revision, document: string, source: string): void {
-  const parsed = inspect(source, document), expected = revision.mermaidDiagrams.filter(d => d.document === document);
+  const parsed = inspect(source, document, revision.renderer.markdownProfile), expected = revision.mermaidDiagrams.filter(d => d.document === document);
   requireRule(JSON.stringify(parsed.diagrams) === JSON.stringify(expected), `Mermaid descriptors differ from ${document}.`);
   for (const ref of parsed.references) requireRule(revision.resources.some(r => r.id === ref.id && r.document === document && r.role === ref.role), `Uncaptured ${ref.role}: ${ref.reference}`);
+  for (const link of parsed.links) requireRule(revision.externalReferences.some(r => r.id === link.id && r.document === document), `Unrecorded external reference: ${link.uri}`);
 }
 export function validateAnchorEvent(event: Event, revision: Revision, sources: ReadonlyMap<string, string>): void {
   requireRule(event.reviewId === revision.reviewId && event.revisionId === revision.id, 'Event belongs to another revision.');
@@ -107,7 +139,7 @@ export function validateAnchorEvent(event: Event, revision: Revision, sources: R
   if (target?.kind === 'image') requireRule(revision.resources.some(r => r.id === target.resourceId && r.role === 'image' && r.document === a.document), 'Image target does not exist.');
   if (target?.kind === 'mermaid') requireRule(revision.mermaidDiagrams.some(d => d.id === target.diagramId && d.document === a.document), 'Diagram target does not exist.');
   if (target?.kind === 'table' || target?.kind === 'table-cell') {
-    const table = inspect(source, a.document).tables.find(t => t.id === target.tableId);
+    const table = inspect(source, a.document, revision.renderer.markdownProfile).tables.find(t => t.id === target.tableId);
     requireRule(table, 'Table target does not exist.');
     if (target.kind === 'table-cell') requireRule(target.row < table.rows.length && target.column < table.rows[target.row], 'Table cell does not exist.');
   }

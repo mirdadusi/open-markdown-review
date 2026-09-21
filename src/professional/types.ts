@@ -1,8 +1,11 @@
 import type { ActorRef, ReviewEvent, ReviewRevision, StoredContent, Sha256Digest } from "../protocol/types";
+import { SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE } from './html';
 export type { ActorRef, MarkdownAnchor, StoredContent, Sha256Digest } from "../protocol/types";
+export { SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE } from './html';
 
 export const VERSION = "0.5.0" as const;
-export const OPTIONAL_CAPABILITIES = ['presentation-profiles-v1'] as const;
+export const CREATOR_THREAD_CONTROL = 'creator-thread-control-v1' as const;
+export const OPTIONAL_CAPABILITIES = ['presentation-profiles-v1', CREATOR_THREAD_CONTROL, SANITIZED_HTML_CAPABILITY] as const;
 export const CAPABILITIES = ["quote-anchor-v1", "range-anchor-v1", "semantic-anchor-v1", "content-addressed-resources-v1", "revision-parents-v1", "thread-lifecycle-v2", "suggested-edit-v2", "review-stance-v1", "review-policy-v1", "audit-inventory-v1"] as const;
 export interface Manifest {
   protocol: "open-markdown-review"; protocolVersion: typeof VERSION;
@@ -12,9 +15,10 @@ export interface Manifest {
   creationOperationId: string; capabilities: string[]; requiredCapabilities: string[];
   extensions?: Array<{ id: string; schemaUri: string; schemaDigest: Sha256Digest; schemaBlobPath: string; affectsState: boolean }>;
 }
-export type Revision = Omit<ReviewRevision, "schemaVersion" | "resources"> & {
+export type Revision = Omit<ReviewRevision, "schemaVersion" | "resources" | "renderer"> & {
   schemaVersion: typeof VERSION; parents: string[]; policy: StoredContent; creationOperationId: string;
   resources: Array<Omit<ReviewRevision["resources"][number], "sourceKind"> & { sourceKind: "workspace" | "granted-root" | "remote" | "data" }>;
+  renderer: { markdownProfile: 'commonmark-gfm' | typeof SANITIZED_HTML_PROFILE; mermaidVersion: string };
 };
 export type Policy = { schemaVersion: typeof VERSION; kind: "review-policy" } & (
   { mode: "assertions-only" } |

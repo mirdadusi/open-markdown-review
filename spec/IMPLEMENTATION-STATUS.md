@@ -8,7 +8,11 @@ This report distinguishes implemented behavior from qualification evidence. Pack
 
 `src/professional/` contains the shared exact-byte parser, precompiled schemas, graph/lifecycle/policy rules, rooted storage adapters, review sessions, authoring service, CLI, Markdown/source mapping, reviewer toolbox and audit exporter. The portable HTML and VS Code webview run the same toolbox. Only storage access and author-only source operations differ by host.
 
-New review creation always emits the generic HTML entry file. Browsers open it directly and explicitly grant the adjacent folder; VS Code opens the same file through a custom editor. The VS Code extension uses its installed trusted client code when reading a received package. CLI creation calls the same authoring service, not VS Code automation.
+New review creation always emits a review-named HTML entry file bound to the review ID and exact manifest digest, without embedding reviewed content or events. Browsers open it directly, grant the adjacent folder once, and automatically reconnect only when the browser reports permission already granted; VS Code opens the same file through a custom editor. The VS Code extension uses its installed trusted client code when reading a received package. CLI creation calls the same authoring service, not VS Code automation.
+
+Cold open now exposes manifest/event/rendering progress immediately and implements the partial-revision rule in VALID-05 for ordinary Markdown: descriptors and policy are admitted first, anchored-event validation fetches only referenced documents, and the visible document fetches only its used resources. Optional presentation profiles load their required profile evidence up front. Fresh approval/audit paths continue reading and verifying the complete required content set.
+
+VS Code can publish an existing package to an empty shared/synchronized/Git destination using an exact link-free inventory, streaming hashes, exclusive destination files, manifest-last visibility, source recheck and full destination validation. It then switches to the destination and leaves the original disconnected on disk. Received or moved reviews use an explicit private source-link command that reports exact/changed/missing head documents; revising no longer falls back to the first unrelated workspace. Protocol 0.5 still has one Markdown source root, selected explicitly in multi-root workspaces.
 
 The 0.4 reader is retained in VS Code without migration. The new HTML reader is 0.5-only; it does not reinterpret a 0.4 package using new lifecycle rules.
 
@@ -29,7 +33,7 @@ The 10,000-event test uses an in-memory adapter, not a remote-share benchmark. I
 
 | Gates | Implemented / automated coverage | Remaining qualification |
 | --- | --- | --- |
-| AT-01, 03, 04 | Shared core, pinned contexts, separate sessions and generic HTML | Full cross-review delayed-UI and cache-deletion matrix |
+| AT-01, 03, 04 | Shared core, pinned contexts, separate sessions and review-bound HTML launcher | Full cross-review delayed-UI and cache-deletion matrix |
 | AT-02, 07, 08, 25 | Fresh exact audits, pending dependency retries, serialized scans, changed-frontier confirmation | Full corruption/arrival-order/provider and delayed-UI corpus |
 | AT-05, 09, 12 | Images, Mermaid, tables, attachments; whole-revision export; exact hashes and detached inventory | Large/wide document PDF corpus and every reference-form/renderer-failure fixture |
 | AT-06, 14, 15, 26 | Closed 0.5 schemas, semantic checks, causal registers, revision graph, explicit limits; retained legacy reader | Complete shared browser/native invalid corpus, all limit boundaries and optional-extension profile |
@@ -40,6 +44,7 @@ The 10,000-event test uses an in-memory adapter, not a remote-share benchmark. I
 | AT-20 | CSP, strict Markdown/Mermaid, raster header limits, dependency closure/notices | Complete malicious-content corpus and interruptible Mermaid render deadline |
 | AT-21, 22, 23, 24, 27 | Shared GUI/CLI creation; cancellation/resume checkpoints; staged source replacement and same-operation retry; confirmed HTML updates | Remaining cancellation/error-class parity, all crash points and Windows filesystem replacement/ACL behavior |
 | User-task gate | Working shared UI and example review | Five independent participants' recorded tasks are not performed by automated tests |
+| AT-28 | Exact verified package-copy implementation, manifest-last destination, full source/destination validation, symlink/nonempty refusal, private exact/changed/missing source-binding inspection, explicit VS Code commands | Native Windows relocation and filesystem-change fault injection remain to be qualified; SMB remains excluded / untested |
 
 ## Concrete remaining implementation limitations
 

@@ -1,21 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, symlink, writeFile, readFile, readdir, rename } from 'node:fs/promises';
+import { mkdtemp, mkdir, symlink, writeFile, readFile, readdir, rename, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { digest, encode, jsonBytes, parseJson, pointAt, offsetAt, safePath, stableId, toBase64, fromBase64 } from '../src/professional/bytes';
-import { CAPABILITIES, Event, Manifest, Revision, ProtocolError } from '../src/professional/types';
+import { CAPABILITIES, CREATOR_THREAD_CONTROL, Event, Manifest, Revision, ProtocolError, SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE } from '../src/professional/types';
 import { Storage, JournalEntry, IoLimiter, evidence, publish, publishBlob } from '../src/professional/storage';
 import { NativeStorage } from '../src/professional/nativeStorage';
 import { ReviewSession } from '../src/professional/session';
 import { admit, fold, policyResult } from '../src/professional/state';
-import { caseFold, validate, validateAnchorEvent } from '../src/professional/validation';
+import { caseFold, inspect, validate, validateAnchorEvent } from '../src/professional/validation';
 import { authorReview, updateClient } from '../src/professional/authoring';
 import { rasterDimensions } from '../src/professional/imageLimits';
 import { renderDocument } from '../src/professional/rendering';
 import { runCli } from '../src/professional/cli';
 import { applyAcceptedSuggestion } from '../src/professional/applySuggestion';
 import { mapWithConcurrency } from '../src/protocol/concurrency';
+import { archiveFindingIndex } from '../src/professional/export';
+import { inspectReviewPackage, inspectSourceBinding, relocateReviewPackage } from '../src/professional/relocation';
 
 class MemoryStorage implements Storage {
   identity = 'memory'; writable = true; files = new Map<string, Uint8Array>(); journals = new Map<string, JournalEntry>();
@@ -63,7 +65,7 @@ test('0.5 failed parallel work drains started operations before returning', asyn
 });
 async function fixture() {
   const storage = new MemoryStorage();
-  const manifest: Manifest = { protocol: 'open-markdown-review', protocolVersion: '0.5.0', reviewId: 'review_one', title: 'Fixture', createdAt: time, createdBy: actor, documents: ['a.md'], eventDirectory: 'events', revisionDirectory: 'revisions', blobDirectory: 'blobs/sha256', exportDirectory: 'exports', eventLayout: 'sha256-flat-v1', identityProfile: 'self-asserted-v1', limitsProfile: 'pilot-v1', creationOperationId: 'create_one', capabilities: [...CAPABILITIES], requiredCapabilities: [...CAPABILITIES] };
+  const manifest: Manifest = { protocol: 'open-markdown-review', protocolVersion: '0.5.0', reviewId: 'review_one', title: 'Fixture', createdAt: time, createdBy: actor, documents: ['a.md'], eventDirectory: 'events', revisionDirectory: 'revisions', blobDirectory: 'blobs/sha256', exportDirectory: 'exports', eventLayout: 'sha256-flat-v1', identityProfile: 'self-asserted-v1', limitsProfile: 'pilot-v1', creationOperationId: 'create_one', capabilities: [...CAPABILITIES, CREATOR_THREAD_CONTROL], requiredCapabilities: [...CAPABILITIES, CREATOR_THREAD_CONTROL] };
   storage.files.set('manifest.json', jsonBytes(manifest));
   const document = await publishBlob(storage, 'document', encode('Hello repeated repeated.\r\n\n| A | B |\n| - | - |\n| x | y |\n'), 'text/markdown');
   const policy = await publishBlob(storage, 'policy', jsonBytes({ schemaVersion: '0.5.0', kind: 'review-policy', mode: 'assertions-only' }), 'application/json');
@@ -109,6 +111,73 @@ test('0.5 session pins an immutable context and saves exact independent event fi
   assert.equal(session.events.length, 2); assert.ok(storage.files.has(`events/${digest(jsonBytes(event)).slice(7)}.json`));
   assert.equal(fold(session.events, revision.id).threads.length, 1);
 });
+test('0.5 initiator-only decisions and closure lock a thread until an explicit reopen', async () => {
+  const { session, revision } = await fixture(), creator = session.context(actor);
+  const participant = session.context({ id: 'participant', displayName: 'Participant' });
+  const threadId = 'locked_thread', commentId = 'locked_comment';
+  const root = session.makeEvent(participant, { type: 'comment.created', threadId, commentId, anchor: { document: 'a.md', documentDigest: revision.documents[0].digest, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } }, quote: { exact: 'Hello' }, target: { kind: 'text' } }, body: { format: 'markdown', text: 'Please verify this.' } });
+  await session.save(participant, root);
+  const participantClose = session.makeEvent(participant, { type: 'thread.resolved', threadId, statusPredecessors: [] });
+  await assert.rejects(session.save(participant, participantClose), (error: unknown) => error instanceof ProtocolError && error.code === 'permission');
+  const participantDecision = session.makeEvent(participant, { type: 'thread.decided', threadId, decision: 'accepted', decisionPredecessors: [] });
+  await assert.rejects(session.save(participant, participantDecision), (error: unknown) => error instanceof ProtocolError && error.code === 'permission');
+  const accepted = session.makeEvent(creator, { type: 'thread.decided', threadId, decision: 'accepted', decisionPredecessors: [] });
+  await session.save(creator, accepted);
+  const closed = session.makeEvent(creator, { type: 'thread.resolved', threadId, note: 'Addressed', statusPredecessors: [] });
+  await session.save(creator, closed);
+  const closedState = fold(session.events, revision.id).threads[0];
+  const decisionHead = closedState.decision.heads[0];
+  assert.equal(decisionHead?.type, 'thread.decided'); if (decisionHead?.type === 'thread.decided') assert.equal(decisionHead.decision, 'accepted');
+  assert.equal(closedState.open, false, 'A decision must not silently reopen the lifecycle register.');
+  const reply = session.makeEvent(participant, { type: 'comment.replied', threadId, commentId: 'late_reply', inReplyTo: commentId, body: { format: 'markdown', text: 'Late reply' } });
+  const participantLateDecision = session.makeEvent(participant, { type: 'thread.decided', threadId, decision: 'duplicate', reason: 'Late decision', decisionPredecessors: closedState.decision.heads.map(event => event.id) });
+  const creatorLateDecision = session.makeEvent(creator, { type: 'thread.decided', threadId, decision: 'duplicate', reason: 'Late decision', decisionPredecessors: closedState.decision.heads.map(event => event.id) });
+  await assert.rejects(session.save(participant, reply), (error: unknown) => error instanceof ProtocolError && error.code === 'changed');
+  await assert.rejects(session.save(participant, participantLateDecision), (error: unknown) => error instanceof ProtocolError && error.code === 'permission');
+  await assert.rejects(session.save(creator, creatorLateDecision), (error: unknown) => error instanceof ProtocolError && error.code === 'changed');
+  await assert.rejects(session.save(creator, session.makeEvent(creator, { type: 'thread.resolved', threadId, statusPredecessors: [closed.id] })), /already closed/);
+  const reopened = session.makeEvent(creator, { type: 'thread.reopened', threadId, reason: 'More discussion needed', statusPredecessors: [closed.id] });
+  await session.save(creator, reopened); await session.save(participant, reply);
+  const openState = fold(session.events, revision.id).threads[0];
+  assert.equal(openState.open, true); assert.equal(openState.replies.at(-1)?.commentId, 'late_reply');
+});
+test('0.5 offline archive finding references are deterministic and expose challenged-topic status', async () => {
+  const { session, revision } = await fixture(), creator = session.context(actor);
+  const comment = session.makeEvent(creator, { type: 'comment.created', threadId: 'archive_thread', commentId: 'archive_comment', anchor: { document: 'a.md', documentDigest: revision.documents[0].digest, range: { start: { line: 0, character: 15 }, end: { line: 0, character: 23 } }, quote: { exact: 'repeated' }, target: { kind: 'text' } }, body: { format: 'markdown', text: 'Challenge the second occurrence.' } });
+  const suggestion = session.makeEvent(creator, { type: 'suggestion.created', suggestionId: 'archive_suggestion', anchor: { document: 'a.md', documentDigest: revision.documents[0].digest, range: { start: { line: 0, character: 6 }, end: { line: 0, character: 14 } }, quote: { exact: 'repeated' }, target: { kind: 'text' } }, rationale: { format: 'markdown', text: 'Use a precise term.' }, operation: { kind: 'replace', replacement: 'specific' } });
+  const accepted = session.makeEvent(creator, { type: 'suggestion.accepted', suggestionId: 'archive_suggestion', decisionPredecessors: [] });
+  const resolved = session.makeEvent(creator, { type: 'thread.resolved', threadId: 'archive_thread', note: 'Addressed', statusPredecessors: [] });
+  const events = [...session.events, comment, suggestion, accepted, resolved];
+  const expected = [
+    { reference: 'F-001', kind: 'suggested-edit', subjectId: 'archive_suggestion', line: 1, character: 7, status: 'accepted' },
+    { reference: 'F-002', kind: 'comment', subjectId: 'archive_thread', line: 1, character: 16, status: 'resolved' }
+  ];
+  const summarize = (input: Event[]) => archiveFindingIndex(input, revision.id, ['a.md']).map(({ reference, kind, subjectId, line, character, status }) => ({ reference, kind, subjectId, line, character, status }));
+  assert.deepEqual(summarize(events), expected); assert.deepEqual(summarize([...events].reverse()), expected);
+});
+test('0.5 creator lifecycle capability rejects received non-creator transitions without reinterpreting older packages', async () => {
+  const { session, storage, manifest, revision } = await fixture(), participant = session.context({ id: 'participant' });
+  const threadId = 'received_thread';
+  const root = session.makeEvent(participant, { type: 'comment.created', threadId, commentId: 'received_comment', anchor: { document: 'a.md', documentDigest: revision.documents[0].digest, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } }, quote: { exact: 'Hello' } }, body: { format: 'markdown', text: 'Received thread' } });
+  await session.save(participant, root);
+  const unauthorized = session.makeEvent(participant, { type: 'thread.resolved', threadId, statusPredecessors: [] });
+  const unauthorizedDecision = session.makeEvent(participant, { type: 'thread.decided', threadId, decision: 'accepted', decisionPredecessors: [] });
+  storage.files.set(`events/${digest(jsonBytes(unauthorized)).slice(7)}.json`, jsonBytes(unauthorized));
+  storage.files.set(`events/${digest(jsonBytes(unauthorizedDecision)).slice(7)}.json`, jsonBytes(unauthorizedDecision));
+  const strict = new ReviewSession(storage); await strict.open();
+  assert.equal(strict.events.some(event => event.id === unauthorized.id || event.id === unauthorizedDecision.id), false); assert.match(strict.diagnostics.map(diagnostic => diagnostic.message).join('\n'), /declared review initiator/);
+  const legacyManifest = validate('manifest', { ...manifest, capabilities: manifest.capabilities.filter(capability => capability !== CREATOR_THREAD_CONTROL), requiredCapabilities: manifest.requiredCapabilities.filter(capability => capability !== CREATOR_THREAD_CONTROL) });
+  storage.files.set('manifest.json', jsonBytes(legacyManifest));
+  const compatible = new ReviewSession(storage); await compatible.open();
+  assert.equal(compatible.events.some(event => event.id === unauthorized.id), true); assert.equal(compatible.events.some(event => event.id === unauthorizedDecision.id), true); assert.equal(fold(compatible.events, revision.id).threads[0].open, false);
+});
+test('0.5 rejects a sanitized HTML capability/profile mismatch instead of changing rendering semantics', async () => {
+  const { storage, manifest } = await fixture();
+  storage.files.set('manifest.json', jsonBytes({ ...manifest, capabilities: [...manifest.capabilities, SANITIZED_HTML_CAPABILITY], requiredCapabilities: [...manifest.requiredCapabilities, SANITIZED_HTML_CAPABILITY] }));
+  const received = new ReviewSession(storage); await received.open();
+  assert.equal(received.revisions.size, 0);
+  assert.match(received.diagnostics.map(diagnostic => diagnostic.message).join('\n'), /renderer profile and manifest sanitized HTML capability differ/);
+});
 test('0.5 full audit uses exact compact event bytes and fails closed after loss', async () => {
   const { session, storage, publication } = await fixture();
   const compact = encode(JSON.stringify(publication));
@@ -120,12 +189,18 @@ test('0.5 full audit uses exact compact event bytes and fails closed after loss'
   storage.files.delete(`events/${digest(compact).slice(7)}.json`);
   await assert.rejects(fresh.audit(fresh.context(actor)), /disappeared/);
 });
-test('0.5 missing document retries without any new event filename', async () => {
+test('0.5 partial revision admission defers documents and retries them without any new event filename', async () => {
   const { storage, revision } = await fixture(); const key = revision.documents[0].blobPath, bytes = storage.files.get(key)!;
+  storage.reads.clear();
   storage.files.delete(key); const session = new ReviewSession(storage); await session.open();
-  assert.equal(session.revisions.size, 0); assert.ok(session.diagnostics.length);
-  storage.files.set(key, bytes); await session.refresh(); await session.pin(revision.id);
-  assert.equal(session.revision?.id, revision.id); assert.equal(session.diagnostics.length, 0);
+  assert.equal(session.revisions.size, 1); assert.equal(session.revision?.id, revision.id); assert.equal(session.diagnostics.length, 0);
+  assert.equal(storage.reads.has(key), false, 'Cold open does not read unrendered Markdown or every frozen resource.');
+  await assert.rejects(
+    session.content(revision.documents[0]),
+    (error: unknown) => error instanceof ProtocolError && error.code === 'missing'
+  );
+  storage.files.set(key, bytes); assert.deepEqual(await session.content(revision.documents[0]), bytes);
+  assert.equal(session.diagnostics.length, 0);
 });
 test('0.5 decisions do not resolve concerns and causal conflicts converge independent of order', async () => {
   const { session, revision } = await fixture(), context = session.context(actor);
@@ -155,9 +230,13 @@ test('0.5 receipt admission checks exact content and rejects an omitted document
   await session.save(context, approved); assert.equal(session.diagnostics.length, 0);
   const reopened = new ReviewSession(storage); await reopened.open(); await reopened.audit(reopened.context(actor));
   assert.equal(fold(reopened.events, context.revision.id).stances.length, 1);
-  const wrong = { ...audit.inventory, documents: [] }, invalid = await publishBlob(storage, 'bad_inventory', jsonBytes(wrong), 'application/json');
+  const withdrawalAudit = await session.audit(context), withdrawalVerification = await session.verificationBlob(withdrawalAudit, 'withdraw');
+  const withdrawn = session.makeEvent(context, { type: 'review.withdrawn', reason: 'Changing my assessment.', verification: withdrawalVerification, stancePredecessors: [approved.id] }, 'withdraw');
+  await session.save(context, withdrawn);
+  const currentAudit = await session.audit(context);
+  const wrong = { ...currentAudit.inventory, documents: [] }, invalid = await publishBlob(storage, 'bad_inventory', jsonBytes(wrong), 'application/json');
   const before = (await storage.list('events')).length;
-  await assert.rejects(session.save(context, session.makeEvent(context, { type: 'review.approved', verification: invalid, stancePredecessors: [approved.id] })), /omits required/);
+  await assert.rejects(session.save(context, session.makeEvent(context, { type: 'review.approved', verification: invalid, stancePredecessors: [withdrawn.id] })), /omits required/);
   assert.equal((await storage.list('events')).length, before);
 });
 test('0.5 approval stops if a new observed event arrives after its confirmation', async () => {
@@ -210,14 +289,98 @@ async function authorFixture() {
   const request = { source, store, rootDocument: 'a.md', actor, operationId: 'create_fixture', clientArtifact: path.resolve('dist/OpenMarkdownReview.html'), journalRoot: journal };
   return { temporary, request, journal };
 }
-test('0.5 authoring creates generic HTML, resumes exact revision and refuses nonempty foreign target', async () => {
+test('0.5 authoring creates an identity-bound review launcher, resumes exact revision and refuses nonempty foreign target', async () => {
   const { request } = await authorFixture(), result = await authorReview(request);
   assert.equal(result.outcome, 'completed'); assert.ok(result.revisionId);
-  assert.equal(digest(await readFile(result.browserClientPath)), digest(await readFile(request.clientArtifact)));
+  assert.equal(path.basename(result.browserClientPath), 'Review-source.html');
+  const launcher = await readFile(result.browserClientPath, 'utf8');
+  const encodedBinding = /name="open-markdown-review-bootstrap" content="([A-Za-z0-9+/=]+)"/.exec(launcher)?.[1]; assert.ok(encodedBinding);
+  const binding = JSON.parse(Buffer.from(encodedBinding, 'base64').toString('utf8'));
+  const manifest = await readFile(path.join(request.store, 'manifest.json'));
+  assert.deepEqual(binding, { schemaVersion: 'omr-launcher/1', reviewId: result.reviewId, title: 'source', manifestDigest: digest(manifest) });
+  assert.ok(!launcher.includes('Hello world.'), 'Frozen review content is not embedded in the launcher.');
+  assert.notEqual(digest(Buffer.from(launcher)), digest(await readFile(request.clientArtifact)));
   const resumed = await authorReview({ ...request, resume: true }); assert.equal(resumed.revisionId, result.revisionId);
   assert.equal((await readdir(path.join(request.store, 'events'))).length, 1);
   await assert.rejects(authorReview({ ...request, operationId: 'other_operation' }), /already contains/);
   await assert.rejects(authorReview({ ...request, resume: true, title: 'Different' }), /parameters differ/);
+});
+test('0.5 verified package publication is portable and source linkage remains private', async () => {
+  const { request, temporary, journal } = await authorFixture();
+  await mkdir(path.join(request.source, 'nested')); await writeFile(path.join(request.source, 'nested/b.md'), '# Second document\n');
+  await authorReview(request);
+  const before = await inspectReviewPackage(request.store), destination = path.join(temporary, 'published-review');
+  const result = await relocateReviewPackage(request.store, destination);
+  assert.equal(result.reviewId, before.reviewId); assert.equal(result.fingerprint, before.fingerprint);
+  assert.deepEqual(await readFile(path.join(destination, 'manifest.json')), await readFile(path.join(request.store, 'manifest.json')));
+  const copied = new ReviewSession(new NativeStorage(destination, journal)); await copied.open(); await copied.refresh(true);
+  assert.equal(copied.revision?.documents.length, 2);
+  const linked = await inspectSourceBinding(destination, request.source, journal);
+  assert.equal(linked.documents, 2); assert.deepEqual(linked.changed, []); assert.deepEqual(linked.missing, []); assert.equal(linked.exact.length, 2);
+  await writeFile(path.join(request.source, 'a.md'), '# Changed for a later revision\n');
+  const changed = await inspectSourceBinding(destination, request.source, journal);
+  assert.deepEqual(changed.changed, ['a.md']); assert.deepEqual(changed.missing, []);
+  await unlink(path.join(request.source, 'nested/b.md'));
+  assert.deepEqual((await inspectSourceBinding(destination, request.source, journal)).missing, ['nested/b.md']);
+  const nonempty = path.join(temporary, 'nonempty-destination'); await mkdir(nonempty); await writeFile(path.join(nonempty, 'keep.txt'), 'keep');
+  await assert.rejects(relocateReviewPackage(request.store, nonempty), /must be empty/);
+  await mkdir(path.join(request.store, 'client-backups'));
+  await symlink(request.store, path.join(request.store, 'client-backups/linked-package'), process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(inspectReviewPackage(request.store), /Linked or special/);
+});
+test('0.5 sanitized HTML profile freezes images, inventories links, preserves source maps and removes active markup', async () => {
+  const { request } = await authorFixture();
+  await mkdir(path.join(request.source, 'images'));
+  const source = `# HTML fixture
+
+<a id="bookmark"></a><u style="color:red" onclick="alert(1)">Underlined &copy; &amp; mapped</u>
+
+<!-- retained only in frozen source -->
+<table id="risk-table" onclick="alert(2)">
+<thead><tr><th rowspan="2">Risk</th><th>Owner</th></tr></thead>
+<tbody><tr><td><mark>Mira</mark></td></tr></tbody>
+</table>
+
+<img src="images/icon.svg" alt="Architecture icon" width="120" onerror="alert(3)">
+
+<a href="https://example.com/evidence" onclick="alert(4)">External evidence</a>
+<a href="http://example.com/insecure">Insecure external evidence</a>
+<a href="file:///restricted/evidence.pdf">File evidence</a>
+<a href="javascript:alert(5)">Script reference</a>
+<a href="evidence.txt" title="review:attach">Frozen attachment</a>
+<a href="evidence.docx" title="review:attach">Frozen Word source</a>
+<a href="drawing.vsd" title="review:attach">Frozen Visio source</a>
+<a href="drawing.emf" title="review:attach">Frozen EMF source</a>
+
+<script><img src="missing.png" onerror="alert(6)">globalThis.compromised = true</script>
+`;
+  await writeFile(path.join(request.source, 'a.md'), source);
+  await writeFile(path.join(request.source, 'images/icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="navy"/></svg>');
+  await writeFile(path.join(request.source, 'evidence.txt'), 'Frozen HTML attachment.');
+  await writeFile(path.join(request.source, 'evidence.docx'), 'Bounded Word fixture.');
+  await writeFile(path.join(request.source, 'drawing.vsd'), 'Bounded Visio fixture.');
+  await writeFile(path.join(request.source, 'drawing.emf'), 'Bounded EMF fixture.');
+  const created = await authorReview(request); assert.equal(created.outcome, 'completed');
+  const session = new ReviewSession(new NativeStorage(request.store, request.journalRoot)); await session.open();
+  const revision = session.revision!;
+  assert.ok(session.manifest.requiredCapabilities.includes(SANITIZED_HTML_CAPABILITY));
+  assert.equal(revision.renderer.markdownProfile, SANITIZED_HTML_PROFILE);
+  assert.equal(revision.resources.length, 5); assert.deepEqual(revision.resources.map(resource => resource.role).sort(), ['attachment', 'attachment', 'attachment', 'attachment', 'image']);
+  assert.deepEqual(revision.resources.filter(resource => resource.role === 'attachment').map(resource => resource.mediaType).sort(), ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.visio', 'image/emf', 'text/plain']);
+  assert.deepEqual(revision.externalReferences.map(reference => reference.uri).sort(), ['file:///restricted/evidence.pdf', 'http://example.com/insecure', 'https://example.com/evidence']);
+  assert.equal(revision.diagnostics.some(diagnostic => diagnostic.code === 'html.unsupported-tags' && diagnostic.message.includes('script')), true);
+  const parsed = inspect(source, 'a.md', SANITIZED_HTML_PROFILE);
+  assert.deepEqual(parsed.tables.map(table => table.rows), [[2, 1]]); assert.equal(parsed.references.length, 5); assert.equal(parsed.links.length, 3);
+  const rendered = renderDocument(source, 'a.md', revision);
+  assert.match(rendered.html, /class="semantic html-table"/); assert.match(rendered.html, /rowspan="2"/);
+  assert.match(rendered.html, /data-source-bookmark="risk-table"/); assert.doesNotMatch(rendered.html, /id="(?:bookmark|risk-table)"/);
+  assert.match(rendered.html, /data-resource="resource_/); assert.match(rendered.html, /href="https:\/\/example\.com\/evidence"/);
+  assert.match(rendered.html, /data-attachment="resource_/);
+  assert.match(rendered.html, /class="blocked-reference"/); assert.match(rendered.html, /&lt;script&gt;&lt;img src=&quot;missing\.png&quot; onerror=&quot;alert\(6\)&quot;&gt;globalThis\.compromised = true&lt;\/script&gt;/);
+  assert.doesNotMatch(rendered.html, /<[^>]*(?:onclick|onerror)|style="color:red"|<!-- retained|href="http:|href="javascript:/);
+  const underlined = source.indexOf('Underlined');
+  assert.equal([...rendered.textMaps.values()].some(offsets => offsets[0] === underlined && offsets.at(-1)! >= underlined + 'Underlined &copy; &amp; mapped'.length), true);
+  assert.match(rendered.html, new RegExp(`data-start="${source.indexOf('<table')}" data-end="${source.indexOf('</table>') + '</table>'.length}"`));
 });
 test('0.5 CLI dry-run writes no package, unknown flags fail, and inspect/validate need no VS Code', async () => {
   const { request } = await authorFixture();
@@ -337,14 +500,16 @@ test('0.5 interrupted resource capture resumes previously captured Markdown, not
   assert.equal(new TextDecoder().decode(await session.content(session.revision!.documents[0])), original);
 });
 test('0.5 explicit HTML update keeps exact backup and never changes protocol evidence', async () => {
-  const { request, temporary } = await authorFixture(); await authorReview(request);
-  const original = await readFile(path.join(request.store, 'OpenMarkdownReview.html')), oldDigest = digest(original), manifest = await readFile(path.join(request.store, 'manifest.json'));
-  const modified = Buffer.concat([original, Buffer.from('\n<!-- alternate trusted test build -->')]), artifact = path.join(temporary, 'new-client.html'); await writeFile(artifact, modified);
+  const { request, temporary } = await authorFixture(); const created = await authorReview(request);
+  const legacyPath = path.join(request.store, 'OpenMarkdownReview.html'); await rename(created.browserClientPath, legacyPath);
+  const original = await readFile(legacyPath), oldDigest = digest(original), manifest = await readFile(path.join(request.store, 'manifest.json'));
+  const template = await readFile(request.clientArtifact), modified = Buffer.concat([template, Buffer.from('\n<!-- alternate trusted test build -->')]), artifact = path.join(temporary, 'new-client.html'); await writeFile(artifact, modified);
   const store = new NativeStorage(request.store, request.journalRoot);
   await assert.rejects(updateClient(store, artifact, digest('wrong')), /confirmation/);
   const updated = await updateClient(store, artifact, oldDigest);
   assert.ok(updated.backupPath); assert.equal(digest(await readFile(updated.backupPath)), oldDigest);
-  assert.equal(digest(await readFile(updated.path)), digest(modified)); assert.deepEqual(await readFile(path.join(request.store, 'manifest.json')), manifest);
+  assert.equal(path.basename(updated.path), 'Review-source.html'); await assert.rejects(readFile(legacyPath), /ENOENT/);
+  assert.match(await readFile(updated.path, 'utf8'), /alternate trusted test build/); assert.deepEqual(await readFile(path.join(request.store, 'manifest.json')), manifest);
   assert.equal((await readdir(path.join(request.store, 'events'))).length, 1);
 });
 test('0.5 CLI rejects valid-but-inapplicable flags before accessing or changing a review', async () => {
@@ -355,7 +520,8 @@ test('0.5 full audits deduplicate historical receipt reads but reread on the nex
   const { storage, session } = await fixture(), ctx = session.context(actor);
   for (let i = 0; i < 3; i++) {
     const audit = await session.audit(ctx), verification = await session.verificationBlob(audit, `receipt_${i}`);
-    await session.save(ctx, session.makeEvent(ctx, { type: 'review.approved', verification, stancePredecessors: fold(session.events, ctx.revision.id).register(`stance:${ctx.revision.id}:${actor.id}`).heads.map(e => e.id) }));
+    const stancePredecessors = fold(session.events, ctx.revision.id).register(`stance:${ctx.revision.id}:${actor.id}`).heads.map(e => e.id);
+    await session.save(ctx, session.makeEvent(ctx, i === 1 ? { type: 'review.withdrawn', reason: 'Exercise historical receipt reads.', verification, stancePredecessors } : { type: 'review.approved', verification, stancePredecessors }));
   }
   storage.reads.clear(); await session.audit(ctx); for (const [file, count] of storage.reads) assert.equal(count, 1, file);
   storage.reads.clear(); await session.audit(ctx); assert.equal(storage.reads.get('manifest.json'), 1);

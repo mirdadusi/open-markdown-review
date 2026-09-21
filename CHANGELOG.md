@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.3
+
+Regular release with known limitations; professional-pilot qualification remains incomplete. Core wire version remains 0.5.0. See [release notes](docs/releases/0.5.3.md).
+
+- Add a verified **Publish Review Copy** workflow that copies a complete package to an empty local, shared, synchronized, or Git folder; rejects links and unexpected package content; hashes every file; fully validates both packages; checks that the source did not change; switches VS Code to the destination; and leaves the old copy detached on disk.
+- Add an explicit private **Link Local Source Workspace** workflow. It reports exact, changed, and missing reviewed documents, never stores native source paths in shared evidence, updates author-only source actions without reopening the toolbox, and removes the unsafe implicit fallback to the first workspace when revising a received package.
+- Let new-review creation choose among multi-root VS Code workspace folders. Markdown scope remains one explicit source root; additional roots are resource-only until a separately versioned namespaced-source capability is specified.
+- Recognize explicitly attached DOCX, legacy/current Visio, and EMF source artifacts so a review can carry the bounded originals behind rendered previews without executing them.
+- Generate a review-named `Review-<name>.html` launcher with only review ID/title/manifest-digest binding, reject a selected folder with a different identity, automatically reconnect only when browser permission is already granted, and migrate the legacy generic filename through the backed-up explicit update path.
+- Make cold open progressive: show an immediate blocking progress panel with manifest/event/rendering stages, admit ordinary Markdown revision descriptors without eagerly reading every frozen document/resource, and fetch only the selected document and its visible assets. Approval and audit export still perform complete fresh verification.
+
+- Add the optional, fail-closed `sanitized-html-v1` protocol capability and `commonmark-gfm+sanitized-html-v1` renderer profile. New packages render one safe structural HTML subset in both VS Code and the portable browser while older packages keep inert raw HTML.
+- Capture raw `<img>` and explicit attachment references as normal content-addressed resources, inventory raw external links, and add exact text/image/table/cell source anchors. Active tags, styles, event handlers and unsafe schemes remain inert.
+- Use the same sanitized DOM for audited PDF export, including merged raw HTML tables, and cover authoring, malicious markup, source mapping, real Chromium rendering and export.
+- Keep Comment and Suggest actions reachable after deep scrolling, link comments and suggested edits bidirectionally to their exact document positions, and show review findings from every Markdown document by default with an optional selected-document scope.
+- Make finding control initiator-managed for new reviews: reviewers may reply while a thread is open; only the initiator may decide, close, or reopen; closed findings expose only Reopen to the initiator. Show each participant's current approval/rejection/withdrawal state and only the valid next stance actions.
+- Add eventual live visibility for off-document findings, persistent VS Code discussion scope, clear empty states, and a responsive findings panel that remains reachable in narrow editor columns.
+- Export a self-contained offline PDF review archive with a challenge register, per-document challenge maps, dedicated full comments/responses/findings history, participant stance history, exact frozen documents/resources, internal navigation, and a detached exact-byte audit inventory. The review package remains the sole authoritative record.
+- Add deterministic archive-reference tests, multi-document and simultaneous-participant Chromium coverage, responsive viewport checks, PDF content/link verification, and extension-host regression checks.
+
 ## 0.5.2
 
 Regular release with known limitations; professional-pilot qualification remains incomplete. Core wire version remains 0.5.0. See [release notes](docs/releases/0.5.2.md).

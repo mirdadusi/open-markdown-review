@@ -1,14 +1,14 @@
-# Open Markdown Review 0.5.2
+# Open Markdown Review 0.5.3
 
 A local-first Markdown review protocol with one shared reviewer toolbox for VS Code and a double-clicked HTML file. No application server, browser extension, cloud account, or separate review database.
 
-Version **0.5.2 is a regular GitHub release with known limitations**, not a qualified professional pilot. Download it from the [0.5.2 release page](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.2) and read the [release notes and limitations](docs/releases/0.5.2.md). It adds safe review-removal actions and fixes reviewer identity handover and the unified VS Code sidebar. Markdown and optional Slidev review retain framework-neutral core wire version 0.5.0. Existing 0.4 packages keep their legacy VS Code reader; they are never silently migrated.
+Version **0.5.3 is a regular GitHub release with known limitations**, not a qualified professional pilot. Download it from the [0.5.3 release page](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.3) and read the [release notes and limitations](docs/releases/0.5.3.md). It completes the usability and reviewer-rights workflow, adds review-wide findings navigation, and produces auditable offline PDF review archives. Markdown and optional Slidev review retain framework-neutral core wire version 0.5.0. Existing 0.4 packages keep their legacy VS Code reader; they are never silently migrated.
 
-For Windows x64 install `open-markdown-review-0.5.2-win32-x64.vsix`; for other supported VS Code platforms install `open-markdown-review-0.5.2-portable.vsix`. Both have SHA-256 checksum files and standard VSIX metadata without a pre-release marker. Use **Extensions: Install from VSIX** in VS Code. Previous release tags and original assets remain unchanged.
+For Windows x64 install `open-markdown-review-0.5.3-win32-x64.vsix`; for other supported VS Code platforms install `open-markdown-review-0.5.3-portable.vsix`. Both have SHA-256 checksum files and standard VSIX metadata without a pre-release marker. Use **Extensions: Install from VSIX** in VS Code. Previous release tags and original assets remain unchanged.
 
 ## Install
 
-Download the VSIX and matching SHA-256 checksum from the [0.5.2 release](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.2). In VS Code run **Extensions: Install from VSIX**, select the package for your platform, and reload when prompted. Browser-only participants receive the review folder with its generated HTML launcher and do not install an extension.
+Download the VSIX and matching SHA-256 checksum from the [0.5.3 release](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.3). In VS Code run **Extensions: Install from VSIX**, select the package for your platform, and reload when prompted. Browser-only participants receive the review folder with its generated HTML launcher and do not install an extension.
 
 ## Tested status and known limits
 
@@ -21,33 +21,47 @@ The release source passed its recorded unit/protocol, real-browser, VS Code exte
 ## Open a review someone sent you
 
 1. Open its folder in Explorer/Finder.
-2. Double-click **OpenMarkdownReview.html** in a supported Chrome/Edge browser.
-3. Choose that same review folder when the browser asks for access.
+2. Double-click the review-named launcher, for example **Review-Architecture.html**, in a supported Chrome/Edge browser.
+3. On first use, choose that same review folder when the browser asks for access. Later openings reconnect automatically when the browser still grants access; otherwise click **Resume** once.
 4. Enter a stable reviewer ID and your name. Select the pinned revision if there are competing heads.
 5. Select text or click a diagram, image, table, or cell, then choose **Comment** or **Suggest edit**.
 
-The folder grant is a browser security requirement. An HTML file cannot silently obtain access to its neighboring files or inherit a verified Windows login. Remembered access is best effort and may require reconnection. Unsupported/restricted browsers show an explicit explanation; they do not simulate saving.
+The first folder grant is a browser security requirement. An HTML file cannot silently obtain access to its neighboring files or inherit a verified Windows login. The launcher is bound to the expected review ID and exact manifest digest, so choosing a different folder is refused. Remembered access is best effort and may require one-click reconnection. Unsupported/restricted browsers show an explicit explanation; they do not simulate saving.
 
-With the extension installed, opening **the same OpenMarkdownReview.html file in VS Code** opens the review custom editor. **Markdown Review: Connect Existing Review** also accepts a package folder. VS Code uses its installed trusted toolbox, not arbitrary JavaScript found in a received package.
+With the extension installed, opening **the same Review-&lt;name&gt;.html file in VS Code** opens the review custom editor. **Markdown Review: Connect Existing Review** also accepts a package folder. VS Code uses its installed trusted toolbox, not arbitrary JavaScript found in a received package.
 
 ## What is implemented
 
 - One shared validation, session, renderer, action toolbox, and PDF exporter in both hosts.
-- Markdown, GFM tables and cells, Mermaid, frozen local/data/HTTPS images, and explicit attachments.
-- Anchored comments, replies, visible highlights, click-through navigation, and searchable/paged discussion history.
-- Separate accept/reject decisions and resolve/reopen status. Accepting a concern does not resolve it.
+- Markdown, GFM and sanitized structural HTML tables/cells, Mermaid, frozen local/data/HTTPS images (including raw `<img>`), explicit attachments, and audited external links.
+- Anchored comments, replies, visible highlights, click-through navigation, and searchable/paged discussion history. The discussion side panel defaults to every review document and can be narrowed to the selected Markdown document.
+- Separate initiator accept/reject decisions and resolve/reopen status. Accepting a concern does not resolve it.
 - Exact-string insertion, replacement and strikeout suggestions; accept/reject and explicit author-only source application.
 - Revision approval, rejection and withdrawal with freshly verified evidence and confirmation of the observed state.
 - Multiple packages and explicit immutable revision selection; arriving revisions never silently retarget a draft.
 - Independent content-addressed event files, conflict detection, partial-write recovery, and eventual synchronization.
-- Whole-revision PDF exports containing documents, diagrams, tables, comments, responses, reasons, suggestions and event history. UI filters never shrink an audit export.
+- Whole-revision offline review archives containing a challenge register, every frozen document with its challenge map, a dedicated comments/responses/findings section, participant stance history, diagrams, tables, suggestions, and the exact audit appendix. Finding links connect challenged locations to their full history; UI filters never shrink an audit export.
 - CLI creation/revision/export/inspection/validation and safe HTML installation/update.
 
 Graphical creation is in VS Code; the same authoring service is available from the CLI. A participant browser does not need the source workspace.
 
+### Structural HTML in Markdown
+
+New reviews declare the optional `sanitized-html-v1` capability and use `commonmark-gfm+sanitized-html-v1`. This supports document-converter HTML such as tables (including merged cells), headings, paragraphs, lists, formatting, bookmarks, links, details and images in both the VS Code toolbox and the generated browser client. Raw HTML images are captured into the review package, raw tables/cells can be commented like Markdown tables, visible HTML text retains exact source mapping, and the same sanitized structure is used for audited PDF export.
+
+This is intentionally not arbitrary webpage support. Scripts, styles, event handlers, forms, frames, embedded/media objects, raw SVG/MathML and non-allowlisted attributes cannot execute; unsupported tags are shown as inert literal text. Source HTML comments remain in the exact frozen Markdown but are omitted from the rendered review. Only frozen images are displayed, and only `https`/`mailto` external links are actionable. See the [normative sanitized HTML profile](protocol/profiles/sanitized-html-v1.md) for the exact element/attribute/reference rules.
+
+Existing 0.5 packages without that immutable capability remain compatible and continue to display raw HTML literally. A received package that requires the profile must be opened with a client that implements it; an older client must not write or approve against a different rendering.
+
 ## Create in VS Code
 
 Open a Markdown source workspace, select the Review icon in the left Activity Bar, and choose **Create New Review**. The visual setup selects individual documents or folders, the start document, title and storage folder/name. Additional prompts allow an approval quorum and explicitly granted external-resource folders.
+
+The selected storage folder may already be the final empty OneDrive/synchronized/shared-drive directory; no intermediate local package is required. Creation stages captured bytes privately, then publishes the manifest, frozen Markdown/resources, revision, first event and review-bound HTML launcher into that folder. A Markdown scope has one explicit source root. In a multi-root VS Code workspace, creation asks which root to use; additional resource roots can supply images and attachments but do not add Markdown documents.
+
+To place an existing review in a shared location, right-click its entry and choose **Publish Verified Review Copy…**. Select an empty destination and stop all other writers while it runs. The extension rejects links and foreign top-level content, copies the complete package, hashes and re-reads every file, fully validates the destination, rechecks the source inventory, then switches the active connection to the destination. The old package is not deleted; it is disconnected and must not be used as a second active review history.
+
+Use **Link Local Source Workspace…** when a received, moved, or reconnected review should create later revisions or apply accepted suggestions to editable source. The extension privately checks every current reviewed path and reports exact, changed, or missing files. Changed files are expected when preparing a new revision; missing files prevent the link. The absolute source location stays in local VS Code state and is never written into the review package.
 
 ## Remove or delete a review in VS Code
 
@@ -82,7 +96,7 @@ To update documents, choose **Choose Documents and Create Revision**. Existing r
 
 ### Reviewer identity and active review
 
-Version 0.5.2 uses one **Reviews** list for current and legacy packages. Creating/opening a review or focusing its toolbox selects it in **Active Review** and the status bar. The selection remains when the toolbox is closed and is restored in the same workspace; sidebar actions reopen the toolbox when needed.
+Version 0.5.3 uses one **Reviews** list for current and legacy packages. Creating/opening a review or focusing its toolbox selects it in **Active Review** and the status bar. The selection remains when the toolbox is closed and is restored in the same workspace; sidebar actions reopen the toolbox when needed.
 
 The identity entered during creation prefills the VS Code toolbox. Later ID/name edits are remembered privately per review in the local VS Code profile. A fresh participant never inherits the creator identity from the shared manifest, HTML or received workspace settings. Browser participants continue choosing their own identity.
 
@@ -96,11 +110,13 @@ any-review-folder/
   events/<exact-event-byte-digest>.json
   exports/<pdf-digest>.pdf
   exports/<inventory-digest>.inventory.json
-  OpenMarkdownReview.html
+  Review-<portable-review-name>.html
   .gitattributes
 ```
 
-The editable source is used only for creating revisions and explicitly applying accepted edits. Frozen blobs are the material being reviewed; events are the review history. Both clients read that same package. Identical content is stored once by digest. The HTML contains application code and licenses, not copies of review content or comments.
+The editable source is used only for creating revisions and explicitly applying accepted edits. Frozen blobs are the material being reviewed; events are the review history. Both clients read that same package. Identical content is stored once by digest. The HTML contains application code, licenses, and a minimal binding (`reviewId`, title, exact manifest digest)—not copies of review content, comments, identity, approvals, or a private database.
+
+Every selected Markdown file therefore travels inside the package even when its editable original is elsewhere. A revision maps a portable source-relative path such as `architecture/system.md` to exact bytes under `blobs/sha256/…`; captured images and attachments use the same store. Reviewers never need the author's repository. Ordinary external links remain disclosed references rather than archived pages.
 
 Caches, remembered directory handles, identities and recovery journals remain client-local. Removing a cache cannot remove published history. An unacknowledged action may need its original local journal to resume safely.
 
@@ -108,9 +124,19 @@ Any filesystem-safe folder name is allowed. The design accepts filesystem paths 
 
 For Git, commit the complete package. The generated `.gitattributes` disables line-ending conversion, filters and encoding transformations inside the package. The extension does not automatically pull, merge or push Git.
 
+Copying a package preserves its review ID and does not create a protocol event. Do not write to two unsynchronized copies: they are separate transports until an external provider unions their immutable files. Prefer creating directly in the final shared location or using the verified publication command.
+
 ## Synchronization and performance
 
 The active toolbox polls after the previous scan finishes: every three seconds in the foreground, fifteen seconds in the background. This is eventual visibility after the storage provider delivers complete bytes, not a guarantee that disconnected users have synchronized.
+
+Cold open shows a blocking progress panel immediately after folder selection. For ordinary Markdown reviews it validates the manifest, immutable events, revision descriptors and policy first, then fetches only the selected document and resources actually visible in that document. Other frozen content remains content-addressed and loads on demand. Approval, rejection, withdrawal and audited PDF export still require complete fresh verification of the whole relevant revision; progressive display never weakens those evidence checks.
+
+Browser and VS Code participants therefore see newly admitted peer comments automatically and receive a small arrival notice; manual refresh is not required in the normal connected case. Simultaneous comments are safe because each action publishes a separate content-addressed event file. This is not a WebSocket-style real-time channel: SharePoint/OneDrive/Syncthing/Git or another folder transport can add its own delivery delay, and Git still requires an external pull/fetch workflow.
+
+The action bar stays visible while scrolling, and selecting content opens a compact Comment/Suggest control near the viewport. Comment and suggested-edit cards link to their highlighted document positions, and clicking either kind of highlight returns to the corresponding card. New reviews declare initiator-managed finding control: reviewers can comment and reply while a thread is open, while the immutable manifest initiator can decide, close, or reopen it. Closed threads expose only Reopen to the initiator and no write controls to other reviewers; the shared core rejects stale writes until an explicit reopen. IDs remain self-asserted, so this is a consistent workflow role—not authenticated access control.
+
+The toolbox always shows the current participant's review stance. With no active stance, Approve and Reject are available. After approving or rejecting, only Withdraw is available; withdrawing restores Approve and Reject. Every transition remains an immutable event in the audit history.
 
 Warm scans reuse verified state and unchanged rendering. A bounded 64-event integrity sweep detects rewritten historical event files over time; explicit audits freshly verify the complete observed package. Native/browser adapters admit at most four concurrent file operations per process. An audit attempt deduplicates reads of files referenced by many earlier receipts.
 
@@ -134,7 +160,7 @@ The VSIX is created at the repository root. Install it using VS Code's **Extensi
 
 The browser tests use real Chromium and real browser directory handles/IndexedDB; their deterministic adapter test uses origin-private storage and is explicitly not a native folder-permission test. Windows local-storage browser and VS Code checks run in CI. SMB testing is excluded by user decision; the retained SMB-dependent native-picker fixture has not run, so actual local native folder grants remain unqualified.
 
-Build outputs include the generic HTML, CLI, extension, conservative dependency inventory and third-party notices. The HTML embeds its license notices and has a fixed-script-hash CSP, without `unsafe-eval`.
+Build outputs include the generic HTML build template, CLI, extension, conservative dependency inventory and third-party notices. Creation personalizes the template's inert identity-binding meta value; executable code remains the trusted build. The HTML embeds its license notices and has a fixed-script-hash CSP, without `unsafe-eval`.
 
 ## Command line
 
@@ -156,7 +182,9 @@ Accepted source edits are staged separately before replacing the source file; or
 
 If an export fails, use Export again—even after reopening the same client—to resume its recorded operation. It does not invent another export event for that retry. Private binary recovery plans use compact base64; this is not a claim that the maximum PDF/history memory workload is qualified.
 
-`client install --store PATH` adds a missing generic HTML file. `client update --store PATH --expect-client-digest sha256:HEX` explicitly replaces that exact current HTML and retains a backup outside protocol directories. In VS Code use **Update Portable Browser Client** and confirm. Do not install untrusted HTML supplied as a software update.
+The exported PDF is an offline review archive rather than a screenshot or filtered printout. Its first-page challenge register identifies every challenged topic as `F-001`, `F-002`, and so on. Each frozen document has a challenge map, and those entries link to the dedicated comments/findings section containing the exact challenged text, comments, replies, initiator decisions, close/reopen history, suggested edits, and outcomes. A separate stance section records approval/rejection/withdrawal history. These labels and links are derived presentation aids; the review package and detached JSON inventory remain the authoritative evidence.
+
+`client install --store PATH` adds a missing review-named HTML launcher. `client update --store PATH --expect-client-digest sha256:HEX` explicitly replaces or migrates that exact current HTML and retains a backup in `client-backups/`. In VS Code use **Update Portable Browser Client** and confirm. Do not install untrusted HTML supplied as a software update.
 
 CLI export uses the same toolbox PDF engine through headless Chromium and requires the installed Playwright browser runtime. It does not require a server. CLI stdout is JSON; supported flags are checked per command. Exit codes follow the [CLI contract](spec/PROFESSIONAL-V1.md#10-authoring-service-and-cli-contract).
 
@@ -168,15 +196,15 @@ CLI export uses the same toolbox PDF engine through headless Chromium and requir
 [Ordinary external reference](https://example.org/reference)
 ```
 
-Embedded images and explicit attachments must be captured successfully. Ordinary web links are described but are not archived. Parent-relative image/attachment paths work when their resolved location is inside an explicitly granted root. HTTPS capture is bounded and rejects embedded credentials/secret query parameters. Secrets already present in Markdown must be removed from source before sharing.
+Embedded images and explicit attachments must be captured successfully. Bounded attachment types include PDF, plain text, JSON, registered `application/vnd.*` formats such as DOCX/Visio, and EMF originals; the review downloads rather than executes active binary attachments. Ordinary web links are described but are not archived. Parent-relative image/attachment paths work when their resolved location is inside an explicitly granted root. HTTPS capture is bounded and rejects embedded credentials/secret query parameters. Secrets already present in Markdown must be removed from source before sharing.
 
-Raw Markdown HTML is disabled. Mermaid uses strict configuration; embedded Mermaid configuration directives/front matter are rejected in this candidate. Invalid or unsupported rendering blocks a complete audit PDF rather than silently omitting the item.
+New reviews use the declared sanitized structural HTML profile described above; arbitrary/undeclared HTML remains inert. Mermaid uses strict configuration; embedded Mermaid configuration directives/front matter are rejected in this candidate. Invalid or unsupported required rendering blocks a complete audit PDF rather than silently omitting the item.
 
 ## Examples, protocol and assurance
 
-Run `node scripts/create-professional-example.mjs` after building to prepare the concrete example's HTML entry file. Open `examples/professional/review/OpenMarkdownReview.html`, not the unconnected build template.
+Run `node scripts/create-professional-example.mjs` after building to prepare the concrete example's HTML entry file. Open the generated `examples/professional/review/Review-*.html`, not the unconnected `dist/OpenMarkdownReview.html` build template.
 
-- [Protocol 0.5 contract](spec/PROTOCOL-0.5.md), [JSON schemas](protocol/schemas/v0.5), [shared TypeScript types](src/professional/types.ts)
+- [Protocol 0.5 contract](spec/PROTOCOL-0.5.md), [sanitized HTML profile](protocol/profiles/sanitized-html-v1.md), [JSON schemas](protocol/schemas/v0.5), [shared TypeScript types](src/professional/types.ts)
 - [Professional requirements](spec/PROFESSIONAL-V1.md), [acceptance gates](spec/ACCEPTANCE.md), [current evidence and limitations](spec/IMPLEMENTATION-STATUS.md)
 - [Security model](SECURITY.md), [legacy 0.4 documentation](docs/LEGACY-0.4.md)
 

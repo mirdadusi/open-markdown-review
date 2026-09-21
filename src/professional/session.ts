@@ -1,8 +1,8 @@
 import { ascii, decode, digest, jsonBytes, newId, parseJson } from './bytes';
-import { admit, policyResult } from './state';
+import { admit, fold, policyResult } from './state';
 import { validate, validateAnchorEvent, validateSource } from './validation';
 import { ByteCache, Storage, evidence, contentRef, publish, publishBlob } from './storage';
-import { ActorRef, AuditInventory, Diagnostic, Event, FileEvidence, LIMITS, Manifest, Payload, Policy, ProtocolError, Revision, StoredContent, Verification } from './types';
+import { ActorRef, AuditInventory, CREATOR_THREAD_CONTROL, Diagnostic, Event, FileEvidence, LIMITS, Manifest, Payload, Policy, ProtocolError, Revision, SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE, StoredContent, Verification } from './types';
 import { mapWithConcurrency } from '../protocol/concurrency';
 import { loadProfiles } from './profiles/registry';
 
@@ -27,7 +27,8 @@ export class ReviewSession {
   private validatedReceipts = new Map<string, string[]>();
   private evidenceById = new Map<string, FileEvidence>();
   private auditReads?: Map<string, Promise<Uint8Array>>;
-  constructor(readonly storage: Storage) {}
+  constructor(readonly storage: Storage, private readonly onProgress?: (message: string) => void) {}
+  private progress(message: string) { this.onProgress?.(message); }
   private async readDisk(path: string, limit: number): Promise<Uint8Array> {
     if (!this.auditReads) return this.storage.read(path, limit);
     let read = this.auditReads.get(path);
@@ -40,10 +41,13 @@ export class ReviewSession {
   get heads(): Revision[] { const parents = new Set([...this.revisions.values()].flatMap(r => r.parents)); return [...this.revisions.values()].filter(r => !parents.has(r.id)); }
   private exclusive<T>(work: () => Promise<T>): Promise<T> { const result = this.queue.then(work); this.queue = result.catch(() => undefined); return result; }
   async open(): Promise<void> {
+    this.progress('Reading and validating the review manifest…');
     this.manifestBytes = await this.storage.read('manifest.json', LIMITS.manifest);
     this.manifest = validate('manifest', parseJson(this.manifestBytes, LIMITS.manifest));
+    this.progress('Scanning immutable review events…');
     await this.refresh();
     if (this.heads.length === 1) this.pinnedRevisionId = this.heads[0].id;
+    this.progress('Review record verified. Preparing the selected document…');
   }
   async content(item: StoredContent, fresh = false): Promise<Uint8Array> {
     let bytes = fresh ? undefined : this.cache.get(item.digest);
@@ -53,16 +57,27 @@ export class ReviewSession {
   }
   private async sources(revision: Revision, fresh = false): Promise<Map<string, string>> {
     const key = digest(jsonBytes(revision));
-    if (!fresh && this.sourceCache.has(key)) return this.sourceCache.get(key)!;
-    const result = new Map(await mapWithConcurrency(revision.documents, 4, async d => {
+    const result = !fresh && this.sourceCache.get(key) ? new Map(this.sourceCache.get(key)!) : new Map<string, string>();
+    const missing = fresh ? revision.documents : revision.documents.filter(document => !result.has(document.path));
+    for (const [document, source] of await mapWithConcurrency(missing, 4, async d => {
       const source = decode(await this.content(d, fresh)); validateSource(revision, d.path, source); return [d.path, source] as const;
-    }));
+    })) result.set(document, source);
     const profiles = await loadProfiles(this.manifest, revision, result, c => this.content(c, fresh));
     this.profiles.set(revision.id, profiles);
     // Keep a bounded number of decoded working sets. Blobs remain in the byte-budgeted LRU.
     this.sourceCache.set(key, result);
     while (this.sourceCache.size > 2) this.sourceCache.delete(this.sourceCache.keys().next().value!);
     return result;
+  }
+  private async source(revision: Revision, document: string, fresh = false): Promise<string> {
+    const descriptor = revision.documents.find(item => item.path === document);
+    if (!descriptor) throw new ProtocolError('invalid', `Document is not part of the revision: ${document}`);
+    const key = digest(jsonBytes(revision)); let cached = this.sourceCache.get(key);
+    if (!fresh && cached?.has(document)) return cached.get(document)!;
+    const value = decode(await this.content(descriptor, fresh)); validateSource(revision, document, value);
+    cached ??= new Map(); cached.set(document, value); this.sourceCache.set(key, cached);
+    while (this.sourceCache.size > 2) this.sourceCache.delete(this.sourceCache.keys().next().value!);
+    return value;
   }
   refresh(full = false): Promise<void> {
     this.requireFullRefresh ||= full;
@@ -81,6 +96,7 @@ export class ReviewSession {
     try {
       if (full) { const manifest = await this.readDisk('manifest.json', LIMITS.manifest); if (digest(manifest) !== digest(this.manifestBytes!)) throw new ProtocolError('integrity', 'Manifest changed after connection.'); }
       const names = (await this.storage.list('events')).filter(n => n.endsWith('.json'));
+      this.progress(`Reading ${names.length} immutable review event${names.length === 1 ? '' : 's'}…`);
       if (names.length > LIMITS.events) throw new ProtocolError('unsupported', 'Too many event files.');
       const present = new Set(names);
       for (const name of this.files.keys()) if (!present.has(name)) problem(`events/${name}`, new ProtocolError('integrity', 'Previously admitted file disappeared.'));
@@ -117,12 +133,17 @@ export class ReviewSession {
             if (digest(bytes) !== event.revisionDigest) throw new ProtocolError('integrity', 'Revision descriptor digest differs.');
             revision = validate('revision', parseJson(bytes, LIMITS.revision));
             if (revision.reviewId !== this.manifest.reviewId || revision.id !== event.revisionId) throw new ProtocolError('invalid', 'Revision identity differs.');
+            const htmlCapability = this.manifest.requiredCapabilities.includes(SANITIZED_HTML_CAPABILITY);
+            if ((revision.renderer.markdownProfile === SANITIZED_HTML_PROFILE) !== htmlCapability) throw new ProtocolError('invalid', 'Revision renderer profile and manifest sanitized HTML capability differ.');
           }
           // Assign only after dependencies pass: missing blobs retry even with no new filenames.
           if (!alreadyVerified) {
-            sources.set(revision.id, await this.sources(revision, full));
             validate('policy', parseJson(await this.content(revision.policy, full), LIMITS.policy));
-            await mapWithConcurrency(revision.resources, 4, r => this.content(r, full));
+            // Presentation profiles affect the initial view and therefore load
+            // their bounded source/preview dependencies now. Ordinary Markdown
+            // content remains lazy as permitted by VALID-05; audit operations
+            // still perform a complete fresh verification.
+            if (this.manifest.extensions?.length) sources.set(revision.id, await this.sources(revision, full));
           }
           revisions.set(revision.id, revision);
         } catch (error) { problem(event.revisionPath, error); }
@@ -133,8 +154,13 @@ export class ReviewSession {
         const key = digest(jsonBytes(event));
         try {
           if (full || !this.validatedAnchors.has(key)) {
-            const source = sources.get(revision.id) ?? await this.sources(revision, full);
-            sources.set(revision.id, source); validateAnchorEvent(event, revision, source);
+            let required = sources.get(revision.id);
+            if ('anchor' in event) {
+              required ??= new Map();
+              if (!required.has(event.anchor.document)) required.set(event.anchor.document, await this.source(revision, event.anchor.document, full));
+              sources.set(revision.id, required);
+            }
+            validateAnchorEvent(event, revision, required ?? new Map());
           }
           nextAnchors.add(key); return event;
         } catch (error) { problem(event.id, error); return undefined; }
@@ -155,7 +181,8 @@ export class ReviewSession {
         } catch (error) { problem(event.id, error); invalidReceipts.add(event.id); }
       });
       valid = valid.filter(e => !invalidReceipts.has(e.id));
-      const graph = admit(valid, revisions, receiptDependencies); diagnostics.push(...graph.diagnostics);
+      const lifecycleCreator = this.manifest.requiredCapabilities.includes(CREATOR_THREAD_CONTROL) ? this.manifest.createdBy.id : undefined;
+      const graph = admit(valid, revisions, receiptDependencies, lifecycleCreator); diagnostics.push(...graph.diagnostics);
       const graphIds = new Set(graph.events.map(e => e.id));
       for (const copy of copies) {
         const canonical = candidate.get(copy.canonical);
@@ -174,7 +201,7 @@ export class ReviewSession {
   }
   async pin(id: string): Promise<void> {
     const revision = this.revisions.get(id); if (!revision) throw new ProtocolError('missing', 'Revision is not verified yet.');
-    await this.sources(revision); await mapWithConcurrency(revision.resources, 4, r => this.content(r));
+    if (this.manifest.extensions?.length) await this.sources(revision);
     this.pinnedRevisionId = id;
   }
   context(actor: ActorRef): ActionContext {
@@ -188,6 +215,32 @@ export class ReviewSession {
     if (jsonBytes(event).length > LIMITS.event) throw new ProtocolError('unsupported', 'Event exceeds 256 KiB.');
     return event;
   }
+  /**
+   * Enforce the shared clients' review-role and thread-lifecycle contract at the
+   * last possible point before publication. Identity is self-asserted, so this
+   * is deterministic client policy rather than authentication.
+   */
+  private assertWritePolicy(event: Event): void {
+    const isLifecycle = event.type === 'thread.resolved' || event.type === 'thread.reopened';
+    const isInitiatorAction = isLifecycle || event.type === 'thread.decided';
+    if (isInitiatorAction && this.manifest.requiredCapabilities.includes(CREATOR_THREAD_CONTROL) && event.actor.id !== this.manifest.createdBy.id) throw new ProtocolError('permission', `Only the review initiator (${this.manifest.createdBy.id}) can decide, close or reopen findings.`);
+    if (event.type === 'review.approved' || event.type === 'review.rejected' || event.type === 'review.withdrawn') {
+      const stance = fold(this.events, event.revisionId).register(`stance:${event.revisionId}:${event.actor.id}`), current = stance.heads.map(item => item.id).sort(ascii), observed = [...event.stancePredecessors].sort(ascii);
+      if (JSON.stringify(observed) !== JSON.stringify(current)) throw new ProtocolError('changed', 'Your review stance changed before this action was saved. Review its current status and try again.');
+      const active = stance.heads.some(item => item.type === 'review.approved' || item.type === 'review.rejected');
+      if (event.type === 'review.withdrawn' && !active) throw new ProtocolError('changed', 'There is no active approval or rejection to withdraw.');
+      if (event.type !== 'review.withdrawn' && active) throw new ProtocolError('changed', 'Withdraw the current approval or rejection before recording a new stance.');
+    }
+    if (!('threadId' in event) || event.type === 'comment.created') return;
+    const thread = fold(this.events, event.revisionId).threads.find(item => item.root.threadId === event.threadId);
+    if (!thread) return; // Graph admission below reports the missing root.
+    if ((event.type === 'comment.replied' || event.type === 'thread.decided') && !thread.open) throw new ProtocolError('changed', 'This comment thread is closed. The review creator must reopen it before replies or decisions can be added.');
+    if (!isLifecycle) return;
+    const observed = [...event.statusPredecessors].sort(ascii), current = thread.status.heads.map(item => item.id).sort(ascii);
+    if (JSON.stringify(observed) !== JSON.stringify(current)) throw new ProtocolError('changed', 'The comment thread changed before this action was saved. Review its current state and try again.');
+    if (event.type === 'thread.resolved' && !thread.open) throw new ProtocolError('changed', 'This comment thread is already closed.');
+    if (event.type === 'thread.reopened' && thread.open && !thread.status.conflict) throw new ProtocolError('changed', 'This comment thread is already open.');
+  }
   async save(context: ActionContext, event: Event): Promise<void> {
     if (context.session !== this || event.revisionId !== context.revision.id || event.reviewId !== this.manifest.reviewId) throw new ProtocolError('invalid', 'Action context changed.');
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -200,7 +253,10 @@ export class ReviewSession {
     }
     const existing = this.events.find(e => e.id === event.id);
     if (existing) { if (digest(jsonBytes(existing)) !== digest(jsonBytes(event))) throw new ProtocolError('integrity', 'Event ID collision.'); return; }
-    validateAnchorEvent(event, context.revision, await this.sources(context.revision));
+    this.assertWritePolicy(event);
+    const anchorSources = new Map<string, string>();
+    if ('anchor' in event) anchorSources.set(event.anchor.document, await this.source(context.revision, event.anchor.document));
+    validateAnchorEvent(event, context.revision, anchorSources);
     if ('verification' in event || event.type === 'export.created') {
       const file = 'verification' in event ? { ...event.verification, path: event.verification.blobPath } : event.inventory;
       const raw = await this.readEvidence(file, true), receipt = 'verification' in event ? validate('verification', parseJson(raw, LIMITS.inventory)) : validate('inventory', parseJson(raw, LIMITS.inventory));
@@ -208,7 +264,8 @@ export class ReviewSession {
       await this.checkReceipt(event, receipt, this.revisions, this.events, exact, true);
       if ('verification' in event && JSON.stringify(receipt.events.map(e => e.eventId).sort(ascii)) !== JSON.stringify(this.events.map(e => e.id).sort(ascii))) throw new ProtocolError('changed', 'Observed review state changed after confirmation. Verify and confirm the new summary.');
     }
-    const graph = admit([...this.events, event], this.revisions);
+    const lifecycleCreator = this.manifest.requiredCapabilities.includes(CREATOR_THREAD_CONTROL) ? this.manifest.createdBy.id : undefined;
+    const graph = admit([...this.events, event], this.revisions, new Map(), lifecycleCreator);
     if (graph.diagnostics.length) throw new ProtocolError('invalid', graph.diagnostics.map(d => d.message).join('\n'));
     const bytes = jsonBytes(event), file = evidence(`events/${digest(bytes).slice(7)}.json`, bytes, 'application/json');
     await publish(this.storage, event.operationId, file, bytes);
@@ -297,7 +354,8 @@ export class ReviewSession {
       observed.push(known!);
     }
     if (!observed.some(e => e.type === 'revision.created' && e.revisionId === event.revisionId)) fail('Receipt omits its revision publication.');
-    if (admit(observed, revisions).diagnostics.length) fail('Receipt observed events are not causally closed and valid.');
+    const lifecycleCreator = this.manifest.requiredCapabilities.includes(CREATOR_THREAD_CONTROL) ? this.manifest.createdBy.id : undefined;
+    if (admit(observed, revisions, new Map(), lifecycleCreator).diagnostics.length) fail('Receipt observed events are not causally closed and valid.');
     const contextual = [...new Set(observed.map(e => e.revisionId))].filter(id => id !== r!.id);
     if (receipt.contextRevisions.length !== contextual.length || contextual.some(id => {
       const publication = observed.find(e => e.type === 'revision.created' && e.revisionId === id);

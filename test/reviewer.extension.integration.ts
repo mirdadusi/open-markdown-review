@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir, unlink } from 'node:fs/promises';
 import { AuthorRequest, authorReview } from '../src/professional/authoring';
 import { ProfessionalHost } from '../src/professional/extensionHost';
 import { ReviewsProvider } from '../src/reviewsView';
@@ -13,6 +13,32 @@ import { removeReview, ReviewActivity } from '../src/reviewRemoval';
 export function memento(): vscode.Memento {
   const values = new Map<string, unknown>();
   return { keys: () => [...values.keys()], get: <T>(key: string, fallback?: T) => (values.has(key) ? structuredClone(values.get(key)) : fallback) as T, update: async (key, value) => { if (value === undefined) values.delete(key); else values.set(key, structuredClone(value)); } };
+}
+function delayedMemento() {
+  const values = new Map<string, unknown>();
+  let delayedKey: string | undefined, release: (() => void) | undefined, started: (() => void) | undefined;
+  const memento: vscode.Memento = {
+    keys: () => [...values.keys()],
+    get: <T>(key: string, fallback?: T) => (values.has(key) ? structuredClone(values.get(key)) : fallback) as T,
+    update: async (key, value) => {
+      if (key === delayedKey) {
+        delayedKey = undefined;
+        started?.();
+        await new Promise<void>((resolve) => { release = resolve; });
+      }
+      if (value === undefined) values.delete(key); else values.set(key, structuredClone(value));
+    },
+  };
+  return {
+    memento,
+    delayNext: (key: string) => {
+      delayedKey = key;
+      return {
+        started: new Promise<void>((resolve) => { started = resolve; }),
+        release: () => release?.(),
+      };
+    },
+  };
 }
 function panelFixture() {
   const disposed = new vscode.EventEmitter<void>(), view = new vscode.EventEmitter<vscode.WebviewPanelOnDidChangeViewStateEvent>();
@@ -39,15 +65,21 @@ export async function reviewerAndSidebar(extensionPath: string, temporary: strin
   };
   try {
     const author = { id: 'creation-reviewer', displayName: 'Creation Reviewer' };
-    const request: AuthorRequest = { source, store: root, include: ['a.md'], rootDocument: 'a.md', actor: author, operationId: 'native_identity', journalRoot, clientArtifact: path.join(extensionPath, 'dist/OpenMarkdownReview.html') };
+    const request: AuthorRequest = { source, store: root, title: 'Zulu review', include: ['a.md'], rootDocument: 'a.md', actor: author, operationId: 'native_identity', journalRoot, clientArtifact: path.join(extensionPath, 'dist/OpenMarkdownReview.html') };
     await (host as unknown as { runCreation(request: AuthorRequest): Promise<void> }).runCreation(request);
     const fixture = panels.get(root)!;
     assert.deepEqual((await fixture.request('info')).value.reviewer, author, 'Creation passes both identity fields to the toolbox bridge.');
     assert.equal(host.active?.root, root); assert.equal(list.getChildren().length, 1);
-    assert.equal(list.getChildren()[0].contextValue, 'markdownReviewActive'); assert.equal(active.getChildren()[0].label, host.active?.title);
+    assert.equal(list.getChildren()[0].contextValue, 'markdownReview05Active'); assert.equal(active.getChildren()[0].label, host.active?.title);
     const metadata = JSON.parse(await readFile(path.join(extensionPath, 'package.json'), 'utf8'));
     assert.deepEqual(metadata.contributes.views.openMarkdownReview.map((item: { id: string }) => item.id), ['openMarkdownReview.reviews', 'openMarkdownReview.threads'], 'Only one review list and one Active Review pane are contributed.');
     const manifest = await readFile(path.join(root, 'manifest.json'), 'utf8'), events = await readdir(path.join(root, 'events'));
+    const grouped = new ReviewsProvider(), secondWorkspaceRoot = path.join(temporary, 'other-workspace'), secondReviewRoot = path.join(secondWorkspaceRoot, '.review');
+    grouped.setReviews([{ reviewRoot: root, manifest: JSON.parse(manifest) as ReviewManifest }], root, source);
+    grouped.setWorkspaceReviews([{ reviewRoot: secondReviewRoot, manifest: { ...JSON.parse(manifest), reviewId: 'second-workspace', title: 'Second workspace review' } as ReviewManifest }], secondWorkspaceRoot);
+    assert.equal(grouped.getChildren().length, 2, 'Refreshing one workspace root does not erase reviews from another root.');
+    grouped.setWorkspaceSnapshot([{ sourceRoot: secondWorkspaceRoot, reviews: [{ reviewRoot: secondReviewRoot, manifest: { ...JSON.parse(manifest), reviewId: 'second-workspace', title: 'Second workspace review' } as ReviewManifest }] }], secondReviewRoot);
+    assert.deepEqual(grouped.getChildren().map(item => item.label), ['Second workspace review'], 'A workspace snapshot removes only roots no longer in the workspace.');
     const alias = process.platform === 'win32' ? root.toUpperCase() : path.join(root, '.');
     // Bypass only the fixture's case-sensitive panel map, not the real host implementation.
     await originalOpen(alias);
@@ -71,19 +103,46 @@ export async function reviewerAndSidebar(extensionPath: string, temporary: strin
     assert.deepEqual(reopened.messages.find(m => m.command === 'reviewer-identity')?.reviewer, author, 'An already open panel receives the explicitly chosen revision author.');
 
     const received = path.join(temporary, 'received-identity-review');
-    await authorReview({ ...request, store: received, operationId: 'received_identity', actor: { id: 'someone-else', displayName: 'Someone Else' } });
+    await authorReview({ ...request, store: received, title: 'Alpha review', operationId: 'received_identity', actor: { id: 'someone-else', displayName: 'Someone Else' } });
+    const receivedManifest = await readFile(path.join(received, 'manifest.json'));
     await host.open(received);
     assert.equal((await panels.get(received)!.request('info')).value.reviewer, undefined, 'Receiving a review never takes the creator identity from its manifest.');
-    assert.equal(host.active?.root, received); assert.equal(list.getChildren().filter(i => i.contextValue === 'markdownReviewActive').length, 1);
+    assert.equal(host.active?.root, received); assert.equal(list.getChildren().filter(i => i.contextValue === 'markdownReview05Active').length, 1);
+    assert.deepEqual(list.getChildren().map(item => item.label), ['Alpha review', 'Zulu review'], 'Opening a review keeps a deterministic alphabetical list.');
+    assert.equal(new Set(list.getChildren().map(item => item.id)).size, 2, 'Every list entry has a stable, unique filesystem identity.');
     reopened.activate(); assert.equal(host.active?.root, root, 'Focusing a review tab updates the active selection.');
     const restored = new ProfessionalHost(context);
     await restored.restore(); assert.equal(restored.active?.root, root, 'The local active choice survives extension restart.'); restored.dispose();
     const legacyRoot = path.join(temporary, 'legacy-review');
     legacy.setReviews([{ reviewRoot: legacyRoot, manifest: { title: 'Legacy review', reviewId: 'legacy' } as ReviewManifest }], legacyRoot, temporary);
-    assert.equal(list.getChildren().length, 3); assert.equal(list.getChildren().filter(i => i.contextValue === 'markdownReviewActive').length, 1);
+    assert.equal(list.getChildren().length, 3); assert.equal(list.getChildren().filter(i => i.contextValue === 'markdownReview05Active' || i.contextValue === 'markdownReviewActive').length, 1);
+    assert.deepEqual(list.getChildren().map(item => item.label), ['Alpha review', 'Legacy review', 'Zulu review'], 'Protocol versions share one sorted list.');
     await host.deactivate(); assert.equal(list.getChildren().find(i => i.label === 'Legacy review')?.contextValue, 'markdownReviewActive'); assert.deepEqual(active.getChildren(), []);
     assert.equal(await readFile(path.join(root, 'manifest.json'), 'utf8'), manifest);
     assert.deepEqual(await readdir(path.join(root, 'events')), events, 'Identity, switching and sidebar navigation do not modify shared review evidence.');
+    const raceState = delayedMemento();
+    const raceContext = { ...context, workspaceState: raceState.memento } as vscode.ExtensionContext;
+    const raceHost = new ProfessionalHost(raceContext);
+    const raceEntries = raceHost.getChildren();
+    const alpha = raceEntries.find(item => item.entry.title === 'Alpha review')!.entry;
+    const zulu = raceEntries.find(item => item.entry.title === 'Zulu review')!.entry;
+    const gate = raceState.delayNext('professional.activeRoot');
+    const firstSelection = (raceHost as unknown as { select(entry: typeof alpha): Promise<void> }).select(zulu);
+    await gate.started;
+    const secondSelection = (raceHost as unknown as { select(entry: typeof alpha): Promise<void> }).select(alpha);
+    gate.release();
+    await Promise.all([firstSelection, secondSelection]);
+    assert.equal(raceHost.active?.root, received);
+    assert.equal(raceState.memento.get('professional.activeRoot'), received, 'A slow earlier persistence write cannot overwrite the latest active review.');
+    raceHost.dispose();
+
+    await unlink(path.join(received, 'manifest.json'));
+    await host.refreshList();
+    assert.equal(host.getChildren().find(item => item.entry.root === received)?.entry.availability, 'unavailable');
+    assert.equal(host.getChildren().length, 2, 'A temporarily unavailable shared review remains visible and retryable.');
+    await writeFile(path.join(received, 'manifest.json'), receivedManifest);
+    await host.refreshList();
+    assert.equal(host.getChildren().find(item => item.entry.root === received)?.entry.availability, 'available');
     await host.open(root);
     const duplicate = panelFixture(); await host.open(root, source, duplicate.panel);
     const pending = [{ ...request, operationId: 'resume_removed' }, { ...request, store: received, operationId: 'keep_other_resume' }];

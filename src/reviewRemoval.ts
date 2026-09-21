@@ -31,6 +31,7 @@ export interface RemovalTarget { root: string; title: string; reviewId?: string;
 export interface RemovalPlan { root: string; title: string; reviewId: string; files: number; directories: number; bytes: number; fingerprint: string }
 const folders = new Set(['events', 'revisions', 'blobs', 'exports', 'client-backups']);
 const files = new Set(['manifest.json', '.gitattributes', 'OpenMarkdownReview.html', '.DS_Store', 'desktop.ini', 'Thumbs.db']);
+const isReviewFile = (name: string) => files.has(name) || /^Review-[A-Za-z0-9._-]{1,64}\.html$/.test(name);
 const within = (parent: string, child: string) => { const relative = path.relative(parent, child); return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative)); };
 
 /** Enumerate the entire dedicated package, never follow links or accept project/source roots. */
@@ -52,7 +53,7 @@ export async function inspectReviewRemoval(target: RemovalTarget): Promise<Remov
     if (stat.isSymbolicLink() || (!stat.isFile() && !stat.isDirectory())) throw new Error(`Unsafe linked or special entry: ${relative || root}`);
     const name = path.basename(absolute);
     if (relative && (name === '.git' || name.includes('.tmp-') || name.endsWith('.tmp'))) throw new Error(`Project metadata or an unfinished write is present: ${relative}`);
-    if (depth === 1 && !(stat.isDirectory() ? folders : files).has(name)) throw new Error(`Not a dedicated review folder: unexpected entry ${relative}. Nothing will be deleted.`);
+    if (depth === 1 && (stat.isDirectory() ? !folders.has(name) : !isReviewFile(name))) throw new Error(`Not a dedicated review folder: unexpected entry ${relative}. Nothing will be deleted.`);
     if (inventory.length >= 100_000) throw new Error('Review is too large to safely inspect for deletion. Manage this folder manually.');
     inventory.push([relative, stat.isDirectory() ? 'directory' : 'file', stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs]);
     if (stat.isDirectory()) {

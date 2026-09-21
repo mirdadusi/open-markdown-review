@@ -84,7 +84,10 @@
       ],
       "properties": {
         "markdownProfile": {
-          "const": "commonmark-gfm"
+          "enum": [
+            "commonmark-gfm",
+            "commonmark-gfm+sanitized-html-v1"
+          ]
         },
         "mermaidVersion": {
           "type": "string",
