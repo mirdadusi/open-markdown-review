@@ -37,4 +37,6 @@ Filesystem/provider access control governs who can read or alter the package. Ac
 
 ## Reporting
 
-For a private deployment, report issues through the owning organization's security channel and include the extension version, protocol version, diagnostic message, and reproduction steps. Do not attach confidential reviewed documents unless explicitly requested through an approved secure channel.
+Report non-sensitive defects through the [public issue tracker](https://github.com/mirdadusi/open-markdown-review/issues). Include the extension version, protocol version, diagnostic message, storage type, operating system, and the smallest safe reproduction steps.
+
+Report a suspected vulnerability through a [private GitHub security advisory](https://github.com/mirdadusi/open-markdown-review/security/advisories/new). If private reporting is unavailable, open a minimal issue requesting a private contact channel and do not disclose exploit details. Never attach confidential review packages, credentials, signed URLs, internal documents, or personal data to a public report.

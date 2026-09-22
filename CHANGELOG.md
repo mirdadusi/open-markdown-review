@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.4
+
+Regular release with known limitations; professional-pilot qualification remains incomplete. Core wire version remains 0.5.0. See [release notes](docs/releases/0.5.4.md).
+
+- Add a light-theme Marketplace icon and representative VS Code setup, VS Code review, and portable-browser screenshots based on a neutral example package.
+- Improve the extension summary, keywords, gallery metadata, installation path, support information, and public vulnerability-reporting guidance.
+- Add deterministic Marketplace presentation validation and repeatable portable/Windows x64 packaging with checksums and Marketplace-compatible README link rewriting.
+- Document a local-first publication procedure using a short-lived, least-privilege Azure DevOps PAT. No CI publishing workflow or long-lived repository secret is added.
+- Keep review behavior, file formats, schemas, and protocol 0.5.0 unchanged from 0.5.3.
+
 ## 0.5.3
 
 Regular release with known limitations; professional-pilot qualification remains incomplete. Core wire version remains 0.5.0. See [release notes](docs/releases/0.5.3.md).

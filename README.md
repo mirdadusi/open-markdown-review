@@ -1,14 +1,43 @@
-# Open Markdown Review 0.5.3
+# Open Markdown Review 0.5.4
 
-A local-first Markdown review protocol with one shared reviewer toolbox for VS Code and a double-clicked HTML file. No application server, browser extension, cloud account, or separate review database.
+Review Markdown collaboratively without a review server. Authors work in VS Code; participants can use the same review package in VS Code or through its double-clicked HTML launcher in a supported Chrome or Edge browser. Documents, replies, decisions, approvals, and audit evidence remain files in one local-first package.
 
-Version **0.5.3 is a regular GitHub release with known limitations**, not a qualified professional pilot. Download it from the [0.5.3 release page](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.3) and read the [release notes and limitations](docs/releases/0.5.3.md). It completes the usability and reviewer-rights workflow, adds review-wide findings navigation, and produces auditable offline PDF review archives. Markdown and optional Slidev review retain framework-neutral core wire version 0.5.0. Existing 0.4 packages keep their legacy VS Code reader; they are never silently migrated.
+![Open Markdown Review showing a highlighted finding, Mermaid diagram, table, and discussion in VS Code](docs/images/marketplace/vscode-review.png)
 
-For Windows x64 install `open-markdown-review-0.5.3-win32-x64.vsix`; for other supported VS Code platforms install `open-markdown-review-0.5.3-portable.vsix`. Both have SHA-256 checksum files and standard VSIX metadata without a pre-release marker. Use **Extensions: Install from VSIX** in VS Code. Previous release tags and original assets remain unchanged.
+There is no application server, browser extension, cloud account, or separate review database. A package can live on ordinary disk, Git, a mounted network folder, or a folder synchronized by the participants' chosen storage provider.
+
+Version **0.5.4 is a regular release with known limitations**, not a qualified professional pilot. It improves distribution and Marketplace presentation without changing the review protocol or the 0.5.3 review behavior. Markdown and optional Slidev review retain framework-neutral core wire version 0.5.0. Read the [0.5.4 release notes and limitations](docs/releases/0.5.4.md); existing 0.4 packages keep their legacy VS Code reader and are never silently migrated.
 
 ## Install
 
-Download the VSIX and matching SHA-256 checksum from the [0.5.3 release](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.3). In VS Code run **Extensions: Install from VSIX**, select the package for your platform, and reload when prompted. Browser-only participants receive the review folder with its generated HTML launcher and do not install an extension.
+### Visual Studio Code Marketplace
+
+Open **Extensions** in VS Code, search for **Open Markdown Review**, and select **Install**. You can also use:
+
+```sh
+code --install-extension mirdadusi.open-markdown-review
+```
+
+The listing is published under publisher ID `mirdadusi`. Source, release artifacts, and issue tracking remain in the [public upstream repository](https://github.com/mirdadusi/open-markdown-review).
+
+### Manual or offline installation
+
+Download the VSIX and matching SHA-256 checksum from the [0.5.4 GitHub release](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.4). For Windows x64 use `open-markdown-review-0.5.4-win32-x64.vsix`; for other supported VS Code platforms use `open-markdown-review-0.5.4-portable.vsix`. Run **Extensions: Install from VSIX** in VS Code and reload when prompted.
+
+Browser-only participants do not install the extension. They receive the complete review folder and double-click its review-named HTML launcher.
+
+## One package, two participant experiences
+
+| Create and configure in VS Code | Participate in supported Chrome or Edge |
+| --- | --- |
+| ![Selecting Markdown documents and review storage in VS Code](docs/images/marketplace/vscode-setup.png) | ![Reviewing the same package through its portable browser client](docs/images/marketplace/browser-review.png) |
+
+- Create a review from selected Markdown files or folders and place it directly in its final storage location.
+- Review GFM Markdown, Mermaid diagrams, local or captured external images, structural HTML, tables, and optional Slidev presentations.
+- Add anchored comments and suggested edits, reply to findings, and follow initiator-managed decisions and resolution.
+- See events arriving through shared or synchronized storage without merging a shared database file.
+- Approve or reject an immutable revision and export an offline PDF review archive with comments, responses, findings, and evidence.
+- Keep the generated HTML launcher as a client door only; the manifest, revisions, blobs, and independent event files remain the single source of truth.
 
 ## Tested status and known limits
 
@@ -96,7 +125,7 @@ To update documents, choose **Choose Documents and Create Revision**. Existing r
 
 ### Reviewer identity and active review
 
-Version 0.5.3 uses one **Reviews** list for current and legacy packages. Creating/opening a review or focusing its toolbox selects it in **Active Review** and the status bar. The selection remains when the toolbox is closed and is restored in the same workspace; sidebar actions reopen the toolbox when needed.
+Version 0.5.4 uses one **Reviews** list for current and legacy packages. Creating/opening a review or focusing its toolbox selects it in **Active Review** and the status bar. The selection remains when the toolbox is closed and is restored in the same workspace; sidebar actions reopen the toolbox when needed.
 
 The identity entered during creation prefills the VS Code toolbox. Later ID/name edits are remembered privately per review in the local VS Code profile. A fresh participant never inherits the creator identity from the shared manifest, HTML or received workspace settings. Browser participants continue choosing their own identity.
 
@@ -153,10 +182,13 @@ npx playwright install chromium
 node scripts/install-slidev-fixture.mjs
 npm run test:browser
 npm run test:extension
-node scripts/package-release.mjs portable candidate
+npm audit --omit=dev --audit-level=high
+npm run verify:marketplace
+npm run package:marketplace -- portable
+npm run package:marketplace -- win32-x64
 ```
 
-The VSIX is created at the repository root. Install it using VS Code's **Extensions: Install from VSIX**. This does not install a browser extension. The development launch configuration also supports F5.
+The VSIX files and SHA-256 checksums are created at the repository root. Install a VSIX using VS Code's **Extensions: Install from VSIX**. This does not install a browser extension. The development launch configuration also supports F5. For first publication, follow the [local Marketplace runbook](docs/MARKETPLACE-PUBLISHING.md).
 
 The browser tests use real Chromium and real browser directory handles/IndexedDB; their deterministic adapter test uses origin-private storage and is explicitly not a native folder-permission test. Windows local-storage browser and VS Code checks run in CI. SMB testing is excluded by user decision; the retained SMB-dependent native-picker fixture has not run, so actual local native folder grants remain unqualified.
 
@@ -190,10 +222,10 @@ CLI export uses the same toolbox PDF engine through headless Chromium and requir
 
 ## Images, diagrams and references
 
-```markdown
-![Captured image](images/diagram.svg)
-[Captured attachment](evidence.pdf "review:attach")
-[Ordinary external reference](https://example.org/reference)
+```text
+embedded image target: images/diagram.svg
+captured attachment target: evidence.pdf; title: review:attach
+ordinary external reference: https://example.org/reference
 ```
 
 Embedded images and explicit attachments must be captured successfully. Bounded attachment types include PDF, plain text, JSON, registered `application/vnd.*` formats such as DOCX/Visio, and EMF originals; the review downloads rather than executes active binary attachments. Ordinary web links are described but are not archived. Parent-relative image/attachment paths work when their resolved location is inside an explicitly granted root. HTTPS capture is bounded and rejects embedded credentials/secret query parameters. Secrets already present in Markdown must be removed from source before sharing.

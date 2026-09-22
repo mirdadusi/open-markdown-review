@@ -1,8 +1,8 @@
 {
   "name": "open-markdown-review",
   "displayName": "Open Markdown Review",
-  "description": "A serverless, local-first Markdown review protocol and usable VS Code pilot client.",
-  "version": "0.5.3",
+  "description": "Local-first Markdown review for VS Code and portable browser participation, with append-only review evidence.",
+  "version": "0.5.4",
   "private": true,
   "license": "MIT",
   "publisher": "mirdadusi",
@@ -21,6 +21,20 @@
   "categories": [
     "Other"
   ],
+  "keywords": [
+    "markdown",
+    "review",
+    "local-first",
+    "mermaid",
+    "documentation",
+    "collaboration"
+  ],
+  "icon": "media/marketplace-icon.png",
+  "galleryBanner": {
+    "color": "#eef5fc",
+    "theme": "light"
+  },
+  "pricing": "Free",
   "main": "./dist/extension.js",
   "bin": {
     "omr": "./dist/cli.js"
@@ -469,7 +483,10 @@
     "test:extension": "npm run compile && node scripts/test-extension.mjs",
     "check": "npm run test",
     "sample:pdf": "npm run compile && node scripts/export-example.mjs",
-    "package:vsix": "npm run compile && vsce package --no-rewrite-relative-links"
+    "package:vsix": "npm run compile && vsce package --no-rewrite-relative-links",
+    "verify:marketplace": "node scripts/verify-marketplace.mjs",
+    "package:marketplace:vsix": "vsce package",
+    "package:marketplace": "node scripts/package-marketplace.mjs"
   },
   "dependencies": {
     "@img/sharp-wasm32": "0.35.4",

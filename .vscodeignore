@@ -1,6 +1,8 @@
 .github/**
+.gitignore
 .vscode/**
 .vscode-test/**
+.staging/**
 **/*.vsix.sha256
 examples/**/OpenMarkdownReview.html
 examples/**/client-backups/**
