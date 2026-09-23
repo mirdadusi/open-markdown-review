@@ -1,4 +1,4 @@
-# Open Markdown Review 0.5.4
+# Open Markdown Review 0.5.5
 
 Review Markdown collaboratively without a review server. Authors work in VS Code; participants can use the same review package in VS Code or through its double-clicked HTML launcher in a supported Chrome or Edge browser. Documents, replies, decisions, approvals, and audit evidence remain files in one local-first package.
 
@@ -6,7 +6,7 @@ Review Markdown collaboratively without a review server. Authors work in VS Code
 
 There is no application server, browser extension, cloud account, or separate review database. A package can live on ordinary disk, Git, a mounted network folder, or a folder synchronized by the participants' chosen storage provider.
 
-Version **0.5.4 is a regular release with known limitations**, not a qualified professional pilot. It improves distribution and Marketplace presentation without changing the review protocol or the 0.5.3 review behavior. Markdown and optional Slidev review retain framework-neutral core wire version 0.5.0. Read the [0.5.4 release notes and limitations](docs/releases/0.5.4.md); existing 0.4 packages keep their legacy VS Code reader and are never silently migrated.
+Version **0.5.5 is a regular release with known limitations**, not a qualified professional pilot. It adds a safe update path without changing the review protocol or 0.5.3 review behavior. Public installations use VS Code's native Marketplace updates; the enterprise derivative uses authenticated, checksum-verified GitHub Enterprise release updates. Markdown and optional Slidev review retain framework-neutral core wire version 0.5.0. Read the [0.5.5 release notes and limitations](docs/releases/0.5.5.md); existing 0.4 packages keep their legacy VS Code reader and are never silently migrated.
 
 ## Install
 
@@ -22,7 +22,9 @@ The listing is published under publisher ID `mirdadusi`. Source, release artifac
 
 ### Manual or offline installation
 
-Download the VSIX and matching SHA-256 checksum from the [0.5.4 GitHub release](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.4). For Windows x64 use `open-markdown-review-0.5.4-win32-x64.vsix`; for other supported VS Code platforms use `open-markdown-review-0.5.4-portable.vsix`. Run **Extensions: Install from VSIX** in VS Code and reload when prompted.
+Download the VSIX and matching SHA-256 checksum from the [0.5.5 GitHub release](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.5). For Windows x64 use `open-markdown-review-0.5.5-win32-x64.vsix`; for other supported VS Code platforms use `open-markdown-review-0.5.5-portable.vsix`. Run **Extensions: Install from VSIX** in VS Code and reload when prompted.
+
+Marketplace installations are checked and updated by VS Code itself. Use **Markdown Review: Check for Updates** from the Command Palette or the extension's context menu to trigger VS Code's Marketplace check and open its update controls. VS Code's `extensions.autoCheckUpdates`, `extensions.autoUpdate`, update delay, per-extension Auto Update choice, and enterprise policy remain authoritative; the extension does not download a second public copy or bypass those controls.
 
 Browser-only participants do not install the extension. They receive the complete review folder and double-click its review-named HTML launcher.
 
@@ -125,7 +127,7 @@ To update documents, choose **Choose Documents and Create Revision**. Existing r
 
 ### Reviewer identity and active review
 
-Version 0.5.4 uses one **Reviews** list for current and legacy packages. Creating/opening a review or focusing its toolbox selects it in **Active Review** and the status bar. The selection remains when the toolbox is closed and is restored in the same workspace; sidebar actions reopen the toolbox when needed.
+Version 0.5.5 uses one **Reviews** list for current and legacy packages. Creating/opening a review or focusing its toolbox selects it in **Active Review** and the status bar. The selection remains when the toolbox is closed and is restored in the same workspace; sidebar actions reopen the toolbox when needed.
 
 The identity entered during creation prefills the VS Code toolbox. Later ID/name edits are remembered privately per review in the local VS Code profile. A fresh participant never inherits the creator identity from the shared manifest, HTML or received workspace settings. Browser participants continue choosing their own identity.
 

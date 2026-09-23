@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.5
+
+Regular release with known limitations; professional-pilot qualification remains incomplete. Core wire version remains 0.5.0. See [release notes](docs/releases/0.5.5.md).
+
+- Add **Check for Updates** and **Open Update Source** commands to the public extension menu; Marketplace installation remains owned by VS Code's native Update action.
+- Delegate public installation, platform selection, rollout delay, policy, and automatic updates to VS Code's native Marketplace subsystem.
+- Add a reusable enterprise release provider with strict release identity, platform-aware artifact selection, authentication, bounded downloads, allowlisted redirects, SHA-256 verification, and safe VSIX installer fallback.
+- Define a checked-in update-source contract so the public and enterprise derivatives cannot silently use each other's publisher or distribution channel.
+- Require the public Marketplace version to exist before the corresponding enterprise release can be published.
+
 ## 0.5.4
 
 Regular release with known limitations; professional-pilot qualification remains incomplete. Core wire version remains 0.5.0. See [release notes](docs/releases/0.5.4.md).

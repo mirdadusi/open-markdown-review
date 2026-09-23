@@ -67,6 +67,7 @@ import { PackageItem, ProfessionalHost } from "./professional/extensionHost";
 import { ReviewSidebar } from "./reviewSidebar";
 import { removeReview, ReviewActivity } from "./reviewRemoval";
 import { sameReviewPath, uniqueReviewPaths } from './reviewPaths';
+import { registerUpdateService } from "./updates/service";
 
 interface ActiveReview {
   folder: vscode.WorkspaceFolder;
@@ -1700,6 +1701,7 @@ export class ReviewController implements vscode.Disposable {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  registerUpdateService(context);
   const threads = new ThreadsProvider();
   const reviews = new ReviewsProvider();
   const activity = new ReviewActivity();

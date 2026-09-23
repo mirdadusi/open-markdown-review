@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const packageJson = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8"));
+const updateSource = JSON.parse(await readFile(path.join(repoRoot, "release/update-source.json"), "utf8"));
 const failures = [];
 
 function requireValue(condition, message) {
@@ -27,6 +28,18 @@ requireValue(packageJson.icon === "media/marketplace-icon.png", "Marketplace ico
 requireValue(packageJson.galleryBanner?.theme === "light", "The Marketplace gallery banner must use the light theme.");
 requireValue(packageJson.repository?.url === "https://github.com/mirdadusi/open-markdown-review.git", "Repository metadata must point to the public upstream repository.");
 requireValue(packageJson.bugs?.url === "https://github.com/mirdadusi/open-markdown-review/issues", "Issue tracker metadata is missing or unexpected.");
+requireValue(updateSource.schemaVersion === 1 && updateSource.channel === "marketplace", "Public update source must use the Marketplace channel.");
+requireValue(updateSource.extensionId === `${packageJson.publisher}.${packageJson.name}`, "Update source extension ID must match the published package identity.");
+requireValue(updateSource.marketplaceItemUrl === `https://marketplace.visualstudio.com/items?itemName=${updateSource.extensionId}`, "Marketplace update URL is missing or unexpected.");
+
+const commandIds = new Set(packageJson.contributes?.commands?.map(command => command.command));
+for (const command of ["checkForUpdates", "openUpdateSource"]) {
+  requireValue(commandIds.has(`openMarkdownReview.${command}`), `Update command is missing: ${command}`);
+  requireValue(packageJson.activationEvents?.includes(`onCommand:openMarkdownReview.${command}`), `Update activation event is missing: ${command}`);
+}
+const extensionMenu = packageJson.contributes?.menus?.["extension/context"] ?? [];
+requireValue(extensionMenu.some(item => item.command === "openMarkdownReview.checkForUpdates" && item.when === `extension == ${updateSource.extensionId}`), "Marketplace extension menu is not bound to the public extension ID.");
+requireValue(!commandIds.has("openMarkdownReview.installUpdate"), "Public Marketplace builds must leave installation to VS Code's native Update action.");
 
 const requiredKeywords = ["markdown", "review", "local-first", "mermaid"];
 for (const keyword of requiredKeywords) {
@@ -39,6 +52,7 @@ for (const relativePath of [
   "LICENSE",
   "SECURITY.md",
   "SUPPORT.md",
+  "release/update-source.json",
   packageJson.icon,
   "docs/images/marketplace/vscode-setup.png",
   "docs/images/marketplace/vscode-review.png",

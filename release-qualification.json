@@ -1,14 +1,14 @@
 {
   "schemaVersion": "omr-release-qualification/1",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "professionalPilotApproved": false,
   "statusReport": "spec/IMPLEMENTATION-STATUS.md",
   "publication": {
     "channel": "standard",
     "approved": true,
     "approvedBy": "user",
-    "approvedOn": "2026-09-22",
-    "note": "Marketplace presentation release 0.5.4; MIT is the sole project-code license and M.I.R.D.A. is a non-binding philosophy. Protocol behavior and professional-pilot qualification remain unchanged from 0.5.3."
+    "approvedOn": "2026-09-23",
+    "note": "User requested a VS Code update mechanism, published through the public upstream Marketplace first and then forward-ported to the enterprise derivative. Protocol behavior and professional-pilot qualification remain unchanged from 0.5.4."
   },
   "blockingGates": [
     "Interruptible Mermaid rendering deadline",

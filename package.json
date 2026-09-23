@@ -2,7 +2,7 @@
   "name": "open-markdown-review",
   "displayName": "Open Markdown Review",
   "description": "Local-first Markdown review for VS Code and portable browser participation, with append-only review evidence.",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "private": true,
   "license": "MIT",
   "publisher": "mirdadusi",
@@ -66,6 +66,8 @@
     "onCommand:openMarkdownReview.refresh",
     "onCommand:openMarkdownReview.rebuildCache",
     "onCommand:openMarkdownReview.showDiagnostics",
+    "onCommand:openMarkdownReview.checkForUpdates",
+    "onCommand:openMarkdownReview.openUpdateSource",
     "onCommand:openMarkdownReview.openThread",
     "onCommand:openMarkdownReview.showThread"
   ],
@@ -90,6 +92,16 @@
         "command": "openMarkdownReview.updatePortableBrowserClient",
         "title": "Markdown Review: Update Portable Browser Client",
         "icon": "$(sync)"
+      },
+      {
+        "command": "openMarkdownReview.checkForUpdates",
+        "title": "Markdown Review: Check for Updates",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "openMarkdownReview.openUpdateSource",
+        "title": "Markdown Review: Open Update Source",
+        "icon": "$(link-external)"
       },
       {
         "command": "openMarkdownReview.initialize",
@@ -269,6 +281,18 @@
       }
     ],
     "menus": {
+      "extension/context": [
+        {
+          "command": "openMarkdownReview.checkForUpdates",
+          "when": "extension == mirdadusi.open-markdown-review",
+          "group": "2_configure@5"
+        },
+        {
+          "command": "openMarkdownReview.openUpdateSource",
+          "when": "extension == mirdadusi.open-markdown-review",
+          "group": "2_configure@10"
+        }
+      ],
       "editor/context": [
         {
           "command": "openMarkdownReview.addComment",
@@ -485,6 +509,7 @@
     "sample:pdf": "npm run compile && node scripts/export-example.mjs",
     "package:vsix": "npm run compile && vsce package --no-rewrite-relative-links",
     "verify:marketplace": "node scripts/verify-marketplace.mjs",
+    "verify:published-marketplace": "node scripts/verify-published-marketplace.mjs",
     "package:marketplace:vsix": "vsce package",
     "package:marketplace": "node scripts/package-marketplace.mjs"
   },

@@ -14,7 +14,7 @@ export async function run(): Promise<void> {
   const extension = vscode.extensions.getExtension('mirdadusi.open-markdown-review');
   assert.ok(extension); await extension.activate(); assert.ok(extension.isActive);
   const commands = await vscode.commands.getCommands(true);
-  for (const name of ['initialize', 'connectReview', 'openPackage05', 'updatePortableBrowserClient', 'linkSourceWorkspace', 'publishReviewPackage', 'addComment', 'exportPdf', 'removeReview', 'deleteReview']) assert.ok(commands.includes(`openMarkdownReview.${name}`), `Missing command: ${name}`);
+  for (const name of ['initialize', 'connectReview', 'openPackage05', 'updatePortableBrowserClient', 'linkSourceWorkspace', 'publishReviewPackage', 'addComment', 'exportPdf', 'removeReview', 'deleteReview', 'checkForUpdates', 'openUpdateSource']) assert.ok(commands.includes(`openMarkdownReview.${name}`), `Missing command: ${name}`);
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'omr-extension-')), source = path.join(temporary, 'source'), root = path.join(temporary, 'review');
   await reviewerAndSidebar(extension.extensionPath, temporary);
   await legacyRemoval(extension.extensionPath, temporary);

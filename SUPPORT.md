@@ -4,7 +4,7 @@ Open Markdown Review is community-supported open-source software.
 
 ## Before reporting a problem
 
-1. Read the [README](https://github.com/mirdadusi/open-markdown-review#readme), relevant [release notes](https://github.com/mirdadusi/open-markdown-review/blob/main/docs/releases/0.5.4.md), and [implementation status](https://github.com/mirdadusi/open-markdown-review/blob/main/spec/IMPLEMENTATION-STATUS.md).
+1. Read the [README](https://github.com/mirdadusi/open-markdown-review#readme), relevant [release notes](https://github.com/mirdadusi/open-markdown-review/blob/main/docs/releases/0.5.5.md), and [implementation status](https://github.com/mirdadusi/open-markdown-review/blob/main/spec/IMPLEMENTATION-STATUS.md).
 2. In VS Code run **Markdown Review: Show Performance Diagnostics** when the problem concerns opening, refresh, or shared-folder latency.
 3. Confirm the extension version, VS Code version, operating system, storage type, and whether the problem is reproducible in a small review without confidential content.
 
