@@ -3,6 +3,13 @@
   "version": "0.5.6",
   "professionalPilotApproved": false,
   "statusReport": "spec/IMPLEMENTATION-STATUS.md",
+  "publication": {
+    "channel": "standard",
+    "approved": true,
+    "approvedBy": "user",
+    "approvedOn": "2026-09-25",
+    "note": "User explicitly requested merging, tagging, publishing the 0.5.6 GitHub release, and publishing both supported targets to the public VS Code Marketplace. Professional-pilot qualification remains unchanged."
+  },
   "blockingGates": [
     "Interruptible Mermaid rendering deadline",
     "Remaining participant cancellation and platform source-save durability/ACL qualification",
