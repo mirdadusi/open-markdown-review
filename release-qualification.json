@@ -1,15 +1,8 @@
 {
   "schemaVersion": "omr-release-qualification/1",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "professionalPilotApproved": false,
   "statusReport": "spec/IMPLEMENTATION-STATUS.md",
-  "publication": {
-    "channel": "standard",
-    "approved": true,
-    "approvedBy": "user",
-    "approvedOn": "2026-09-23",
-    "note": "User requested a VS Code update mechanism, published through the public upstream Marketplace first and then forward-ported to the enterprise derivative. Protocol behavior and professional-pilot qualification remain unchanged from 0.5.4."
-  },
   "blockingGates": [
     "Interruptible Mermaid rendering deadline",
     "Remaining participant cancellation and platform source-save durability/ACL qualification",

@@ -82,7 +82,7 @@ async function hashFile(root: string, relative: string): Promise<PackageFile> {
 export async function inspectReviewPackage(rootInput: string): Promise<PackageInventory> {
   if (!path.isAbsolute(rootInput)) throw new ProtocolError('invalid', 'Review package paths must be absolute.');
   const initial = await lstat(rootInput);
-  if (!initial.isDirectory() || initial.isSymbolicLink()) throw new ProtocolError('invalid', 'The review package must be a real directory, not a symbolic link or junction.');
+  if (!initial.isDirectory() || initial.isSymbolicLink()) throw new ProtocolError('invalid', `The review package must be a real directory, not a symbolic link or junction: ${path.resolve(rootInput)}`);
   const root = await realpath(rootInput), directories: string[] = [], relativeFiles: string[] = [];
   let entries = 0;
   async function visit(absolute: string, relative: string, depth: number): Promise<void> {
@@ -178,7 +178,7 @@ export async function inspectSourceBinding(reviewRoot: string, sourceInput: stri
   const sourceRoot = await realpath(sourceInput), session = new ReviewSession(new NativeStorage(reviewRoot, journalRoot));
   await session.open(); await session.refresh(true);
   const heads = session.heads;
-  if (!heads.length) throw new ProtocolError('missing', 'The review has no verified revision to bind.');
+  if (!heads.length) throw new ProtocolError('missing', 'The review package is incomplete: it has no verified revision publication to bind. Preserve it for inspection or create a new review in a different empty folder.');
   const expected = new Map<string, Set<string>>();
   for (const revision of heads) for (const document of revision.documents) {
     const digests = expected.get(document.path) ?? new Set<string>(); digests.add(document.digest); expected.set(document.path, digests);

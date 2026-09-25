@@ -18,6 +18,7 @@ import { ReviewActivity } from '../reviewRemoval';
 import { reviewPathKey, sameReviewPath } from '../reviewPaths';
 import { mapWithConcurrency } from '../protocol/concurrency';
 import { inspectSourceBinding, relocateReviewPackage } from './relocation';
+import { nextReviewStorageRoot } from './locations';
 
 export interface Entry { root: string; title: string; source?: string; reviewer?: ActorRef; reviewId?: string; availability?: 'available' | 'unavailable'; unavailableReason?: string }
 export class PackageItem extends vscode.TreeItem {
@@ -148,7 +149,15 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
     const generation = ++this.activationGeneration;
     const saved = this.context.workspaceState.get<string>('professional.activeRoot'), entry = this.entries.find(e => sameReviewPath(e.root, saved));
     if (!entry || this.active) return;
-    const session = new ReviewSession(new NativeStorage(entry.root, this.journalRoot)); await session.open();
+    let session: ReviewSession;
+    try { session = new ReviewSession(new NativeStorage(entry.root, this.journalRoot)); await session.open(); }
+    catch (error) {
+      const unavailable = { ...entry, availability: 'unavailable' as const, unavailableReason: error instanceof Error ? error.message : String(error) };
+      this.replaceEntry(entry, unavailable); await this.persistEntries();
+      await this.context.workspaceState.update('professional.activeRoot', undefined);
+      await this.persistSelection();
+      return;
+    }
     if (this.active || generation !== this.activationGeneration) return;
     this.revisions.set(entry.root, !!session.revision); await this.select(entry, generation);
   }
@@ -260,7 +269,7 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
   async create(revise = false): Promise<void> {
     const pending = this.context.globalState.get<AuthorRequest[]>('professional.pendingAuthoring', []);
     if (pending.length) {
-      const choice = await vscode.window.showQuickPick([{ label: 'Start a new capture', description: 'Keep existing recovery plans', request: undefined as AuthorRequest | undefined }, ...pending.map(request => ({ label: `Resume: ${request.title ?? path.basename(request.source)}`, description: request.store, detail: `Saved operation ${request.operationId}`, request }))], { title: 'Saved authoring operations are available', ignoreFocusOut: true });
+      const choice = await vscode.window.showQuickPick([{ label: 'Start a new capture', description: 'Use the next empty package folder; keep earlier recovery evidence', request: undefined as AuthorRequest | undefined }, ...pending.map(request => ({ label: `Resume: ${request.title ?? path.basename(request.source)}`, description: request.store, detail: `Resume only if its acknowledged package files still exist · ${request.operationId}`, request }))], { title: 'Saved authoring operations are available', ignoreFocusOut: true });
       if (!choice) return;
       if (choice.request) { await this.runCreation(choice.request, true); return; }
     }
@@ -274,7 +283,7 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
     const dirty = vscode.workspace.textDocuments.filter(d => d.isDirty && d.uri.scheme === 'file' && d.uri.fsPath.startsWith(source + path.sep));
     if (dirty.length) { const answer = await vscode.window.showWarningMessage('Review creation freezes saved disk bytes. Save modified source files first?', { modal: true }, 'Save and continue', 'Use disk bytes'); if (!answer) return; if (answer === 'Save and continue' && (await Promise.all(dirty.map(d => d.save()))).some(ok => !ok)) throw new Error('Some source files could not be saved.'); }
     const files = await findMarkdownFiles(source); if (!files.length) throw new Error('No Markdown files were found in the selected source folder.');
-    const storageRoot = entry?.root ?? path.join(source, '.review');
+    const storageRoot = entry?.root ?? await nextReviewStorageRoot(source);
     let session: ReviewSession | undefined;
     if (entry) { session = new ReviewSession(new NativeStorage(storageRoot, this.journalRoot)); await session.open(); }
     const selected = await ReviewSetupPanel.show(this.context, { initialized: !!entry, workspaceName: path.basename(source), title: entry?.title ?? path.basename(source), availableDocuments: files, selectedDocuments: session?.revision?.documents.map(d => d.path) ?? files, rootDocument: session?.revision?.rootDocument ?? files[0], sourceRoot: source, storageRoot, storageEditable: !entry, portableBrowserDefault: true });

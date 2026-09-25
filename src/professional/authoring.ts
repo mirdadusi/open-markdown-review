@@ -14,6 +14,7 @@ import { collectSlidev, redactNotes } from './profiles/slidevSource';
 import { captureSlidev, SlidevOptions } from './profiles/slidevCapture';
 import { PRESENTATION_CAPABILITY, SLIDEV_ID, SLIDEV_SCHEMA_BYTES, SLIDEV_VERSION, SlidevProfile, slidevDeclaration } from './profiles/slidev';
 import { loadProfiles } from './profiles/registry';
+import { transientReviewLocation } from './locations';
 
 export interface AuthorRequest extends OperationControl {
   source: string; store: string; title?: string; include?: string[]; includeDir?: string[]; exclude?: string[];
@@ -53,9 +54,20 @@ function bindClient(bytes: Uint8Array, manifest: Manifest, manifestBytes: Uint8A
   return encode(html.replace(LAUNCHER_MARKER, Buffer.from(JSON.stringify(binding), 'utf8').toString('base64')));
 }
 function isInside(root: string, target: string) { const p = path.relative(root, target); return p !== '..' && !p.startsWith(`..${path.sep}`) && !path.isAbsolute(p); }
-function media(reference: string, supplied?: string | null): string {
+function detectedImageMediaType(bytes: Uint8Array): string | undefined {
+  if (bytes.length >= 8 && Buffer.from(bytes.subarray(0, 8)).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  const header = Buffer.from(bytes.subarray(0, 12)).toString('ascii');
+  if (header.startsWith('GIF87a') || header.startsWith('GIF89a')) return 'image/gif';
+  if (header.startsWith('RIFF') && header.slice(8, 12) === 'WEBP') return 'image/webp';
+  const prefix = new TextDecoder('utf-8', { fatal: false }).decode(bytes.subarray(0, Math.min(bytes.length, 4096))).replace(/^\uFEFF/, '').trimStart();
+  if (/^(?:<\?xml[^>]*>\s*)?<svg(?:\s|>)/i.test(prefix)) return 'image/svg+xml';
+  return undefined;
+}
+function media(reference: string, supplied?: string | null, bytes?: Uint8Array): string {
   const type = supplied?.split(';')[0].trim();
-  return type && type !== 'application/octet-stream' ? type : ({ '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.emf': 'image/emf', '.pdf': 'application/pdf', '.txt': 'text/plain', '.json': 'application/json', '.html': 'text/html', '.js': 'application/javascript', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.vsd': 'application/vnd.visio', '.vsdx': 'application/vnd.ms-visio.drawing.main+xml' }[path.extname(reference.split(/[?#]/)[0]).toLowerCase()] ?? 'application/octet-stream');
+  const inferred = type && type !== 'application/octet-stream' ? type : ({ '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.emf': 'image/emf', '.pdf': 'application/pdf', '.txt': 'text/plain', '.json': 'application/json', '.html': 'text/html', '.js': 'application/javascript', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.vsd': 'application/vnd.visio', '.vsdx': 'application/vnd.ms-visio.drawing.main+xml' }[path.extname(reference.split(/[?#]/)[0]).toLowerCase()] ?? 'application/octet-stream');
+  return inferred === 'application/octet-stream' && bytes ? detectedImageMediaType(bytes) ?? inferred : inferred;
 }
 export async function scope(request: AuthorRequest): Promise<string[]> {
   const available = await findMarkdownFiles(request.source);
@@ -75,7 +87,7 @@ async function capture(reference: string, document: string, request: AuthorReque
     const match = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(reference); if (!match) throw new ProtocolError('invalid', 'Malformed data URI.');
     const bytes = match[2] ? Buffer.from(match[3], 'base64') : encode(decodeURIComponent(match[3]));
     if (bytes.length > LIMITS.resource) throw new ProtocolError('unsupported', 'Data image exceeds resource limit.');
-    return { bytes, mediaType: match[1], sourceKind: 'data' };
+    return { bytes, mediaType: media(reference, match[1], bytes), sourceKind: 'data' };
   }
   if (/^https?:/i.test(reference)) {
     let url = new URL(reference); const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 15000);
@@ -89,7 +101,7 @@ async function capture(reference: string, document: string, request: AuthorReque
         const chunks: Uint8Array[] = []; let size = 0; const reader = response.body.getReader();
         while (true) { const part = await reader.read(); if (part.done) break; size += part.value.length; if (size > LIMITS.resource) { await reader.cancel(); throw new ProtocolError('unsupported', 'Remote resource exceeds 20 MiB.'); } chunks.push(part.value); }
         const bytes = new Uint8Array(size); let offset = 0; for (const c of chunks) { bytes.set(c, offset); offset += c.length; }
-        return { bytes, mediaType: media(url.pathname, response.headers.get('content-type')), sourceKind: 'remote' };
+        return { bytes, mediaType: media(url.pathname, response.headers.get('content-type'), bytes), sourceKind: 'remote' };
       }
     } catch (error) { checkpoint(request); throw error; }
     finally { clearTimeout(timeout); }
@@ -100,11 +112,13 @@ async function capture(reference: string, document: string, request: AuthorReque
   const roots = [request.source, ...(request.resourceRoots ?? [])].map(r => path.resolve(r));
   const root = roots.find(r => isInside(r, target)); if (!root) throw new ProtocolError('permission', `Resource is outside explicitly granted roots: ${reference}`);
   const bytes = await new NativeStorage(root, request.journalRoot).read(path.relative(root, target).split(path.sep).join('/'), LIMITS.resource);
-  return { bytes, mediaType: media(reference), sourceKind: root === roots[0] ? 'workspace' : 'granted-root' };
+  return { bytes, mediaType: media(reference, undefined, bytes), sourceKind: root === roots[0] ? 'workspace' : 'granted-root' };
 }
 /** The only source-to-review authoring service; GUI and CLI call this same contract. */
 export async function authorReview(request: AuthorRequest): Promise<AuthorResult> {
   checkpoint(request, 'Planning the selected Markdown scope');
+  const transient = transientReviewLocation(request.store);
+  if (transient) throw new ProtocolError('invalid', `The review package cannot be stored in ${transient}, because generated content can disappear or be replaced. Choose a durable local, shared, synchronized, or Git folder.`);
   if (request.slidev && (!['included', 'excluded'].includes(request.slidev.notes) || !request.dryRun && request.slidev.trustProject !== true)) throw new ProtocolError('permission', 'Slidev requires an explicit notes policy and approval to run the trusted author project.');
   if (!/^[A-Za-z0-9_-]{1,96}$/.test(request.operationId)) throw new ProtocolError('invalid', 'Creation operation ID must be filename-safe (1–96 characters).');
   const store = new NativeStorage(request.store, request.journalRoot);
@@ -187,7 +201,7 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
         const resourceCheckpoint = `capture/${ref.id}.json`, savedResource = await readOptional(staged, resourceCheckpoint, LIMITS.event);
         if (savedResource) { const resource = parseJson<Revision['resources'][number]>(savedResource); resources.push(resource); blobs.set(resource.blobPath, { path: resource.blobPath, mediaType: resource.mediaType }); continue; }
         const captured = await capture(ref.reference, document, request);
-        if (ref.role === 'image' && !/^image\/(?:png|jpeg|gif|webp|svg\+xml)$/.test(captured.mediaType)) throw new ProtocolError('unsupported', `Unsupported frozen image: ${captured.mediaType}`);
+        if (ref.role === 'image' && !/^image\/(?:png|jpeg|gif|webp|svg\+xml)$/.test(captured.mediaType)) throw new ProtocolError('unsupported', `Unsupported frozen image in ${document}: ${sanitizeExternalUri(ref.reference)} (${captured.mediaType}). Supported frozen images are PNG, JPEG, GIF, WebP and SVG.`);
         if (ref.role === 'attachment' && !/^(?:application\/pdf|text\/plain|application\/json|application\/vnd\.|image\/emf$)/.test(captured.mediaType)) throw new ProtocolError('unsupported', `Attachment type is not allowed: ${captured.mediaType}`);
         const resource = { id: ref.id, document, originalReference: sanitizeExternalUri(ref.reference), sourceKind: captured.sourceKind, role: ref.role, capturedAt: new Date().toISOString(), ...await put(captured.bytes, captured.mediaType) };
         await staged.write(resourceCheckpoint, jsonBytes(resource), false); resources.push(resource);
