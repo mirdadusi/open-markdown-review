@@ -33,12 +33,13 @@ const folders = new Set(['events', 'revisions', 'blobs', 'exports', 'client-back
 const files = new Set(['manifest.json', '.gitattributes', 'OpenMarkdownReview.html', '.DS_Store', 'desktop.ini', 'Thumbs.db']);
 const isReviewFile = (name: string) => files.has(name) || /^Review-[A-Za-z0-9._-]{1,64}\.html$/.test(name);
 const within = (parent: string, child: string) => { const relative = path.relative(parent, child); return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative)); };
+export const canUseWorkspaceTrash = (remoteName?: string): boolean => !remoteName;
 
 /** Enumerate the entire dedicated package, never follow links or accept project/source roots. */
 export async function inspectReviewRemoval(target: RemovalTarget): Promise<RemovalPlan> {
   if (!path.isAbsolute(target.root)) throw new Error('Review deletion requires an absolute folder path.');
   const requested = path.resolve(target.root), initial = await lstat(requested);
-  if (!initial.isDirectory() || initial.isSymbolicLink()) throw new Error('The review folder must be a real directory, not a symbolic link or junction.');
+  if (!initial.isDirectory() || initial.isSymbolicLink()) throw new Error(`The review folder must be a real directory, not a symbolic link or junction: ${requested}`);
   const root = await realpath(requested);
   for (const protectedPath of [path.parse(root).root, os.homedir(), ...target.protectedPaths]) {
     const canonical = await realpath(protectedPath).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return path.resolve(protectedPath); throw error; });

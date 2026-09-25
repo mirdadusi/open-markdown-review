@@ -2,7 +2,7 @@
   "name": "open-markdown-review",
   "displayName": "Open Markdown Review",
   "description": "Local-first Markdown review for VS Code and portable browser participation, with append-only review evidence.",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "private": true,
   "license": "MIT",
   "publisher": "mirdadusi",
@@ -18,6 +18,9 @@
     "node": ">=22",
     "vscode": "^1.90.0"
   },
+  "extensionKind": [
+    "workspace"
+  ],
   "categories": [
     "Other"
   ],
@@ -375,7 +378,7 @@
         },
         {
           "command": "openMarkdownReview.deleteReview",
-          "when": "view == openMarkdownReview.reviews && (viewItem == markdownReviewActive || viewItem == markdownReviewInactive || viewItem == markdownReview05Active || viewItem == markdownReview05Inactive)",
+          "when": "view == openMarkdownReview.reviews && openMarkdownReview.workspaceTrashAvailable && (viewItem == markdownReviewActive || viewItem == markdownReviewInactive || viewItem == markdownReview05Active || viewItem == markdownReview05Inactive)",
           "group": "reviewRemoval@2"
         },
         {

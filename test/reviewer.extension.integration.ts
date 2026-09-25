@@ -140,6 +140,13 @@ export async function reviewerAndSidebar(extensionPath: string, temporary: strin
     await host.refreshList();
     assert.equal(host.getChildren().find(item => item.entry.root === received)?.entry.availability, 'unavailable');
     assert.equal(host.getChildren().length, 2, 'A temporarily unavailable shared review remains visible and retryable.');
+    await context.workspaceState.update('professional.activeRoot', received);
+    const unavailableRestore = new ProfessionalHost(context);
+    await unavailableRestore.restore();
+    assert.equal(unavailableRestore.active, undefined, 'A missing saved package does not become active or fail extension startup.');
+    assert.equal(unavailableRestore.getChildren().find(item => item.entry.root === received)?.entry.availability, 'unavailable');
+    assert.equal(context.workspaceState.get('professional.activeRoot'), undefined, 'A missing saved package is cleared as the active startup target.');
+    unavailableRestore.dispose();
     await writeFile(path.join(received, 'manifest.json'), receivedManifest);
     await host.refreshList();
     assert.equal(host.getChildren().find(item => item.entry.root === received)?.entry.availability, 'available');

@@ -74,9 +74,11 @@ test('evaluation VSIX packages are marked pre-release and unknown channels fail 
 test('checked-in release discloses limitations and cannot bypass the professional CLI gate', async () => {
   const actualPkg = JSON.parse(await readFile('package.json', 'utf8'));
   const qualification = JSON.parse(await readFile('release-qualification.json', 'utf8'));
-  const policy = releasePolicy(actualPkg, qualification, true);
-  const notes = await readFile(policy.notesFile, 'utf8');
-  if (policy.prerelease) {
+  const publicationApproved = qualification.publication?.approved === true && qualification.publication?.approvedBy === 'user';
+  const policy = publicationApproved ? releasePolicy(actualPkg, qualification, true) : undefined;
+  if (!publicationApproved) assert.throws(() => releasePolicy(actualPkg, qualification, true), /not approved|explicit recorded user approval/i);
+  const notes = await readFile(policy?.notesFile ?? `docs/releases/${actualPkg.version}.md`, 'utf8');
+  if (policy?.prerelease) {
     assert.match(notes, /evaluation pre-release/i);
   }
   if (!qualification.professionalPilotApproved) {
@@ -88,5 +90,5 @@ test('checked-in release discloses limitations and cannot bypass the professiona
   const publicationGate = spawnSync(process.execPath, ['scripts/verify-release-qualification.mjs', '--publication'], {
     encoding: 'utf8', env: { ...process.env, GITHUB_OUTPUT: '' },
   });
-  assert.equal(publicationGate.status, 0, publicationGate.stderr);
+  assert.equal(publicationGate.status, publicationApproved ? 0 : 1, publicationGate.stderr);
 });

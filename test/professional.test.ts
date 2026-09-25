@@ -18,6 +18,8 @@ import { applyAcceptedSuggestion } from '../src/professional/applySuggestion';
 import { mapWithConcurrency } from '../src/protocol/concurrency';
 import { archiveFindingIndex } from '../src/professional/export';
 import { inspectReviewPackage, inspectSourceBinding, relocateReviewPackage } from '../src/professional/relocation';
+import { nextReviewStorageRoot, transientReviewLocation } from '../src/professional/locations';
+import { findMarkdownFiles } from '../src/protocol/snapshot';
 
 class MemoryStorage implements Storage {
   identity = 'memory'; writable = true; files = new Map<string, Uint8Array>(); journals = new Map<string, JournalEntry>();
@@ -99,7 +101,7 @@ test('0.5 content publication retries exact partial bytes and rejects foreign pa
   assert.equal(s.journals.get('op')?.acknowledged, false);
   s.failWrite = false; await publish(s, 'op', f, bytes); await publish(s, 'op', f, bytes);
   assert.equal(s.journals.get('op')?.acknowledged, true);
-  s.files.delete(f.path); await assert.rejects(publish(s, 'op', f, bytes), /acknowledged/);
+  s.files.delete(f.path); await assert.rejects(publish(s, 'op', f, bytes), /acknowledged.*events\/item\.json/);
   const foreign = new MemoryStorage(); foreign.files.set(f.path, bytes.slice(0, 3));
   await assert.rejects(publish(foreign, 'foreign', f, bytes), /overwrite/);
 });
@@ -289,6 +291,35 @@ async function authorFixture() {
   const request = { source, store, rootDocument: 'a.md', actor, operationId: 'create_fixture', clientArtifact: path.resolve('dist/OpenMarkdownReview.html'), journalRoot: journal };
   return { temporary, request, journal };
 }
+test('0.5.6 chooses a fresh durable default and excludes generated preview Markdown', async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'omr-location-')), source = path.join(temporary, 'source');
+  await mkdir(path.join(source, '.local-preview/virtual-docs'), { recursive: true });
+  await writeFile(path.join(source, 'a.md'), '# Source\n');
+  await writeFile(path.join(source, '.local-preview/virtual-docs/generated.md'), '# Generated\n');
+  assert.equal(await nextReviewStorageRoot(source), path.join(source, '.review'));
+  await mkdir(path.join(source, '.review')); await writeFile(path.join(source, '.review/partial'), 'incomplete');
+  assert.equal(await nextReviewStorageRoot(source), path.join(source, '.review-2'));
+  assert.deepEqual(await findMarkdownFiles(source), ['a.md']);
+  assert.match(transientReviewLocation(path.join(source, '.local-preview/virtual-docs/.review')) ?? '', /generated \.local-preview tree/);
+});
+test('0.5.6 rejects transient package roots and identifies extensionless supported images by bytes', async () => {
+  const transientFixture = await authorFixture();
+  await assert.rejects(authorReview({ ...transientFixture.request, store: path.join(transientFixture.temporary, '.local-preview/virtual-docs/.review') }), /generated \.local-preview tree/);
+
+  const { request } = await authorFixture();
+  await mkdir(path.join(request.source, 'images'));
+  await writeFile(path.join(request.source, 'images/pixel'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
+  await writeFile(path.join(request.source, 'a.md'), '# Image\n\n![Pixel](images/pixel)\n');
+  await authorReview(request);
+  const session = new ReviewSession(new NativeStorage(request.store, request.journalRoot)); await session.open();
+  assert.equal(session.revision?.resources[0]?.mediaType, 'image/png');
+
+  const unsupported = await authorFixture();
+  await mkdir(path.join(unsupported.request.source, 'images'));
+  await writeFile(path.join(unsupported.request.source, 'images/unknown'), 'not an image');
+  await writeFile(path.join(unsupported.request.source, 'a.md'), '# Image\n\n![Unknown](images/unknown)\n');
+  await assert.rejects(authorReview(unsupported.request), /Unsupported frozen image in a\.md: images\/unknown \(application\/octet-stream\)/);
+});
 test('0.5 authoring creates an identity-bound review launcher, resumes exact revision and refuses nonempty foreign target', async () => {
   const { request } = await authorFixture(), result = await authorReview(request);
   assert.equal(result.outcome, 'completed'); assert.ok(result.revisionId);

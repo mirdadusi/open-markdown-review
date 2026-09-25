@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.6
+
+Focused WSL/remote-workspace reliability hotfix. Core wire version remains 0.5.0 and professional-pilot qualification remains incomplete. See [release notes](docs/releases/0.5.6.md).
+
+- Keep missing or invalid saved packages visible as unavailable without failing extension activation or repeatedly restoring them as active.
+- Select a new empty default package folder after an interrupted capture and refuse package storage below generated `.local-preview` trees.
+- Exclude `.local-preview` Markdown from source discovery.
+- Disable recoverable Delete Review actions in WSL, SSH, container and other remote extension hosts while retaining Remove from List and the no-permanent-delete guarantee.
+- Report the exact missing immutable publication and offending Markdown image reference.
+- Detect extensionless PNG, JPEG, GIF, WebP and SVG resources from bounded captured bytes.
+- Declare workspace extension placement explicitly and document that WSL uses the portable VSIX even on a Windows desktop.
+
 ## 0.5.5
 
 Regular release with known limitations; professional-pilot qualification remains incomplete. Core wire version remains 0.5.0. See [release notes](docs/releases/0.5.5.md).

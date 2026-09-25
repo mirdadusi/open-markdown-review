@@ -13,6 +13,7 @@ import { legacyRemoval } from './reviewRemoval.extension.integration';
 export async function run(): Promise<void> {
   const extension = vscode.extensions.getExtension('mirdadusi.open-markdown-review');
   assert.ok(extension); await extension.activate(); assert.ok(extension.isActive);
+  assert.deepEqual(extension.packageJSON.extensionKind, ['workspace'], 'The extension must execute beside local or remote workspace files; WSL therefore uses the portable target.');
   const commands = await vscode.commands.getCommands(true);
   for (const name of ['initialize', 'connectReview', 'openPackage05', 'updatePortableBrowserClient', 'linkSourceWorkspace', 'publishReviewPackage', 'addComment', 'exportPdf', 'removeReview', 'deleteReview', 'checkForUpdates', 'openUpdateSource']) assert.ok(commands.includes(`openMarkdownReview.${name}`), `Missing command: ${name}`);
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'omr-extension-')), source = path.join(temporary, 'source'), root = path.join(temporary, 'review');
