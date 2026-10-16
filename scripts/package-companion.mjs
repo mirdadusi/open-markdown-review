@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { chmod, lstat, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inject } from 'postject';
+import { COMPANION_SEA_MAIN, COMPANION_SEA_PAYLOAD, companionSeaConfiguration, encodeCompanionAssets } from '../out/src/professional/companionAssets.js';
 
 const repo = fileURLToPath(new URL('../', import.meta.url));
 const target = process.argv[2] ?? `${process.platform}-${process.arch}`;
@@ -58,7 +59,9 @@ const nodeLicense = await download(`https://raw.githubusercontent.com/nodejs/nod
 const notices = Buffer.concat([await readFile(path.join(repo, 'dist/companion-NOTICES.txt')), Buffer.from(`\n\nNode.js ${version} and bundled components\n`), nodeLicense]);
 const noticesPath = path.join(output, 'THIRD-PARTY-NOTICES.txt'); await writeFile(noticesPath, notices);
 const config = path.join(stage, 'sea.json'), blob = path.join(stage, 'sea.blob');
-await writeFile(config, JSON.stringify({ main: path.join(repo, 'dist/companion.js'), output: blob, disableExperimentalSEAWarning: true, useSnapshot: false, useCodeCache: false, assets: { toolbox: path.join(repo, 'dist/OpenMarkdownReview.html'), licenses: noticesPath } }));
+await copyFile(path.join(repo, 'dist/companion.js'), path.join(stage, COMPANION_SEA_MAIN));
+await writeFile(path.join(stage, COMPANION_SEA_PAYLOAD), encodeCompanionAssets(await readFile(path.join(repo, 'dist/OpenMarkdownReview.html'), 'utf8'), notices.toString('utf8')));
+await writeFile(config, JSON.stringify(companionSeaConfiguration()));
 // A cache/snapshot-free preparation blob is portable to the same Node.js
 // version on another OS/architecture. Never mix runtime versions.
 run(process.execPath, ['--experimental-sea-config', config]);

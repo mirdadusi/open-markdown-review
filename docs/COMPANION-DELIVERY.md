@@ -54,4 +54,6 @@ macOS packaging/signing and execution are local on a Mac. Windows/Linux executio
 
 Ordinary builds verify the committed PDF font asset against source font hashes, decoded bytes and metrics; they do not recompress it. gzip headers contain an OS marker, so regenerating during every build would produce different toolbox/executable hashes across macOS, Linux and Windows. Use `node scripts/build-pdf-fonts.mjs --generate` only for an intentional, reviewed font update, then rebuild all client distributions and regenerate the catalog. Common PDF code imports only the client version, never publisher/repository metadata.
 
+SEA packaging uses a fixed relative main filename and one versioned payload containing the toolbox and notices. This avoids embedding a developer/CI checkout path or depending on the host C++ asset-map ordering. A regression test compares preparation blobs from independent staging directories; CI still verifies each final executable against its release pin before execution.
+
 CI success does not grant professional-pilot or publication approval. Native Windows signing/endpoint behavior, macOS notarization, performance budgets, fault qualification and the other recorded release gates remain explicit. SMB qualification remains excluded and untested.
