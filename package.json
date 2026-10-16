@@ -18,6 +18,9 @@
     "node": ">=22",
     "vscode": "^1.90.0"
   },
+  "extensionKind": [
+    "workspace"
+  ],
   "categories": [
     "Other"
   ],
@@ -392,7 +395,7 @@
         },
         {
           "command": "openMarkdownReview.deleteReview",
-          "when": "view == openMarkdownReview.reviews && (viewItem == markdownReviewActive || viewItem == markdownReviewInactive || viewItem == markdownReview05Active || viewItem == markdownReview05Inactive)",
+          "when": "view == openMarkdownReview.reviews && openMarkdownReview.workspaceTrashAvailable && (viewItem == markdownReviewActive || viewItem == markdownReviewInactive || viewItem == markdownReview05Active || viewItem == markdownReview05Inactive)",
           "group": "reviewRemoval@2"
         },
         {

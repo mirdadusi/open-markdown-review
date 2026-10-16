@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, rename, symlink, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { inspectReviewRemoval, removeReview, RemovalActions, ReviewActivity } from '../src/reviewRemoval';
+import { canUseWorkspaceTrash, inspectReviewRemoval, removeReview, RemovalActions, ReviewActivity } from '../src/reviewRemoval';
+
+test('remote extension hosts never claim recoverable workspace trash', () => {
+  assert.equal(canUseWorkspaceTrash(undefined), true);
+  assert.equal(canUseWorkspaceTrash('wsl'), false);
+  assert.equal(canUseWorkspaceTrash('ssh-remote'), false);
+});
 
 async function fixture(legacy = false) {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'omr-removal-')), root = path.join(temporary, 'custom-review');

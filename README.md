@@ -34,7 +34,7 @@ Packaging writes `dist/companion/<target>/StartReview.exe` (Windows) or `StartRe
 
 See [Local companion transport](spec/LOCAL-COMPANION-0.6.md) for security and qualification requirements.
 
-The current development line targets product and wire version **0.6.0**. New reviews use the 0.6 protocol; existing 0.5 packages remain validated and operated under their original 0.5 schemas and capabilities and are never silently upgraded. The latest published Marketplace/GitHub release is still 0.5.5 with its [release notes and limitations](docs/releases/0.5.5.md).
+The current development line targets product and wire version **0.6.0**. New reviews use the 0.6 protocol; existing 0.5 packages remain validated and operated under their original 0.5 schemas and capabilities and are never silently upgraded. The latest published release is 0.5.6, the focused reliability hotfix with [release notes and limitations](docs/releases/0.5.6.md). The development branch retains its durable-location, unavailable-review, remote-host and image-capture fixes.
 
 ## Install
 
@@ -50,7 +50,14 @@ The listing is published under publisher ID `mirdadusi`. Source, release artifac
 
 ### Manual or offline installation
 
-Download the VSIX and matching SHA-256 checksum from the [0.5.5 GitHub release](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.5.5). For Windows x64 use `open-markdown-review-0.5.5-win32-x64.vsix`; for other supported VS Code platforms use `open-markdown-review-0.5.5-portable.vsix`. Run **Extensions: Install from VSIX** in VS Code and reload when prompted.
+Once published, download the VSIX and matching SHA-256 checksum from [GitHub Releases](https://github.com/mirdadusi/open-markdown-review/releases). Artifact choice follows the **extension host**, not only the desktop OS:
+
+| Active extension host | Artifact |
+| --- | --- |
+| Local Windows x64 VS Code | `open-markdown-review-0.5.6-win32-x64.vsix` |
+| WSL, SSH, Dev Container, macOS, Linux, or another supported host | `open-markdown-review-0.5.6-portable.vsix` |
+
+Install the VSIX in the Extensions section for that host and reload when prompted. A WSL workspace uses the portable artifact even when the desktop itself is Windows. **Developer: Show Running Extensions** identifies where the extension executes.
 
 Marketplace installations are checked and updated by VS Code itself. Use **Markdown Review: Check for Updates** from the Command Palette or the extension's context menu to trigger VS Code's Marketplace check and open its update controls. VS Code's `extensions.autoCheckUpdates`, `extensions.autoUpdate`, update delay, per-extension Auto Update choice, and enterprise policy remain authoritative; the extension does not download a second public copy or bypass those controls.
 
@@ -168,7 +175,7 @@ For new restricted reviews, the initiator can select **Add reviewers** in the VS
 
 CLI creation accepts repeatable `--reviewer-email alex@example.com --reviewer-email sam@example.com` parameters. The same authoring service and protocol rules apply to VS Code and CLI creation.
 
-Version 0.5.5 uses one **Reviews** list for current and legacy packages. Creating/opening a review or focusing its toolbox selects it in **Active Review** and the status bar. The selection remains when the toolbox is closed and is restored in the same workspace; sidebar actions reopen the toolbox when needed.
+Version 0.5.6 uses one **Reviews** list for current and legacy packages. Creating/opening a review or focusing its toolbox selects it in **Active Review** and the status bar. The selection remains when the toolbox is closed and is restored in the same workspace; unavailable saved packages remain visible for reconnection but are not repeatedly restored as active.
 
 The identity entered during creation prefills the VS Code toolbox. Later ID/name edits are remembered privately per review in the local VS Code profile. A fresh participant never inherits the creator identity from the shared manifest, HTML or received workspace settings. Browser participants continue choosing their own identity.
 

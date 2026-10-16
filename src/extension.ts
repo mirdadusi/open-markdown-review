@@ -65,7 +65,7 @@ import { SuggestionArgument, ThreadArgument, ThreadsProvider } from "./threadsVi
 import { createAnchor, revealThread } from "./vscodeAnchor";
 import { PackageItem, ProfessionalHost } from "./professional/extensionHost";
 import { ReviewSidebar } from "./reviewSidebar";
-import { removeReview, ReviewActivity } from "./reviewRemoval";
+import { canUseWorkspaceTrash, removeReview, ReviewActivity } from "./reviewRemoval";
 import { sameReviewPath, uniqueReviewPaths } from './reviewPaths';
 import { registerUpdateService } from "./updates/service";
 
@@ -1708,6 +1708,8 @@ export function activate(context: vscode.ExtensionContext): void {
   const controller = new ReviewController(context, threads, reviews, activity);
   const professional = new ProfessionalHost(context, activity);
   const reviewSidebar = new ReviewSidebar(reviews, professional), activeSidebar = new ReviewSidebar(reviews, professional, threads);
+  const workspaceTrashAvailable = canUseWorkspaceTrash(vscode.env.remoteName);
+  void vscode.commands.executeCommand('setContext', 'openMarkdownReview.workspaceTrashAvailable', workspaceTrashAvailable);
   context.subscriptions.push(
     controller,
     professional,
@@ -1733,6 +1735,12 @@ export function activate(context: vscode.ExtensionContext): void {
   const removalItems = () => reviewSidebar.getChildren().filter((item): item is PackageItem | ReviewItem => item instanceof PackageItem || item instanceof ReviewItem);
   for (const [command, mode] of [['removeReview', 'forget'], ['deleteReview', 'trash']] as const) {
     register(`openMarkdownReview.${command}`, async argument => {
+      if (mode === 'trash' && !workspaceTrashAvailable) {
+        const action = 'Remove from List';
+        const selected = await vscode.window.showWarningMessage(`Delete Review is unavailable in the ${vscode.env.remoteName ?? 'remote'} extension host because its filesystem provider does not offer a recoverable OS Trash/Recycle Bin. No permanent deletion will be attempted.`, { modal: true, detail: 'Use Remove from List to disconnect the package without changing its files. Inspect and remove the folder separately from the owning operating system only after preserving any review evidence.' }, action);
+        if (selected === action) await vscode.commands.executeCommand('openMarkdownReview.removeReview', argument);
+        return;
+      }
       if (!argument) argument = (await vscode.window.showQuickPick(removalItems().map(item => ({ label: typeof item.label === 'string' ? item.label : item.label?.label ?? 'Review', description: item instanceof PackageItem ? item.entry.root : item.review.reviewRoot, item })), { title: mode === 'trash' ? 'Choose review to delete' : 'Choose review to remove from your list', ignoreFocusOut: true }))?.item;
       if (!argument) return;
       // Resolve only registered targets. An arbitrary command argument cannot delete a folder.

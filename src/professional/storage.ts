@@ -42,7 +42,7 @@ export async function publish(store: Storage, operation: string, file: FileEvide
     await store.journalPut(operation, { path: file.path, bytes: [], digest: file.digest, acknowledged: true }); return;
   }
   // Acknowledged records intentionally retain no large bytes. Never reconstruct a lost shared file.
-  if (journal?.acknowledged) throw new ProtocolError('integrity', `An acknowledged immutable publication disappeared or changed: ${file.path}.`);
+  if (journal?.acknowledged) throw new ProtocolError('integrity', `An acknowledged immutable publication disappeared or changed: ${file.path}. Preserve the package for inspection and start a new capture in a different empty folder; never reconstruct acknowledged evidence automatically.`);
   if (requireExisting) throw new ProtocolError('integrity', `Previously published review content disappeared or changed: ${file.path}.`);
   const recover = !!journal && !!existing && existing.length < bytes.length && existing.every((b, i) => b === bytes[i]);
   if (existing && !recover) throw new ProtocolError('integrity', `Refusing to overwrite existing file: ${file.path}`);

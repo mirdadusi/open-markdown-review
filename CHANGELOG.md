@@ -30,6 +30,17 @@ Protocol 0.6 adds an interoperable, auditable workflow for processing accepted r
 - Record Markdown `file:` references as auditable-but-non-actionable evidence, matching raw HTML behavior while only HTTPS and mail links remain actionable.
 - Add cancellable document rendering, full verification and offline export preparation, visible Export cancellation, a 20-second Mermaid caller deadline, bounded late-render serialization and no shared export event before the final publication boundary.
 - Add a latency-injected storage workload, keyboard semantic-target interaction and exact received-fixture no-mutation assertions across browser and VS Code paths.
+## 0.5.6
+
+Focused WSL/remote-workspace reliability hotfix. Core wire version remains 0.5.0 and professional-pilot qualification remains incomplete. See [release notes](docs/releases/0.5.6.md).
+
+- Keep missing or invalid saved packages visible as unavailable without failing extension activation or repeatedly restoring them as active.
+- Select a new empty default package folder after an interrupted capture and refuse package storage below generated `.local-preview` trees.
+- Exclude `.local-preview` Markdown from source discovery.
+- Disable recoverable Delete Review actions in WSL, SSH, container and other remote extension hosts while retaining Remove from List and the no-permanent-delete guarantee.
+- Report the exact missing immutable publication and offending Markdown image reference.
+- Detect extensionless PNG, JPEG, GIF, WebP and SVG resources from bounded captured bytes.
+- Declare workspace extension placement explicitly and document that WSL uses the portable VSIX even on a Windows desktop.
 
 ## 0.5.5
 

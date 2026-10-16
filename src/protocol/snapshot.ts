@@ -54,7 +54,7 @@ interface ParsedDocument {
 }
 
 const markdown = new MarkdownIt({ html: false, linkify: true, typographer: false });
-const EXCLUDED_DIRECTORIES = new Set([".git", ".review", ".vscode", "node_modules", "out", "dist"]);
+const EXCLUDED_DIRECTORIES = new Set([".git", ".review", ".vscode", ".local-preview", "node_modules", "out", "dist"]);
 
 function toPosix(relativePath: string): string {
   return relativePath.split(path.sep).join("/");
