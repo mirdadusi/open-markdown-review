@@ -9,5 +9,5 @@
     "@slidev/theme-default": "0.25.0",
     "playwright-chromium": "1.62.1"
   },
-  "overrides": { "dompurify": "3.4.15" }
+  "overrides": { "dompurify": "3.4.17", "katex": "0.18.7", "image-size": "2.0.4" }
 }

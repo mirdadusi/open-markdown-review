@@ -9,7 +9,6 @@
     "note": "0.6 is under development. Publication has not been authorized."
   },
   "blockingGates": [
-    "Current all-dependency security audit and isolated Slidev author-fixture advisory review",
     "Local-companion Windows CI execution, managed-browser/endpoint qualification and production signing",
     "Hard worker termination for an already executing Mermaid render",
     "Remaining source-application cancellation and platform source-save durability/ACL qualification",

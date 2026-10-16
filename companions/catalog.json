@@ -1,8 +1,8 @@
 {
   "schemaVersion": "omr-companion-catalog/1",
   "version": "0.6.0",
-  "companionDigest": "sha256:9ca8a578aa973288b270ff25d6c6c878879e076ee1898599d58b5a4f8aa39408",
-  "toolboxDigest": "sha256:0e05ef1791e912fe706c11be7480244546a8080092a3647eaf6826647c2db4cf",
+  "companionDigest": "sha256:3a310e4a7bdc0b07c57ce0a9b113a2ad6af6dc46675cc879d7069ab02bf193fc",
+  "toolboxDigest": "sha256:aa8a27cda8c67659ac7aa3b0ddcd52d62620ec28dd52306c393f3f552fb275ba",
   "targets": [
     {
       "target": "win32-x64",
@@ -12,22 +12,22 @@
         "target": "win32-x64",
         "nodeVersion": "22.23.1",
         "officialRuntimeSha256": "f8d162c0641dcee512132f3bcf8a68169c7ecb852efd8e1a46c9fec5a0f469ed",
-        "executableSha256": "2228078e93e8b976e8731190dd03eb5c8987d8d47f0b77af9a06dbaaff0e1839",
-        "companionSha256": "9ca8a578aa973288b270ff25d6c6c878879e076ee1898599d58b5a4f8aa39408",
-        "toolboxSha256": "0e05ef1791e912fe706c11be7480244546a8080092a3647eaf6826647c2db4cf",
+        "executableSha256": "29d4a1272aef0d9649e140957a0977be1d328b473a70463b614de3e85c773376",
+        "companionSha256": "3a310e4a7bdc0b07c57ce0a9b113a2ad6af6dc46675cc879d7069ab02bf193fc",
+        "toolboxSha256": "aa8a27cda8c67659ac7aa3b0ddcd52d62620ec28dd52306c393f3f552fb275ba",
         "codeSigning": "unsigned; production signing is a separate release step",
         "qualification": "Packaging is not target-platform runtime qualification."
       },
       "executable": {
         "filename": "StartReview-windows-x64.exe",
-        "byteLength": 97926144,
-        "digest": "sha256:2228078e93e8b976e8731190dd03eb5c8987d8d47f0b77af9a06dbaaff0e1839",
+        "byteLength": 97926656,
+        "digest": "sha256:29d4a1272aef0d9649e140957a0977be1d328b473a70463b614de3e85c773376",
         "url": "https://github.com/mirdadusi/open-markdown-review/releases/download/v0.6.0/StartReview-windows-x64.exe"
       },
       "notices": {
         "filename": "StartReview-windows-x64.exe.NOTICES.txt",
-        "byteLength": 406313,
-        "digest": "sha256:bae25308b546bdc02c032552593f6b7936452bc1810bdbbd6e5a6115053ab253",
+        "byteLength": 402890,
+        "digest": "sha256:a02ea0e2b7b655e19a49945d248c02f82e10a0bff2f99a5f6ce7e0bc4f6ea736",
         "url": "https://github.com/mirdadusi/open-markdown-review/releases/download/v0.6.0/StartReview-windows-x64.exe.NOTICES.txt"
       }
     },
@@ -39,22 +39,22 @@
         "target": "darwin-arm64",
         "nodeVersion": "22.23.1",
         "officialRuntimeSha256": "ef28d8fab2c0e4314522d4bb1b7173270aa3937e93b92cb7de79c112ac1fa953",
-        "executableSha256": "77005673456287ff48095c47e4ce49e8b541db6de1a6737d15a77a368a90d622",
-        "companionSha256": "9ca8a578aa973288b270ff25d6c6c878879e076ee1898599d58b5a4f8aa39408",
-        "toolboxSha256": "0e05ef1791e912fe706c11be7480244546a8080092a3647eaf6826647c2db4cf",
+        "executableSha256": "652ae07ff36bdebad982315f34d711d6ce848c6bba8c5fa6ee4f2ca550512e63",
+        "companionSha256": "3a310e4a7bdc0b07c57ce0a9b113a2ad6af6dc46675cc879d7069ab02bf193fc",
+        "toolboxSha256": "aa8a27cda8c67659ac7aa3b0ddcd52d62620ec28dd52306c393f3f552fb275ba",
         "codeSigning": "ad-hoc; not notarized",
         "qualification": "Packaging is not target-platform runtime qualification."
       },
       "executable": {
         "filename": "StartReview-macos-arm64",
         "byteLength": 122856240,
-        "digest": "sha256:77005673456287ff48095c47e4ce49e8b541db6de1a6737d15a77a368a90d622",
+        "digest": "sha256:652ae07ff36bdebad982315f34d711d6ce848c6bba8c5fa6ee4f2ca550512e63",
         "url": "https://github.com/mirdadusi/open-markdown-review/releases/download/v0.6.0/StartReview-macos-arm64"
       },
       "notices": {
         "filename": "StartReview-macos-arm64.NOTICES.txt",
-        "byteLength": 406313,
-        "digest": "sha256:bae25308b546bdc02c032552593f6b7936452bc1810bdbbd6e5a6115053ab253",
+        "byteLength": 402890,
+        "digest": "sha256:a02ea0e2b7b655e19a49945d248c02f82e10a0bff2f99a5f6ce7e0bc4f6ea736",
         "url": "https://github.com/mirdadusi/open-markdown-review/releases/download/v0.6.0/StartReview-macos-arm64.NOTICES.txt"
       }
     },
@@ -66,22 +66,22 @@
         "target": "linux-x64",
         "nodeVersion": "22.23.1",
         "officialRuntimeSha256": "7a8cb04b4a1df4eaf432125324b81b29a088e73570a23259a8de1c65d07fc129",
-        "executableSha256": "d66a41c418a49688e5334e194f6aab7809621e171f982293eba88c4db228e855",
-        "companionSha256": "9ca8a578aa973288b270ff25d6c6c878879e076ee1898599d58b5a4f8aa39408",
-        "toolboxSha256": "0e05ef1791e912fe706c11be7480244546a8080092a3647eaf6826647c2db4cf",
+        "executableSha256": "cfe13de94d6225603a2f7e57bb773f351574a7af2746b61baa15627f4e85a565",
+        "companionSha256": "3a310e4a7bdc0b07c57ce0a9b113a2ad6af6dc46675cc879d7069ab02bf193fc",
+        "toolboxSha256": "aa8a27cda8c67659ac7aa3b0ddcd52d62620ec28dd52306c393f3f552fb275ba",
         "codeSigning": "unsigned; production signing is a separate release step",
         "qualification": "Packaging is not target-platform runtime qualification."
       },
       "executable": {
         "filename": "StartReview-linux-x64",
         "byteLength": 135662784,
-        "digest": "sha256:d66a41c418a49688e5334e194f6aab7809621e171f982293eba88c4db228e855",
+        "digest": "sha256:cfe13de94d6225603a2f7e57bb773f351574a7af2746b61baa15627f4e85a565",
         "url": "https://github.com/mirdadusi/open-markdown-review/releases/download/v0.6.0/StartReview-linux-x64"
       },
       "notices": {
         "filename": "StartReview-linux-x64.NOTICES.txt",
-        "byteLength": 406313,
-        "digest": "sha256:bae25308b546bdc02c032552593f6b7936452bc1810bdbbd6e5a6115053ab253",
+        "byteLength": 402890,
+        "digest": "sha256:a02ea0e2b7b655e19a49945d248c02f82e10a0bff2f99a5f6ce7e0bc4f6ea736",
         "url": "https://github.com/mirdadusi/open-markdown-review/releases/download/v0.6.0/StartReview-linux-x64.NOTICES.txt"
       }
     }

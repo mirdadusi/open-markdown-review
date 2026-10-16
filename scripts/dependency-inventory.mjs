@@ -8,6 +8,7 @@ const root = process.cwd(), seeds = new Set();
 const metadata = profile === 'toolbox' ? ['toolbox'] : profile === 'companion' ? ['toolbox', 'companion'] : ['toolbox', 'extension', 'cli', 'companion'];
 for (const name of metadata) {
   const meta = JSON.parse(await readFile(path.join(root, 'dist', `${name}-metafile.json`), 'utf8'));
+  if (Object.keys(meta.inputs).some(input => input.startsWith('third-party/slidev-parser-core/'))) seeds.add(path.join(root, 'third-party/slidev-parser-core'));
   for (const input of Object.keys(meta.inputs)) {
     const match = /^(.*node_modules\/(?:@[^/]+\/)?[^/]+)\//.exec(input);
     if (match) seeds.add(path.resolve(match[1]));
@@ -30,10 +31,6 @@ while (queue.length) {
   // Prebundled pdfmake and Mermaid contain dependencies not individually visible
   // in esbuild metadata. Include their conservative production closure as well.
   for (const name of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies })) {
-    // The pure Slidev parser has no prebundled code: its actual JS imports are
-    // individually visible in esbuild. Its types-only declaration dependency
-    // pulls an entire unused editor/Vue toolchain that is not shipped.
-    if (pkg.name === '@slidev/parser' && name === '@slidev/types') continue;
     const resolved = await dependency(directory, name);
     if (resolved) queue.push(resolved);
     else if (!pkg.optionalDependencies?.[name]) missing.push(`${pkg.name}: ${name}`);
@@ -45,7 +42,8 @@ for (const [directory, pkg] of [...packages].sort((a, b) => compare(a[1].name, b
   const files = (await readdir(directory)).filter(name => /^(?:licen[sc]e|copying|notice)(?:[.-].*)?$/i.test(name)).sort();
   const licenses = [];
   for (const file of files) { try { const text = await readFile(path.join(directory, file), 'utf8'); licenses.push({ file, sha256: createHash('sha256').update(text).digest('hex') }); notices.push(`${pkg.name}@${pkg.version} — ${file}\n${text}`); } catch { /* Some distributions have a license directory. */ } }
-  components.push({ name: pkg.name, version: pkg.version, license: pkg.license ?? 'UNDECLARED', packagePath: path.relative(root, directory).split(path.sep).join('/'), directlyVisibleToBundler: seeds.has(directory), notices: licenses });
+  const upstream = pkg.name === '@open-markdown-review/slidev-parser-core' ? JSON.parse(await readFile(path.join(directory, 'ORIGIN.json'), 'utf8')) : undefined;
+  components.push({ name: pkg.name, version: pkg.version, license: pkg.license ?? 'UNDECLARED', packagePath: path.relative(root, directory).split(path.sep).join('/'), directlyVisibleToBundler: seeds.has(directory), notices: licenses, ...(upstream ? { upstream } : {}) });
 }
 for (const file of ['LICENSE', 'third-party/UNICODE.txt', 'third-party/ROBOTO.txt', 'third-party/NOTO-SYMBOLS.txt', 'third-party/NOTO-MONO.txt']) {
   try { notices.push(`${file}\n${await readFile(file, 'utf8')}`); } catch { if (file.startsWith('third-party/')) throw new Error(`Required data/font notice is missing: ${file}`); }

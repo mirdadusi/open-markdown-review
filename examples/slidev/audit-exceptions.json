@@ -1,8 +1,30 @@
 {
-  "scope": "Isolated CI/example authoring fixture only, never the shipped extension, HTML toolbox or authoring CLI bundle",
-  "reason": "Slidev 52.19.1 includes pptxgenjs/image-size with no published fixed image-size version as of 2026-09-08. OMR invokes only the PNG export path. Received projects are never executed; author capture requires explicit trust. The application dependency audit remains unmodified.",
-  "advisories": ["https://github.com/advisories/GHSA-w3rx-r6r6-pgpr", "https://github.com/advisories/GHSA-5p2g-fcmc-qvqq"],
-  "propagatedPackages": ["image-size", "pptxgenjs", "@slidev/client", "@slidev/cli"],
-  "reviewAfter": "2026-10-08",
-  "remediation": "Remove these exceptions when a fixed upstream dependency becomes available; never broaden to other advisories or use this fixture for PPTX export."
+  "schemaVersion": "omr-fixture-audit-policy/2",
+  "scope": "Isolated trusted CI/local author fixture only; never shipped extension, toolbox, CLI or companion",
+  "approval": "explicit-project-owner-approval",
+  "reviewedOn": "2026-10-16",
+  "reviewAfter": "2026-11-15",
+  "lockDigest": "sha256:c1306e694d2f346370925f6b94217aee56f77bce2b8e035b3284854444b9337f",
+  "advisories": [
+    "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm"
+  ],
+  "reviewedNodes": {
+    "node_modules/@slidev/cli": "52.19.1",
+    "node_modules/@slidev/client": "52.19.1",
+    "node_modules/@slidev/parser": "52.19.1",
+    "node_modules/@slidev/types": "52.19.1",
+    "node_modules/braces": "3.0.3",
+    "node_modules/vite-plugin-static-copy/node_modules/chokidar": "3.6.0",
+    "node_modules/fast-glob": "3.3.3",
+    "node_modules/micromatch": "4.0.8",
+    "node_modules/vite-plugin-static-copy": "4.1.1"
+  },
+  "reason": "No upstream braces fix is published. Deeply nested attacker-controlled glob patterns can exhaust the child process stack. This fixture runs only the repository-owned trusted PNG deck, themes and static asset patterns, never received projects. Residual author-fixture denial-of-service risk was explicitly accepted by the project owner for at most 30 days, not declared fixed.",
+  "controls": [
+    "Exact lockfile and affected-node version binding; new high/critical advisories fail closed",
+    "npm ci --ignore-scripts in an isolated fixture; no fixture packages in delivered clients",
+    "Author capture requires explicit project trust and bounded child-process execution",
+    "Full application dependency audit remains unmodified and exception-free"
+  ],
+  "remediation": "Remove this exception when upstream is fixed or the dependency is removed. Any dependency-graph change requires fresh review. Do not automatically extend the deadline. The obsolete image-size exceptions are removed: 2.0.4 is pinned."
 }

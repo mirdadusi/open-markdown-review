@@ -1,4 +1,4 @@
-import { parseSync, extractImagesUsage } from '@slidev/parser/core';
+import { parseSync, extractImagesUsage } from '@open-markdown-review/slidev-parser-core';
 import { parseDocument } from 'yaml';
 import { encode, safePath } from '../bytes';
 import { LIMITS, ProtocolError } from '../types';

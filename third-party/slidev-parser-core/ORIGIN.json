@@ -1,0 +1,12 @@
+{
+  "upstreamPackage": "@slidev/parser",
+  "upstreamVersion": "52.19.1",
+  "tarball": "https://registry.npmjs.org/@slidev/parser/-/parser-52.19.1.tgz",
+  "integrity": "sha512-YZod+aSjRJDkGPVBBoHGvw57j4HaHDMOmsdBsrLm03xs3fLaZ1t2/mOrMIdLlPnRDPXWqbswkRkKen+0/oqzlQ==",
+  "files": {
+    "core.mjs": "ccd26d1b2ccde61efc1ffbae754b53813f2d14b5994b1ce64136c3d6b235402d",
+    "utils.mjs": "b4b34011f1a932283b5ce66cdf79d780311a61646ad50779007b96360748a623",
+    "LICENSE": "42ccc89fea49360da73708efaad553c018a4959baa1d7e51e4ff7b721e31b1a2"
+  },
+  "changes": "Unmodified upstream pure parser modules. Local packaging omits filesystem/project execution entry points and the types-only editor/Vue toolchain dependency."
+}

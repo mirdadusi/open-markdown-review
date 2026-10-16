@@ -6,6 +6,8 @@ Review Markdown collaboratively without a dedicated review server. Authors work 
 
 There is no dedicated application server, browser extension, required cloud account, or separate review database. The optional companion is a process on each reviewer's own computer. A package can live on ordinary disk, Git, a mounted network folder, or a folder synchronized by the participants' chosen storage provider.
 
+Dependency security, retained Slidev parser provenance and the separately approved test-fixture exception are documented in the [dated dependency review](docs/DEPENDENCY-SECURITY.md). The application's audit has no exceptions; fixture approval is not publication approval.
+
 ## Optional local companion (0.6.0 development)
 
 Review creation now offers **Windows x64**, **macOS Apple Silicon** and **Linux x64** companion checkboxes. Select any combination, or none for HTML/VS Code only. The creator needs no compiler: exact prebuilt clients are verified before review publication, cached privately and copied beside the manifest with distinct platform filenames, checksums, notices and instructions. Uncached platforms need the matching published release assets. The VSIX contains the trusted catalog, not every native executable. See [creation, offline-cache, CLI and qualification details](docs/COMPANION-DELIVERY.md).

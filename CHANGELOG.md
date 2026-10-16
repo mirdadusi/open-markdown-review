@@ -2,6 +2,8 @@
 
 ## 0.6.0 (in development)
 
+- Remediate the complete application dependency audit without exceptions. Upgrade packaging/security dependencies, retain the exact MIT Slidev v1 pure parser without its unused editor/build toolchain, verify source/license provenance and compare against upstream. Remove the fixed image-size exceptions; bind the single project-owner-approved isolated-fixture braces exception to exact lockfile/versions and a 30-day expiry, with fail-closed policy tests.
+
 - Add Windows x64, macOS Apple Silicon and Linux x64 companion selection to review creation and equivalent repeatable CLI parameters. Verify pinned distributions before core publication, stream downloads/hashes, reuse a private offline cache, show installation progress, and give each selected platform distinct executable/checksum/receipt/notice names in one review package.
 - Add actual packaged-companion collaboration/PDF E2E qualification and VS Code creation-form coverage. Keep platform runtime packaging separate from native execution, managed-endpoint approval and signing qualification.
 - Patch Sharp/WASM and compatible transitive dependencies for newly reported advisories; retain the full dependency audit as a release-readiness gate.

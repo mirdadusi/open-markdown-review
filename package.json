@@ -518,7 +518,7 @@
     "build:webview": "esbuild src/webview/review.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=media/review.js --minify && esbuild src/webview/setup.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=media/setup.js --minify",
     "build:portable-browser": "esbuild src/professional/toolbox.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=dist/portable-browser.js --minify --metafile=dist/toolbox-metafile.json && node scripts/dependency-inventory.mjs toolbox && node scripts/assemble-portable-browser.mjs",
     "build:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/extension.js --external:vscode --external:sharp --minify --metafile=dist/extension-metafile.json && node scripts/copy-pdfkit-assets.mjs",
-    "build:schemas": "node scripts/build-professional-schemas.mjs && node scripts/build-pdf-fonts.mjs",
+    "build:schemas": "node scripts/verify-slidev-parser.mjs && node scripts/build-professional-schemas.mjs && node scripts/build-pdf-fonts.mjs",
     "build:cli": "esbuild src/professional/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:playwright --metafile=dist/cli-metafile.json",
     "build:companion": "esbuild src/professional/companionCli.ts --bundle --platform=node --format=cjs --target=node22 --outfile=dist/companion.js --metafile=dist/companion-metafile.json",
     "package:companion": "npm run compile && node scripts/package-companion.mjs",
@@ -527,7 +527,7 @@
     "compile": "npm run build:schemas && npm run build:webview && tsc -p tsconfig.json && npm run build:extension && npm run build:portable-browser && npm run build:cli && npm run build:companion && node scripts/dependency-inventory.mjs companion && node scripts/dependency-inventory.mjs runtime && node scripts/companion-catalog.mjs copy",
     "verify:companions": "node scripts/companion-catalog.mjs verify",
     "watch": "tsc -w -p tsconfig.json",
-    "test": "npm run compile && node --test out/test/*.test.js test/release-policy.test.mjs",
+    "test": "npm run compile && node --test out/test/*.test.js test/*.test.mjs",
     "test:browser": "npm run compile && node --test out/test/browser.integration.js",
     "test:extension": "npm run compile && node scripts/test-extension.mjs",
     "check": "npm run test",
@@ -541,23 +541,24 @@
   "dependencies": {
     "@img/sharp-wasm32": "0.35.5",
     "@noble/hashes": "1.8.0",
-    "markdown-it": "^14.1.0",
+    "markdown-it": "^14.3.1",
     "pdfkit": "^0.17.2",
     "pdfmake": "0.3.11",
     "sharp": "^0.35.5",
     "svg-to-pdfkit": "^0.1.8"
   },
   "overrides": {
-    "dompurify": "3.4.15"
+    "dompurify": "3.4.17",
+    "katex": "0.18.7"
   },
   "devDependencies": {
-    "@slidev/parser": "52.19.1",
+    "@open-markdown-review/slidev-parser-core": "file:third-party/slidev-parser-core",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.10.0",
     "@types/pdfkit": "^0.17.3",
     "@types/vscode": "^1.90.0",
     "@vscode/test-electron": "^3.1.0",
-    "@vscode/vsce": "^3.9.2",
+    "@vscode/vsce": "4.0.0",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "esbuild": "^0.25.9",
@@ -567,6 +568,6 @@
     "playwright": "1.62.1",
     "postject": "1.0.0-alpha.6",
     "typescript": "^5.7.2",
-    "yaml": "2.9.0"
+    "yaml": "2.9.1"
   }
 }
