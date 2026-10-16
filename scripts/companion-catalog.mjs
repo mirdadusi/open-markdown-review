@@ -31,7 +31,10 @@ if (mode === 'generate') {
 } else if (!['copy', 'verify'].includes(mode)) throw new Error('Use copy, generate or verify.');
 const catalog = JSON.parse(await readFile(catalogPath, 'utf8'));
 if (catalog.schemaVersion !== 'omr-companion-catalog/1' || catalog.version !== pkg.version || catalog.targets.length !== targets.length) throw new Error('Prepare a matching three-platform companion catalog.');
-if (mode === 'verify' && (hash(await readFile(path.join(root, 'dist/companion.js'))) !== catalog.companionDigest || hash(await readFile(path.join(root, 'dist/OpenMarkdownReview.html'))) !== catalog.toolboxDigest)) throw new Error('Companion catalog does not match the compiled client.');
+if (mode === 'verify') {
+  const actual = { companionDigest: hash(await readFile(path.join(root, 'dist/companion.js'))), toolboxDigest: hash(await readFile(path.join(root, 'dist/OpenMarkdownReview.html'))) };
+  if (actual.companionDigest !== catalog.companionDigest || actual.toolboxDigest !== catalog.toolboxDigest) throw new Error(`Companion catalog does not match the compiled client: ${JSON.stringify({ expected: { companionDigest: catalog.companionDigest, toolboxDigest: catalog.toolboxDigest }, actual })}`);
+}
 await mkdir(path.join(root, 'dist'), { recursive: true });
 await copyFile(catalogPath, path.join(root, 'dist/companion-catalog.json'));
 console.log(`Companion catalog ${mode}: ${catalog.version}, ${catalog.targets.map(t => t.target).join(', ')}`);

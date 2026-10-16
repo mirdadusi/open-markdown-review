@@ -24,7 +24,7 @@ import revisionSchema06 from '../../protocol/schemas/v0.6/revision.schema.json';
 import policySchema06 from '../../protocol/schemas/v0.6/policy.schema.json';
 import verificationSchema06 from '../../protocol/schemas/v0.6/verification.schema.json';
 import inventorySchema06 from '../../protocol/schemas/v0.6/inventory.schema.json';
-import clientPackage from '../../package.json';
+import { version as clientVersion } from '../../package.json';
 import { loadSlidev } from './profiles/slidev';
 import { SANITIZED_HTML_PROFILE, SANITIZED_HTML_VERSION } from './html';
 import { OperationControl, checkpoint, interruptible } from './operation';
@@ -95,7 +95,7 @@ export async function exportAudit(context: ActionContext, captured?: CapturedAud
   const schemaSet = audit.manifest.protocolVersion === '0.6.0'
     ? { event: eventSchema06, manifest: manifestSchema06, revision: revisionSchema06, policy: policySchema06, verification: verificationSchema06, inventory: inventorySchema06 }
     : { event: eventSchema05, manifest: manifestSchema05, revision: revisionSchema05, policy: policySchema05, verification: verificationSchema05, inventory: inventorySchema05 };
-  const renderer: Renderer = { client: 'open-markdown-review-shared', clientVersion: clientPackage.version, markdownVersion: markdownPackage.version, mermaidVersion: mermaidPackage.version, pdfEngine: `pdfmake ${pdfPackage.version}; ${PDF_LAYOUT_VERSION}`, fontSetDigest: digest(jsonBytes({ roboto: fonts, additional: pdfFontSources })), sanitizerVersion: `${audit.revision.renderer.markdownProfile === SANITIZED_HTML_PROFILE ? SANITIZED_HTML_VERSION : 'omr-html-disabled'}+${SVG_SANITIZER_VERSION}`, schemaSetDigest: digest(jsonBytes(schemaSet)) };
+  const renderer: Renderer = { client: 'open-markdown-review-shared', clientVersion, markdownVersion: markdownPackage.version, mermaidVersion: mermaidPackage.version, pdfEngine: `pdfmake ${pdfPackage.version}; ${PDF_LAYOUT_VERSION}`, fontSetDigest: digest(jsonBytes({ roboto: fonts, additional: pdfFontSources })), sanitizerVersion: `${audit.revision.renderer.markdownProfile === SANITIZED_HTML_PROFILE ? SANITIZED_HTML_VERSION : 'omr-html-disabled'}+${SVG_SANITIZER_VERSION}`, schemaSetDigest: digest(jsonBytes(schemaSet)) };
   const state = fold(audit.events, audit.revision.id);
   const reviewers = reviewerProgress(audit.manifest, audit.events, audit.revision.id);
   const actorLabel = (event: Event) => { const email = reviewers.find(reviewer => reviewer.id === event.actor.id)?.email; return event.actor.displayName ? `${event.actor.displayName}${email ? ` <${email}>` : ''}` : email ?? event.actor.id; };

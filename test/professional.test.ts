@@ -37,6 +37,13 @@ class MemoryStorage implements Storage {
 }
 const actor = { id: 'reviewer', displayName: 'Reviewer' };
 const time = '2026-09-08T12:00:00.000Z';
+test('shared toolbox embeds client version without publisher-specific package metadata', async () => {
+  const html = await readFile(path.resolve('dist/OpenMarkdownReview.html'), 'utf8');
+  const pkg = JSON.parse(await readFile(path.resolve('package.json'), 'utf8'));
+  assert.ok(html.includes(pkg.version));
+  assert.equal(html.includes(pkg.repository.url), false, 'A shared toolbox must not embed distribution-specific repository URLs.');
+  assert.equal(html.includes('package:marketplace:vsix'), false, 'Build scripts do not belong in the shared runtime.');
+});
 test('0.6 bounded binary recovery encoding round-trips across chunk and padding boundaries', () => {
   for (const length of [0, 1, 2, 3, 12287, 12288, 12289, 100000]) {
     const bytes = Uint8Array.from({ length }, (_, i) => i % 256), encoded = toBase64(bytes);
