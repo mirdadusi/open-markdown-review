@@ -9,10 +9,11 @@ import { chromium } from 'playwright';
 import { reviewerAndSidebar } from './reviewer.extension.integration';
 import { legacyRemoval } from './reviewRemoval.extension.integration';
 import { creationSetup } from './creation.extension.integration';
+import packageJson from '../package.json';
 
 /** Actual extension host smoke test; browser tests separately exercise shared UI actions. */
 export async function run(): Promise<void> {
-  const extension = vscode.extensions.getExtension('mirdadusi.open-markdown-review');
+  const extension = vscode.extensions.getExtension(`${packageJson.publisher}.${packageJson.name}`);
   assert.ok(extension); await extension.activate(); assert.ok(extension.isActive);
   assert.deepEqual(extension.packageJSON.extensionKind, ['workspace'], 'The extension must execute beside local or remote workspace files; WSL therefore uses the portable target.');
   const commands = await vscode.commands.getCommands(true);

@@ -109,7 +109,8 @@ test('companion expires when unused and refuses unsafe launch parameters and sha
   await assert.rejects(fetch(helper.origin));
   assert.equal(companionArguments(['--store', f.root, '--no-open'], f.source).root, f.root);
   assert.equal(companionArguments([], f.root).root, f.root);
-  for (const args of [['--host', '0.0.0.0'], ['--store', '../review'], ['--store'], ['--no-open', '--no-open']]) assert.throws(() => companionArguments(args, f.root));
+  assert.equal(companionArguments(['--recovery-root', f.temporary], f.root).journalRoot, f.temporary);
+  for (const args of [['--host', '0.0.0.0'], ['--store', '../review'], ['--store'], ['--recovery-root', '../private'], ['--no-open', '--no-open']]) assert.throws(() => companionArguments(args, f.root));
   await rename(f.root, path.join(f.temporary, 'retired'));
 });
 

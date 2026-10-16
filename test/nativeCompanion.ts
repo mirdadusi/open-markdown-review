@@ -17,7 +17,7 @@ export async function nativeCompanion(root: string, privateHome: string, reviewI
   assert.ok(expected && path.isAbsolute(expected), 'Native qualification requires an explicit absolute executable.');
   assert.deepEqual(await companionFileDigest(executable), await companionFileDigest(expected), 'Creation delivered the exact packaged executable.');
   await mkdir(privateHome, { recursive: true });
-  const child = spawn(executable, ['--no-open'], { cwd: privateHome, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HOME: privateHome, USERPROFILE: privateHome, NODE_PATH: '', NODE_OPTIONS: '' } });
+  const child = spawn(executable, ['--recovery-root', privateHome, '--no-open'], { cwd: privateHome, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NODE_PATH: '', NODE_OPTIONS: '' } });
   let stderr = '', timer: NodeJS.Timeout;
   child.stderr.on('data', bytes => { stderr += bytes.toString(); });
   const exited = new Promise<number | null>((resolve, reject) => { child.once('exit', resolve); child.once('error', reject); });
@@ -31,5 +31,13 @@ export async function nativeCompanion(root: string, privateHome: string, reviewI
     });
   } catch (error) { if (child.exitCode === null) child.kill('SIGTERM'); await exited; throw error; }
   finally { clearTimeout(timer!); }
-  return { url, origin: new URL(url).origin, root, reviewId, closed: exited.then(code => { assert.equal(code, 0, stderr); }), close: async () => { if (child.exitCode === null) child.kill('SIGTERM'); await exited; } };
+  const local = new URL(url), closed = exited.then(code => { assert.equal(code, 0, stderr); });
+  return { url, origin: local.origin, root, reviewId, closed, close: async () => {
+    if (child.exitCode === null) {
+      const token = new URLSearchParams(local.hash.slice(1)).get('omr-session')!;
+      const response = await fetch(local.origin + '/api/rpc', { method: 'POST', headers: { Origin: local.origin, 'Content-Type': 'application/json', 'X-OMR-Session': token }, body: JSON.stringify({ method: 'stop', args: [] }) });
+      assert.equal(response.status, 200, 'Native qualification uses the graceful stop API, including on Windows.');
+    }
+    await closed;
+  } };
 }

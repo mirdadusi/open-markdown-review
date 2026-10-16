@@ -17,7 +17,7 @@ export function openCompanionBrowser(url: string): Promise<void> {
   });
 }
 export function companionArguments(argv: string[], executableDirectory: string) {
-  let root = executableDirectory, open = true, help = false, licenses = false;
+  let root = executableDirectory, journalRoot: string | undefined, open = true, help = false, licenses = false;
   const seen = new Set<string>();
   for (let index = 0; index < argv.length; index++) {
     const flag = argv[index];
@@ -25,23 +25,23 @@ export function companionArguments(argv: string[], executableDirectory: string) 
     if (flag === '--help') help = true;
     else if (flag === '--licenses') licenses = true;
     else if (flag === '--no-open') open = false;
-    else if (flag === '--store') {
+    else if (flag === '--store' || flag === '--recovery-root') {
       const value = argv[++index];
-      if (!value || value.startsWith('--') || !path.isAbsolute(value)) throw new Error('--store requires an absolute review folder.');
-      root = path.resolve(value);
+      if (!value || value.startsWith('--') || !path.isAbsolute(value)) throw new Error(`${flag} requires an absolute folder.`);
+      if (flag === '--store') root = path.resolve(value); else journalRoot = path.resolve(value);
     } else throw new Error(`Unknown parameter: ${flag}`);
   }
-  return { root, open, help, licenses };
+  return { root, journalRoot, open, help, licenses };
 }
 export async function runCompanion(argv: string[]): Promise<void> {
   const args = companionArguments(argv, isSea() ? path.dirname(process.execPath) : process.cwd());
   if (args.licenses) { process.stdout.write(isSea() ? getAsset('licenses', 'utf8') : await readFile(path.join(__dirname, 'runtime-NOTICES.txt'), 'utf8')); return; }
   if (args.help) {
-    process.stdout.write('Open Markdown Review local companion 0.6.0\nStartReview [--store ABSOLUTE_REVIEW_FOLDER] [--no-open]\nPlace the executable next to manifest.json for double-click opening.\nOnly loopback connections are accepted. No Node.js installation is needed for the packaged executable.\n'); return;
+    process.stdout.write('Open Markdown Review local companion 0.6.0\nStartReview [--store ABSOLUTE_REVIEW_FOLDER] [--recovery-root ABSOLUTE_PRIVATE_FOLDER] [--no-open]\nPlace the executable next to manifest.json for double-click opening.\nRecovery must stay outside the review and private to your OS user.\nOnly loopback connections are accepted. No Node.js installation is needed for the packaged executable.\n'); return;
   }
   const html = isSea() ? getAsset('toolbox', 'utf8') : await readFile(path.join(__dirname, 'OpenMarkdownReview.html'), 'utf8');
   process.stdout.write('Opening the selected review… Shared or synchronized storage can take longer. Keep this launcher open.\n');
-  const companion = await startCompanion({ root: args.root, journalRoot: path.join(os.homedir(), '.open-markdown-review', 'companion-recovery'), html });
+  const companion = await startCompanion({ root: args.root, journalRoot: args.journalRoot ?? path.join(os.homedir(), '.open-markdown-review', 'companion-recovery'), html });
   const stop = () => { void companion.close(); };
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
   process.stdout.write(`Open Markdown Review 0.6.0\nReview folder: ${companion.root}\nLocal address: ${companion.origin}\nKeep this launcher running. Stop with Ctrl+C or the browser's Stop local companion button.\nNo activity for ten minutes stops the helper automatically.\n`);
