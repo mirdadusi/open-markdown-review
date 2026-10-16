@@ -21,6 +21,7 @@ import { archiveFindingIndex } from '../src/professional/export';
 import { inspectReviewPackage, inspectSourceBinding, relocateReviewPackage } from '../src/professional/relocation';
 import { nextReviewStorageRoot, transientReviewLocation } from '../src/professional/locations';
 import { findMarkdownFiles } from '../src/protocol/snapshot';
+import { spawnSync } from 'node:child_process';
 
 class MemoryStorage implements Storage {
   identity = 'memory'; writable = true; files = new Map<string, Uint8Array>(); journals = new Map<string, JournalEntry>();
@@ -37,6 +38,12 @@ class MemoryStorage implements Storage {
 }
 const actor = { id: 'reviewer', displayName: 'Reviewer' };
 const time = '2026-09-08T12:00:00.000Z';
+test('ordinary font builds verify the frozen asset without OS-dependent gzip regeneration', async () => {
+  const file = path.resolve('src/professional/generated/pdf-fonts.json'), before = await readFile(file);
+  const checked = spawnSync(process.execPath, ['scripts/build-pdf-fonts.mjs'], { cwd: process.cwd(), encoding: 'utf8' });
+  assert.equal(checked.status, 0, checked.stderr); assert.match(checked.stdout, /without recompression/);
+  assert.deepEqual(await readFile(file), before);
+});
 test('shared toolbox embeds client version without publisher-specific package metadata', async () => {
   const html = await readFile(path.resolve('dist/OpenMarkdownReview.html'), 'utf8');
   const pkg = JSON.parse(await readFile(path.resolve('package.json'), 'utf8'));

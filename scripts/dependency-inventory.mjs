@@ -22,6 +22,7 @@ async function dependency(directory, name) {
   }
 }
 const packages = new Map(), queue = [...seeds], missing = [];
+const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 while (queue.length) {
   const directory = queue.shift(); if (packages.has(directory)) continue;
   const pkg = JSON.parse(await readFile(path.join(directory, 'package.json'), 'utf8'));
@@ -40,8 +41,8 @@ while (queue.length) {
 }
 if (missing.length) throw new Error(`Incomplete dependency inventory: ${missing.join(', ')}`);
 const components = [], notices = [];
-for (const [directory, pkg] of [...packages].sort((a, b) => a[1].name.localeCompare(b[1].name) || a[1].version.localeCompare(b[1].version))) {
-  const files = (await readdir(directory)).filter(name => /^(?:licen[sc]e|copying|notice)(?:[.-].*)?$/i.test(name));
+for (const [directory, pkg] of [...packages].sort((a, b) => compare(a[1].name, b[1].name) || compare(a[1].version, b[1].version))) {
+  const files = (await readdir(directory)).filter(name => /^(?:licen[sc]e|copying|notice)(?:[.-].*)?$/i.test(name)).sort();
   const licenses = [];
   for (const file of files) { try { const text = await readFile(path.join(directory, file), 'utf8'); licenses.push({ file, sha256: createHash('sha256').update(text).digest('hex') }); notices.push(`${pkg.name}@${pkg.version} — ${file}\n${text}`); } catch { /* Some distributions have a license directory. */ } }
   components.push({ name: pkg.name, version: pkg.version, license: pkg.license ?? 'UNDECLARED', packagePath: path.relative(root, directory).split(path.sep).join('/'), directlyVisibleToBundler: seeds.has(directory), notices: licenses });
