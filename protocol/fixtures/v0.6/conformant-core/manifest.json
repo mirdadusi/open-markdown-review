@@ -1,0 +1,52 @@
+{
+  "protocol": "open-markdown-review",
+  "protocolVersion": "0.6.0",
+  "reviewId": "review_v06_conformance",
+  "title": "Protocol 0.6 conformance fixture",
+  "createdAt": "2026-09-23T08:00:00.000Z",
+  "createdBy": {
+    "id": "fixture-creator",
+    "displayName": "Fixture Creator"
+  },
+  "documents": [
+    "architecture.md"
+  ],
+  "eventDirectory": "events",
+  "revisionDirectory": "revisions",
+  "blobDirectory": "blobs/sha256",
+  "exportDirectory": "exports",
+  "eventLayout": "sha256-flat-v1",
+  "identityProfile": "self-asserted-v1",
+  "limitsProfile": "pilot-v1",
+  "creationOperationId": "fixture_create",
+  "capabilities": [
+    "quote-anchor-v1",
+    "range-anchor-v1",
+    "semantic-anchor-v1",
+    "content-addressed-resources-v1",
+    "revision-parents-v1",
+    "thread-lifecycle-v2",
+    "suggested-edit-v2",
+    "review-stance-v1",
+    "review-policy-v1",
+    "audit-inventory-v1",
+    "creator-thread-control-v1",
+    "thread-addressing-v1",
+    "sanitized-html-v1"
+  ],
+  "requiredCapabilities": [
+    "quote-anchor-v1",
+    "range-anchor-v1",
+    "semantic-anchor-v1",
+    "content-addressed-resources-v1",
+    "revision-parents-v1",
+    "thread-lifecycle-v2",
+    "suggested-edit-v2",
+    "review-stance-v1",
+    "review-policy-v1",
+    "audit-inventory-v1",
+    "creator-thread-control-v1",
+    "thread-addressing-v1",
+    "sanitized-html-v1"
+  ]
+}

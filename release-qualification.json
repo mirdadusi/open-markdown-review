@@ -1,21 +1,21 @@
 {
   "schemaVersion": "omr-release-qualification/1",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "professionalPilotApproved": false,
   "statusReport": "spec/IMPLEMENTATION-STATUS.md",
   "publication": {
-    "channel": "standard",
-    "approved": true,
-    "approvedBy": "user",
-    "approvedOn": "2026-09-23",
-    "note": "User requested a VS Code update mechanism, published through the public upstream Marketplace first and then forward-ported to the enterprise derivative. Protocol behavior and professional-pilot qualification remain unchanged from 0.5.4."
+    "channel": "professional",
+    "approved": false,
+    "note": "0.6 is under development. Publication has not been authorized."
   },
   "blockingGates": [
-    "Interruptible Mermaid rendering deadline",
-    "Remaining participant cancellation and platform source-save durability/ACL qualification",
-    "Containment race and optional-extension conformance",
+    "Local-companion Windows CI execution, managed-browser/endpoint qualification and production signing",
+    "Hard worker termination for an already executing Mermaid render",
+    "Remaining source-application cancellation and platform source-save durability/ACL qualification",
+    "Containment race and independent optional-extension conformance",
     "Windows native browser folder-permission qualification on local disk",
-    "Reference-workload performance and independent user-task acceptance"
+    "Reference-workload performance and independent user-task acceptance",
+    "Protocol 0.6 backward-compatibility and independently developed client interoperability qualification"
   ],
   "excludedQualifications": [
     {

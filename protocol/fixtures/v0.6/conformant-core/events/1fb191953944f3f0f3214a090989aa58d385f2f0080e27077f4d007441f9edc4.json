@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "0.6.0",
+  "id": "event_suggestion_applied",
+  "type": "suggestion.applied",
+  "reviewId": "review_v06_conformance",
+  "revisionId": "revision_fixture_initial",
+  "revisionDigest": "sha256:725b4dc688583721ee32c6805181386da90d89d1f8f072b3732b3551f358a559",
+  "occurredAt": "2026-09-23T08:13:00.000Z",
+  "actor": {
+    "id": "fixture-creator",
+    "displayName": "Fixture Creator"
+  },
+  "operationId": "fixture_suggestion_applied",
+  "suggestionId": "suggestion_durable",
+  "document": "architecture.md",
+  "sourceDigestBefore": "sha256:0e618a91611f45b8c36312b21c546290f8e773417cf55b0151ef12eda1f44faf",
+  "sourceDigestAfter": "sha256:6f7cf0a1ef55a1afd87984df896a605e45c2eb3406722a6e103c7da11ccac6e9",
+  "acceptanceIds": [
+    "event_suggestion_accepted"
+  ]
+}

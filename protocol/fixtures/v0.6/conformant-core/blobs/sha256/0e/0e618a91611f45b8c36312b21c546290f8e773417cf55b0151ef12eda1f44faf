@@ -1,0 +1,16 @@
+# Architecture
+
+The service stores temporary state.
+
+![System boundary](assets/system.svg)
+
+```mermaid
+flowchart LR
+  Author --> Review
+```
+
+| Component | Responsibility |
+| --- | --- |
+| Review package | Immutable evidence |
+
+[External evidence](https://example.com/evidence) · [Owner](mailto:owner@example.com) · [Author file](file:///private/evidence.pdf)

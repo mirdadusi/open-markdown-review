@@ -53,6 +53,15 @@ test('trash error is surfaced once, without permanent fallback or forgetting the
   assert.equal(attempts, 1); assert.deepEqual(a.calls, ['confirm', 'close']);
   assert.ok(await readFile(path.join(f.root, 'manifest.json')));
 });
+test('review removal awaits local companion shutdown and refuses newly completed writes', async () => {
+  const f = await fixture(); let trashed = false;
+  const a = actions({ close: async () => { await new Promise(resolve => setTimeout(resolve, 10)); await writeFile(path.join(f.root, 'events', 'completed-save.json'), '{}'); }, trash: async () => { trashed = true; } });
+  await assert.rejects(removeReview(f.target, 'trash', a.callbacks), /clients were stopping/); assert.equal(trashed, false);
+});
+test('review removal recognizes inert optional companion artifacts without executing them', async () => {
+  const f = await fixture(); await writeFile(path.join(f.root, 'StartReview.exe'), 'inert test data');
+  assert.equal((await inspectReviewRemoval(f.target)).files, 3);
+});
 test('new or changed files during confirmation prevent deletion before closing tabs', async () => {
   for (const changed of ['events/new.json', 'events/event.json']) {
     const f = await fixture(), a = actions({ confirm: async () => { await writeFile(path.join(f.root, changed), 'changed'); return true; } });

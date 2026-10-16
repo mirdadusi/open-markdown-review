@@ -31,7 +31,7 @@ export function blobEvidence(bytes: Uint8Array, mediaType: string): FileEvidence
   const hash = digest(bytes).slice(7); return evidence(`blobs/sha256/${hash.slice(0, 2)}/${hash}`, bytes, mediaType);
 }
 /** Exact-intent recovery is local-only. No provider file is repaired without its journal. */
-export async function publish(store: Storage, operation: string, file: FileEvidence, bytes: Uint8Array): Promise<void> {
+export async function publish(store: Storage, operation: string, file: FileEvidence, bytes: Uint8Array, requireExisting = false): Promise<void> {
   if (!store.writable) throw new ProtocolError('permission', 'This connection is read-only.');
   safePath(file.path);
   if (digest(bytes) !== file.digest || bytes.length !== file.byteLength) throw new ProtocolError('invalid', 'Publication bytes differ from intent.');
@@ -42,7 +42,8 @@ export async function publish(store: Storage, operation: string, file: FileEvide
     await store.journalPut(operation, { path: file.path, bytes: [], digest: file.digest, acknowledged: true }); return;
   }
   // Acknowledged records intentionally retain no large bytes. Never reconstruct a lost shared file.
-  if (journal?.acknowledged) throw new ProtocolError('integrity', 'An acknowledged immutable publication disappeared or changed.');
+  if (journal?.acknowledged) throw new ProtocolError('integrity', `An acknowledged immutable publication disappeared or changed: ${file.path}.`);
+  if (requireExisting) throw new ProtocolError('integrity', `Previously published review content disappeared or changed: ${file.path}.`);
   const recover = !!journal && !!existing && existing.length < bytes.length && existing.every((b, i) => b === bytes[i]);
   if (existing && !recover) throw new ProtocolError('integrity', `Refusing to overwrite existing file: ${file.path}`);
   if (!journal) {

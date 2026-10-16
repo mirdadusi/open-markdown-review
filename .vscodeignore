@@ -14,6 +14,10 @@ out/**
 coverage/**
 output/**
 tmp/**
+third-party/fonts/**
+dist/companion/**
+dist/companion-release/**
+companions/**
 **/*.map
 node_modules/**
 **/node_modules/**

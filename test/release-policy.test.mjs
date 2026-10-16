@@ -71,22 +71,24 @@ test('evaluation VSIX packages are marked pre-release and unknown channels fail 
   assert.throws(() => vsixChannelArgs('preview'), /Unknown VSIX release channel/);
 });
 
-test('checked-in release discloses limitations and cannot bypass the professional CLI gate', async () => {
+test('checked-in qualification cannot bypass publication or professional gates', async () => {
   const actualPkg = JSON.parse(await readFile('package.json', 'utf8'));
   const qualification = JSON.parse(await readFile('release-qualification.json', 'utf8'));
-  const policy = releasePolicy(actualPkg, qualification, true);
-  const notes = await readFile(policy.notesFile, 'utf8');
-  if (policy.prerelease) {
-    assert.match(notes, /evaluation pre-release/i);
-  }
-  if (!qualification.professionalPilotApproved) {
-    assert.match(notes, /not approved for the professional pilot/i);
-    assert.match(notes, /SMB.*untested/i);
+  if (qualification.publication?.approved) {
+    const policy = releasePolicy(actualPkg, qualification, true);
+    const notes = await readFile(policy.notesFile, 'utf8');
+    if (policy.prerelease) assert.match(notes, /evaluation pre-release/i);
+    if (!qualification.professionalPilotApproved) {
+      assert.match(notes, /not approved for the professional pilot/i);
+      assert.match(notes, /SMB.*untested/i);
+    }
+  } else {
+    assert.throws(() => releasePolicy(actualPkg, qualification, true), /not approved/);
   }
   const defaultGate = spawnSync(process.execPath, ['scripts/verify-release-qualification.mjs'], { encoding: 'utf8' });
   assert.equal(defaultGate.status, qualification.professionalPilotApproved && !qualification.blockingGates.length ? 0 : 1);
   const publicationGate = spawnSync(process.execPath, ['scripts/verify-release-qualification.mjs', '--publication'], {
     encoding: 'utf8', env: { ...process.env, GITHUB_OUTPUT: '' },
   });
-  assert.equal(publicationGate.status, 0, publicationGate.stderr);
+  assert.equal(publicationGate.status, qualification.publication?.approved ? 0 : 1, publicationGate.stderr);
 });

@@ -1757,7 +1757,7 @@ export function activate(context: vscode.ExtensionContext): void {
               detail: plan ? `${plan.root}\n\n${plan.files} files in ${plan.directories} folders (${(plan.bytes / 1024 / 1024).toFixed(1)} MB), including comments, replies, revisions, frozen content, exports and HTML. Shared/synced deletion affects other participants. Stop all other VS Code, browser and CLI writers first.\n\nOpen review tabs will close and unsaved drafts will be lost. Only Trash/Recycle Bin is attempted; there is no permanent-delete fallback.` : `${root}\n\nShared files and other participants are unaffected. This closes this review's tabs, discards unsaved drafts and removes local resume shortcuts. You can connect it again later.`,
             }, action) === action;
           },
-          close: () => { for (const alias of aliases) { professional.closeReview(alias); controller.closeReview(alias); } },
+          close: async () => { for (const alias of aliases) { await professional.closeReview(alias); controller.closeReview(alias); } },
           trash: target => Promise.resolve(vscode.workspace.fs.delete(vscode.Uri.file(target), { recursive: true, useTrash: true })),
           forget: async () => { for (const alias of aliases) { await controller.forgetReview(alias); await professional.forgetReview(alias); } },
         });
@@ -1767,6 +1767,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
   register("openMarkdownReview.initialize", () => professional.create());
   register("openMarkdownReview.openPackage05", (root) => professional.open(String(root)));
+  register("openMarkdownReview.openInBrowser", (argument) => professional.openInBrowser(argument).then(() => undefined));
   register("openMarkdownReview.showPackageSection", (section) => professional.forward(String(section)));
   register("openMarkdownReview.updatePortableBrowserClient", () => professional.updateClient());
   register("openMarkdownReview.linkSourceWorkspace", (argument) => professional.linkSourceWorkspace(argument).then(() => undefined));

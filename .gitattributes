@@ -1,0 +1,12 @@
+* text=auto eol=lf
+*.png -text
+*.jpg -text
+*.gif -text
+*.webp -text
+*.pdf -text
+*.ttf -text
+*.woff -text
+*.woff2 -text
+# Exact-byte protocol evidence must survive every checkout unchanged.
+protocol/fixtures/** -text -filter -working-tree-encoding
+protocol/schemas/** -text -filter -working-tree-encoding

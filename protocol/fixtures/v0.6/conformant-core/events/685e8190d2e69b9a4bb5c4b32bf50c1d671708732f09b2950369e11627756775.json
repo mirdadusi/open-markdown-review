@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "0.6.0",
+  "id": "event_revision_addressed",
+  "type": "revision.created",
+  "reviewId": "review_v06_conformance",
+  "revisionId": "revision_fixture_addressed",
+  "revisionDigest": "sha256:cdc4055f49476cca2cc3247ef0f5fb54563dfcde1b58f042750163b420718bdb",
+  "occurredAt": "2026-09-23T08:10:00.000Z",
+  "actor": {
+    "id": "fixture-creator",
+    "displayName": "Fixture Creator"
+  },
+  "operationId": "fixture_publish_addressed",
+  "revisionPath": "revisions/revision_fixture_addressed.json"
+}

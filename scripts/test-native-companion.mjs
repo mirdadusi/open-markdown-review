@@ -1,0 +1,21 @@
+import { spawnSync } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = fileURLToPath(new URL('../', import.meta.url)), target = `${process.platform}-${process.arch}`;
+if (!['win32-x64', 'linux-x64', 'darwin-arm64'].includes(target)) throw new Error(`Unsupported native qualification host: ${target}`);
+const catalog = JSON.parse(await readFile(path.join(root, 'dist/companion-catalog.json'), 'utf8'));
+const item = catalog.targets.find(item => item.target === target);
+if (!item) throw new Error(`Missing ${target} catalog entry.`);
+const executable = path.join(root, 'dist/companion', target, process.platform === 'win32' ? 'StartReview.exe' : 'StartReview');
+const bytes = await readFile(executable);
+if (bytes.length !== item.executable.byteLength || `sha256:${createHash('sha256').update(bytes).digest('hex')}` !== item.executable.digest) throw new Error('Native executable differs from the release-pinned catalog.');
+const extension = process.argv[2] === 'extension';
+if (process.argv.length > (extension ? 3 : 2) || process.argv[2] && !extension) throw new Error('Use no argument, or extension.');
+const args = extension ? ['scripts/test-extension.mjs', 'creation'] : ['--test', 'out/test/companion.browser.integration.js', 'out/test/companion.launcher.integration.js'];
+console.log(`Qualifying actual ${target} distribution (${extension ? 'VS Code creation' : 'native browser collaboration, export and launcher'}).`);
+const result = spawnSync(process.execPath, args, { cwd: root, stdio: 'inherit', shell: false, env: { ...process.env, OMR_TEST_COMPANION: executable } });
+if (result.error) throw result.error;
+process.exitCode = result.status ?? 1;

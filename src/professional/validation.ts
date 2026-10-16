@@ -1,21 +1,35 @@
 import MarkdownIt from 'markdown-it';
-import eventSchema from './generated/event';
-import manifestSchema from './generated/manifest';
-import revisionSchema from './generated/revision';
-import policySchema from './generated/policy';
-import verificationSchema from './generated/verification';
-import inventorySchema from './generated/inventory';
+import event05 from './generated/v0.5/event';
+import manifest05 from './generated/v0.5/manifest';
+import revision05 from './generated/v0.5/revision';
+import policy05 from './generated/v0.5/policy';
+import verification05 from './generated/v0.5/verification';
+import inventory05 from './generated/v0.5/inventory';
+import event06 from './generated/v0.6/event';
+import manifest06 from './generated/v0.6/manifest';
+import revision06 from './generated/v0.6/revision';
+import policy06 from './generated/v0.6/policy';
+import verification06 from './generated/v0.6/verification';
+import inventory06 from './generated/v0.6/inventory';
 import folding from './case-folding-15.1.json';
 import { ascii, digest, encode, offsetAt, safePath, stableId } from './bytes';
-import { Event, Manifest, Revision, Policy, ProtocolError, CAPABILITIES, OPTIONAL_CAPABILITIES, LIMITS, StoredContent, Verification, AuditInventory } from './types';
+import { Event, Manifest, Revision, Policy, ProtocolError, CAPABILITIES, OPTIONAL_CAPABILITIES, LIMITS, StoredContent, Verification, AuditInventory, LEGACY_VERSION, THREAD_ADDRESSING, REVIEWER_ROSTER, REVIEWER_COMPLETION, VERSION } from './types';
+import { reviewerEmail, reviewerRoster } from './reviewer';
+import { REVIEWER_INVITATIONS } from './types';
 import { attribute, isAllowedHtmlTag, isAuditedExternalReference, SANITIZED_HTML_PROFILE, scanHtml } from './html';
 
-const schemas = { event: eventSchema, manifest: manifestSchema, revision: revisionSchema, policy: policySchema, verification: verificationSchema, inventory: inventorySchema };
+const schemas = {
+  [LEGACY_VERSION]: { event: event05, manifest: manifest05, revision: revision05, policy: policy05, verification: verification05, inventory: inventory05 },
+  [VERSION]: { event: event06, manifest: manifest06, revision: revision06, policy: policy06, verification: verification06, inventory: inventory06 }
+};
 type Shapes = { event: Event; manifest: Manifest; revision: Revision; policy: Policy; verification: Verification; inventory: AuditInventory };
 export const caseFold = (value: string): string => [...value].map(c => (folding as Record<string, string>)[c] ?? c).join('');
 function requireRule(ok: unknown, message: string): asserts ok { if (!ok) throw new ProtocolError('invalid', message); }
 export function validate<K extends keyof Shapes>(kind: K, value: unknown): Shapes[K] {
-  const schema = schemas[kind] as ((value: unknown) => boolean) & { errors?: unknown[] };
+  const candidate = value as { schemaVersion?: string; protocolVersion?: string } | null;
+  const version = kind === 'manifest' ? candidate?.protocolVersion : candidate?.schemaVersion;
+  if (version !== LEGACY_VERSION && version !== VERSION) throw new ProtocolError('unsupported', `${kind}: unsupported protocol version ${String(version)}`);
+  const schema = schemas[version][kind] as ((value: unknown) => boolean) & { errors?: unknown[] };
   if (!schema(value)) throw new ProtocolError('invalid', `${kind}: ${JSON.stringify(schema.errors?.slice(0, 4))}`);
   const walk = (item: unknown, key = ''): void => {
     if (Array.isArray(item)) { item.forEach(v => walk(v, key)); return; }
@@ -23,22 +37,39 @@ export function validate<K extends keyof Shapes>(kind: K, value: unknown): Shape
     if (typeof item !== 'string') return;
     if (['occurredAt', 'createdAt', 'capturedAt', 'verifiedAt'].includes(key)) requireRule(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:[0-5]\d(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i.test(item), 'Timestamp needs seconds and an explicit timezone.');
     if (['path', 'document', 'rootDocument', 'blobPath', 'revisionPath', 'schemaBlobPath'].includes(key)) safePath(item);
-    if (['text', 'reason', 'replacement', 'note'].includes(key)) requireRule(encode(item).length <= LIMITS.text, 'Text exceeds 32 KiB.');
+    if (['text', 'reason', 'replacement', 'note', 'summary'].includes(key)) requireRule(encode(item).length <= LIMITS.text, 'Text exceeds 32 KiB.');
   };
   walk(value);
   const actor = (a: { id: string }) => requireRule(a.id === a.id.trim() && [...a.id].length <= 128 && !/[\x00-\x1f\x7f-\x9f]/.test(a.id), 'Actor ID contains whitespace or controls.');
   if (kind === 'manifest') {
     const m = value as Manifest; actor(m.createdBy);
+    const presentationCapability = 'presentation-profiles-v1';
     requireRule(CAPABILITIES.every(c => m.capabilities.includes(c) && m.requiredCapabilities.includes(c)), 'Missing core capability.');
+    requireRule(m.protocolVersion !== LEGACY_VERSION || !m.capabilities.includes(THREAD_ADDRESSING), 'Protocol 0.5 cannot advertise 0.6 thread-addressing semantics.');
+    requireRule(m.protocolVersion !== VERSION || m.requiredCapabilities.includes(THREAD_ADDRESSING) && m.requiredCapabilities.includes('creator-thread-control-v1'), 'Protocol 0.6 requires creator-thread-control-v1 and thread-addressing-v1.');
+    requireRule(m.protocolVersion !== LEGACY_VERSION || !m.capabilities.some(c => c === REVIEWER_ROSTER || c === REVIEWER_COMPLETION || c === REVIEWER_INVITATIONS), 'Reviewer rosters, invitations and completion require protocol 0.6.');
+    requireRule(!m.requiredCapabilities.includes(REVIEWER_INVITATIONS) || !!m.reviewers && m.requiredCapabilities.includes(REVIEWER_ROSTER), 'Reviewer invitations require an email roster.');
+    requireRule(!!m.reviewers === m.requiredCapabilities.includes(REVIEWER_ROSTER), 'A reviewer roster and required reviewer-roster-v1 must be declared together.');
+    if (m.reviewers) {
+      requireRule(m.requiredCapabilities.includes(REVIEWER_COMPLETION), 'Email rosters require reviewer-completion-v1.');
+      requireRule(JSON.stringify(m.reviewers) === JSON.stringify(reviewerRoster(m.reviewers.map(r => r.email))), 'Reviewer emails must be canonical, unique, sorted, and bound to their derived IDs.');
+      requireRule(new Set(m.reviewers.map(r => r.id)).size === m.reviewers.length, 'Reviewer IDs must be unique.');
+    }
     requireRule(new Set(m.extensions?.map(e => e.id)).size === (m.extensions?.length ?? 0), 'Duplicate extension declaration.');
+    requireRule(!m.extensions?.length || m.requiredCapabilities.includes(presentationCapability), 'Extension declarations require presentation-profiles-v1 in this protocol version.');
+    requireRule(!m.requiredCapabilities.includes(presentationCapability) || !!m.extensions?.length, 'presentation-profiles-v1 requires an immutable extension declaration.');
     if (m.requiredCapabilities.some(c => ![...CAPABILITIES, ...OPTIONAL_CAPABILITIES].includes(c as typeof CAPABILITIES[number])) || m.extensions?.some(e => e.affectsState)) throw new ProtocolError('unsupported', 'Unsupported required semantics; inspect only.');
     requireRule(m.requiredCapabilities.every(c => m.capabilities.includes(c)), 'Required capabilities must be advertised.');
   }
   if (kind === 'event') {
     const e = value as Event; actor(e.actor);
+    if (e.type === 'reviewer.invited') requireRule(e.reviewer.email === reviewerEmail(e.reviewer.email) && e.reviewer.id === stableId('reviewer', e.reviewer.email), 'Invited reviewer email must be canonical and bound to its derived ID.');
     if ('verification' in e) checkStored(e.verification);
     if (e.type === 'suggestion.applied') requireRule(e.acceptanceIds.length, 'Application requires acceptance evidence.');
+    if (e.type === 'thread.addressed') requireRule(e.decisionIds.length, 'Addressing evidence requires accepted decision evidence.');
     if (e.type === 'thread.decided' && e.decision !== 'accepted') requireRule(e.reason?.trim(), 'A non-acceptance decision requires a reason.');
+    if (e.type === 'thread.addressed') requireRule(e.summary.trim(), 'Addressing evidence requires a summary.');
+    if (e.type === 'thread.verification.recorded' && e.verdict === 'challenged') requireRule(e.note?.trim(), 'A challenged verification requires a note.');
   }
   if (kind === 'revision') {
     const r = value as Revision; actor(r.createdBy);
@@ -70,7 +101,16 @@ export function validate<K extends keyof Shapes>(kind: K, value: unknown): Shape
 export function checkStored(c: StoredContent): void {
   requireRule(c.blobPath === `blobs/sha256/${c.digest.slice(7, 9)}/${c.digest.slice(7)}`, 'Blob path must encode its digest.');
 }
-export const markdown = (profile: Revision['renderer']['markdownProfile'] = 'commonmark-gfm') => new MarkdownIt({ html: profile === SANITIZED_HTML_PROFILE, linkify: false, typographer: false });
+export const markdown = (profile: Revision['renderer']['markdownProfile'] = 'commonmark-gfm') => {
+  const parser = new MarkdownIt({ html: profile === SANITIZED_HTML_PROFILE, linkify: false, typographer: false });
+  // Preserve external references as immutable audit evidence even when a
+  // client is not permitted to navigate to them. Markdown-it rejects file:
+  // links by default, which made Markdown and HTML links produce different
+  // revision inventories. The renderer still allows only https/mailto links.
+  parser.validateLink = reference => isAuditedExternalReference(reference)
+    || /^(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\/\/).+/.test(reference);
+  return parser;
+};
 export function inspect(source: string, document: string, profile: Revision['renderer']['markdownProfile'] = 'commonmark-gfm') {
   const parser = markdown(profile), tokens = parser.parse(source, {}); let tableOrdinal = 0, diagramOrdinal = 0, hasHtml = false;
   const tables: Array<{ id: string; rows: number[] }> = [], diagrams: Revision['mermaidDiagrams'] = [];

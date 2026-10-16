@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.6.0 (in development)
+
+- Add Windows x64, macOS Apple Silicon and Linux x64 companion selection to review creation and equivalent repeatable CLI parameters. Verify pinned distributions before core publication, stream downloads/hashes, reuse a private offline cache, show installation progress, and give each selected platform distinct executable/checksum/receipt/notice names in one review package.
+- Add actual packaged-companion collaboration/PDF E2E qualification and VS Code creation-form coverage. Keep platform runtime packaging separate from native execution, managed-endpoint approval and signing qualification.
+- Patch Sharp/WASM and compatible transitive dependencies for newly reported advisories; retain the full dependency audit as a release-readiness gate.
+
+- Add optional local-companion browser participation: a loopback-only native host opens the shared toolbox without browser directory grants, preserves the existing authoritative package, validates participant events on the host, and supports comments, replies, roles, completion and archived PDFs. Add a VS Code browser-opening command, standalone launcher, per-launch capability and origin/host checks, compact binary transport, private recovery and idle/explicit shutdown. Include checksum-verified Node executable packaging; production signing and managed-Windows qualification remain separate release requirements.
+- Replace equal-star-column PDF conversion with bounded, content-weighted tables, nested cell sizing, controlled long-token wrapping, landscape pages for wide-table documents, natural/declared image sizes and proportional figure limits. Preserve local document/heading/HTML-bookmark links, link source highlights to findings, and add clickable contents and PDF bookmarks.
+- Put reviewer status, stance, last activity, comments and complete responses before document pages. Embed offline monospace and technical-symbol font fallbacks; fail explicitly on unsupported glyphs rather than silently publishing missing text. Record layout and actual font-set identities in export evidence, and qualify every PDF page for text/image bounds, resolved links and Unicode content.
+- Render legacy SVG 1.0/1.1 public declarations safely without fetching DTDs or changing frozen image bytes; retain rejection of entities, custom DTDs, internal subsets and active SVG. Record the updated SVG sanitizer version in export evidence.
+- Keep PDF export progress, errors and saved locations visible across synchronization refreshes; add verified Open PDF / Show in folder actions in VS Code and an explicit browser PDF download. Invoke folder pickers directly from user clicks and explain managed-policy denials without bypassing browser policy.
+- Scope new authoring content-recovery acknowledgements to the review identity, allowing a retired review folder to be reused without stale-journal collisions. Retain exact legacy resume behavior, fail closed on missing/changed acknowledged files, and identify the affected file in integrity errors. Shared protocol formats are unchanged.
+- Add optional immutable email reviewer rosters to the VS Code setup form and repeatable CLI `--reviewer-email` parameters, with shared admission rules and stable participant IDs.
+- Add initiator-only **Add reviewers** in both toolboxes using additive `reviewer.invited` events and explicit invitation dependencies; preserve manifest bytes, existing completion and quorum, and archive the complete invitation history in PDFs.
+- Add revision-specific `review.completed` / `review.reopened` events with exact verification evidence, personal feedback locking, conflict handling and live reviewer progress in both clients.
+- Include every invited reviewer, current completion state, timestamps and full finish/reopen history in offline audit PDFs, independently of approval/rejection.
+
+Protocol 0.6 adds an interoperable, auditable workflow for processing accepted review findings while retaining exact 0.5 validation and behavior for existing packages.
+
+- Add causal `thread.addressed` and `thread.verification.recorded` events tied to accepted decisions and exact descendant revision/document digests.
+- Add deterministic processing states and conflict handling for accepted, addressed, challenged, verified, and disposed findings.
+- Add the shared Creator Workbench in the portable browser and VS Code toolbox, plus exact source navigation in VS Code.
+- Include implementation and verification evidence in offline audit PDFs.
+- Generate and dispatch separate 0.5 and 0.6 schema sets so existing reviews are not silently upgraded.
+- Separate the framework-neutral core protocol from the portable review package profile. HTML, `.gitattributes`, PDF UX and bundled runtimes are product-profile requirements, not another authority or mandatory core files.
+- Add a deterministic, launcher-independent 0.6 conformance package, seven invalid mutations, an independent state oracle, real Chromium loading and VS Code host-bridge coverage.
+- Bind optional presentation declarations to `presentation-profiles-v1`, reject state-affecting extensions, and retain schema evidence for the implemented Slidev profile.
+- Record Markdown `file:` references as auditable-but-non-actionable evidence, matching raw HTML behavior while only HTTPS and mail links remain actionable.
+- Add cancellable document rendering, full verification and offline export preparation, visible Export cancellation, a 20-second Mermaid caller deadline, bounded late-render serialization and no shared export event before the final publication boundary.
+- Add a latency-injected storage workload, keyboard semantic-target interaction and exact received-fixture no-mutation assertions across browser and VS Code paths.
+
 ## 0.5.5
 
 Regular release with known limitations; professional-pilot qualification remains incomplete. Core wire version remains 0.5.0. See [release notes](docs/releases/0.5.5.md).

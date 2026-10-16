@@ -4,20 +4,23 @@ import { readFile } from 'node:fs/promises';
 import { ReviewSetupPanel } from '../setupView';
 import { findMarkdownFiles } from '../protocol/snapshot';
 import { authorReview, AuthorRequest, installClient, installedClientFile, parseClientBinding, updateClient } from './authoring';
-import { NativeStorage } from './nativeStorage';
+import { contained, NativeStorage } from './nativeStorage';
 import { storageRequest } from './bridge';
 import { ReviewSession } from './session';
 import { digest, newId, parseJson } from './bytes';
-import { ActorRef, LIMITS, Policy } from './types';
+import { ActorRef, LIMITS, Policy, VERSION } from './types';
 import { validate } from './validation';
 import { applyAcceptedSuggestion } from './applySuggestion';
 import { SLIDEV_ID, SLIDEV_VERSION } from './profiles/slidev';
 import { SlidevOptions } from './profiles/slidevCapture';
-import { reviewerIdentity } from './reviewer';
+import { effectiveReviewers, reviewerForInput, reviewerIdentity, reviewerRoster } from './reviewer';
 import { ReviewActivity } from '../reviewRemoval';
 import { reviewPathKey, sameReviewPath } from '../reviewPaths';
 import { mapWithConcurrency } from '../protocol/concurrency';
 import { inspectSourceBinding, relocateReviewPackage } from './relocation';
+import { locateQuote } from '../protocol/anchor';
+import { verifiedExportFile } from './exportAccess';
+import { Companion, startCompanion } from './companion';
 
 export interface Entry { root: string; title: string; source?: string; reviewer?: ActorRef; reviewId?: string; availability?: 'available' | 'unavailable'; unavailableReason?: string }
 export class PackageItem extends vscode.TreeItem {
@@ -44,6 +47,8 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
   private readonly readyPanels = new Set<vscode.WebviewPanel>();
   private readonly pendingActions = new Map<vscode.WebviewPanel, unknown[]>();
   private readonly panelRoots = new Map<vscode.WebviewPanel, string>();
+  private readonly companions = new Map<string, Companion>();
+  private readonly companionStarts = new Map<string, Promise<Companion>>();
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   get active() { return this.selected; }
   constructor(private readonly context: vscode.ExtensionContext, private readonly activity = new ReviewActivity()) {
@@ -54,11 +59,13 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
       .sort(this.compareEntries);
   }
   get sourceRoots(): string[] { return this.entries.flatMap(e => e.source ? [e.source] : []); }
-  closeReview(root: string): void {
+  async closeReview(root: string): Promise<void> {
     for (const [panel, panelRoot] of this.panelRoots) if (sameReviewPath(panelRoot, root)) panel.dispose();
+    const companion = this.companions.get(reviewPathKey(root)) ?? await this.companionStarts.get(reviewPathKey(root));
+    if (companion) { await companion.close(); this.companions.delete(reviewPathKey(root)); }
   }
   async forgetReview(root: string): Promise<void> {
-    this.closeReview(root);
+    await this.closeReview(root);
     this.entries = this.entries.filter(e => !sameReviewPath(e.root, root));
     for (const key of this.revisions.keys()) if (sameReviewPath(key, root)) this.revisions.delete(key);
     await this.persistEntries();
@@ -74,7 +81,7 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
     if (!this.active) return [];
     const title = new vscode.TreeItem(this.active.title); title.description = 'Active review'; title.tooltip = this.active.root;
     title.iconPath = new vscode.ThemeIcon('pass-filled'); title.command = { command: 'openMarkdownReview.openReview', title: 'Open review toolbox' };
-    return [title, ...[['Comments', 'threads', 'comment-discussion'], ['Suggested edits', 'suggestions', 'diff'], ['Review history', 'history', 'history']].map(([label, section, icon]) => {
+    return [title, ...[['Creator workbench', 'workbench', 'tools'], ['Comments', 'threads', 'comment-discussion'], ['Suggested edits', 'suggestions', 'diff'], ['Review history', 'history', 'history']].map(([label, section, icon]) => {
       const item = new vscode.TreeItem(label); item.iconPath = new vscode.ThemeIcon(icon);
       item.command = { command: 'openMarkdownReview.showPackageSection', title: `Open ${label.toLowerCase()}`, arguments: [section] }; return item;
     })];
@@ -152,9 +159,33 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
     if (this.active || generation !== this.activationGeneration) return;
     this.revisions.set(entry.root, !!session.revision); await this.select(entry, generation);
   }
-  dispose() { this.changed.dispose(); this.status.dispose(); for (const panel of this.panelRoots.keys()) panel.dispose(); }
+  dispose() { this.changed.dispose(); this.status.dispose(); for (const panel of this.panelRoots.keys()) panel.dispose(); for (const helper of this.companions.values()) void helper.close(); for (const pending of this.companionStarts.values()) void pending.then(helper => helper.close(), () => undefined); this.companions.clear(); }
   private get journalRoot() { return path.join(this.context.globalStorageUri.fsPath, 'professional'); }
   private get artifact() { return path.join(this.context.extensionPath, 'dist', 'OpenMarkdownReview.html'); }
+  /** Open the same authoritative review through a native, loopback-only host. */
+  async openInBrowser(argument?: unknown, openBrowser = true): Promise<string> {
+    if (vscode.env.remoteName) throw new Error('For a remote workspace use the VS Code toolbox, or run StartReview on the reviewer desktop against its local/mounted review folder.');
+    const entry = this.entryFor(argument);
+    if (!entry) throw new Error('Select or connect a review first.');
+    const key = reviewPathKey(entry.root);
+    let helper = this.companions.get(key);
+    if (helper && entry.reviewId && helper.reviewId !== entry.reviewId) { await helper.close(); helper = undefined; }
+    if (!helper) {
+      let pending = this.companionStarts.get(key);
+      if (!pending) {
+        pending = (async () => {
+          const running = await startCompanion({ root: entry.root, journalRoot: this.journalRoot, html: await readFile(this.artifact, 'utf8') });
+          this.companions.set(key, running);
+          void running.closed.then(() => { if (this.companions.get(key) === running) this.companions.delete(key); });
+          return running;
+        })();
+        this.companionStarts.set(key, pending);
+      }
+      try { helper = await pending; } finally { if (this.companionStarts.get(key) === pending) this.companionStarts.delete(key); }
+    }
+    if (openBrowser && !await vscode.env.openExternal(vscode.Uri.parse(helper.url))) throw new Error('The local companion is ready, but the default browser could not be opened. Try Open Review in Browser again.');
+    return helper.url;
+  }
   /** Refresh only lightweight manifest metadata; unavailable shared folders stay visible and retryable. */
   async refreshList(discoveredRoots?: readonly string[]): Promise<void> {
     await this.activity.run(async () => {
@@ -201,6 +232,30 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
     const id = configuration.get<string>('actorId') || await vscode.window.showInputBox({ title: 'Reviewer ID (self-asserted)', prompt: 'Stable identity included in every event', ignoreFocusOut: true, validateInput: v => !v.trim() ? 'Reviewer ID is required.' : undefined });
     if (!id) return; const displayName = configuration.get<string>('actorName') || await vscode.window.showInputBox({ title: 'Display name', ignoreFocusOut: true });
     return { id: id.trim(), ...(displayName?.trim() ? { displayName: displayName.trim() } : {}) };
+  }
+  private async revealSource(entry: Entry, revisionId: string, threadId: string): Promise<{ confidence: 'exact' | 'context' | 'quote' | 'position'; digest: string }> {
+    if (!entry.source) throw new Error('This review has no linked source workspace. Use “Link Local Source Workspace” first.');
+    const session = new ReviewSession(new NativeStorage(entry.root, this.journalRoot)); await session.open(); await session.pin(revisionId);
+    const root = session.events.find(event => event.type === 'comment.created' && event.revisionId === revisionId && event.threadId === threadId);
+    if (root?.type !== 'comment.created') throw new Error('The selected comment is not part of this revision.');
+    const target = await contained(entry.source, root.anchor.document);
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(target));
+    const text = document.getText(), safePosition = (point: { line: number; character: number }) => {
+      const line = Math.min(Math.max(0, point.line), Math.max(0, document.lineCount - 1));
+      return new vscode.Position(line, Math.min(Math.max(0, point.character), document.lineAt(line).range.end.character));
+    };
+    let start = document.offsetAt(safePosition(root.anchor.range.start)), end = document.offsetAt(safePosition(root.anchor.range.end));
+    let confidence: 'exact' | 'context' | 'quote' | 'position' = 'exact';
+    if (text.slice(start, end) !== root.anchor.quote.exact) {
+      const located = locateQuote(text, root.anchor.quote.exact, root.anchor.quote.prefix, root.anchor.quote.suffix, start);
+      if (located) { start = located.start; end = located.end; confidence = located.confidence; }
+      else { end = start; confidence = 'position'; }
+    }
+    const editor = await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside, preview: true });
+    const range = new vscode.Range(document.positionAt(start), document.positionAt(end));
+    editor.selection = new vscode.Selection(range.start, range.end); editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+    if (confidence === 'position') void vscode.window.showWarningMessage('The original quote no longer exists in the linked source. The editor shows its last known position; reconcile it explicitly.');
+    return { confidence, digest: digest(text) };
   }
   private async newSourceRoot(): Promise<string | undefined> {
     const folders = vscode.workspace.workspaceFolders ?? [];
@@ -277,7 +332,7 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
     const storageRoot = entry?.root ?? path.join(source, '.review');
     let session: ReviewSession | undefined;
     if (entry) { session = new ReviewSession(new NativeStorage(storageRoot, this.journalRoot)); await session.open(); }
-    const selected = await ReviewSetupPanel.show(this.context, { initialized: !!entry, workspaceName: path.basename(source), title: entry?.title ?? path.basename(source), availableDocuments: files, selectedDocuments: session?.revision?.documents.map(d => d.path) ?? files, rootDocument: session?.revision?.rootDocument ?? files[0], sourceRoot: source, storageRoot, storageEditable: !entry, portableBrowserDefault: true });
+    const selected = await ReviewSetupPanel.show(this.context, { initialized: !!entry, workspaceName: path.basename(source), title: entry?.title ?? path.basename(source), availableDocuments: files, selectedDocuments: session?.revision?.documents.map(d => d.path) ?? files, rootDocument: session?.revision?.rootDocument ?? files[0], sourceRoot: source, storageRoot, storageEditable: !entry, portableBrowserDefault: true, reviewerEmails: session?.manifest.reviewers?.map(r => r.email) });
     if (!selected) return;
     const format = session ? session.manifest.extensions?.some(e => e.id === SLIDEV_ID) ? 'slidev' : 'markdown' : (await vscode.window.showQuickPick([
       { label: 'Markdown documents', description: 'Standard Markdown, Mermaid, tables and images', key: 'markdown' },
@@ -302,11 +357,12 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
       if (!folders?.length) return; resourceRoots = folders.map(f => f.fsPath);
     }
     if (options.some(o => o.key === 'policy')) {
-      const ids = await vscode.window.showInputBox({ title: 'Eligible reviewer IDs', prompt: 'Comma-separated stable, self-asserted IDs. This does not authenticate users.', ignoreFocusOut: true, validateInput: v => !v.trim() ? 'Enter at least one ID.' : undefined });
-      if (!ids) return; const eligibleActorIds = [...new Set(ids.split(',').map(id => id.trim()).filter(Boolean))];
+      const roster = session?.manifest.reviewers ? effectiveReviewers(session.manifest, session.events) : selected.reviewerEmails?.length ? reviewerRoster(selected.reviewerEmails) : undefined;
+      const ids = roster ? undefined : await vscode.window.showInputBox({ title: 'Eligible reviewer IDs', prompt: 'Comma-separated stable, self-asserted IDs. This does not authenticate users.', ignoreFocusOut: true, validateInput: v => !v.trim() ? 'Enter at least one ID.' : undefined });
+      if (!roster && !ids) return; const eligibleActorIds = roster ? roster.map(r => r.id) : [...new Set(ids!.split(',').map(id => id.trim()).filter(Boolean))];
       const minimum = await vscode.window.showInputBox({ title: 'Minimum approvals', value: String(eligibleActorIds.length), ignoreFocusOut: true, validateInput: v => !/^\d+$/.test(v) || Number(v) < 1 || Number(v) > eligibleActorIds.length ? `Enter 1–${eligibleActorIds.length}.` : undefined });
       if (!minimum) return;
-      policy = validate('policy', { schemaVersion: '0.5.0', kind: 'review-policy', mode: 'quorum-v1', eligibleActorIds, minimumApprovals: Number(minimum), blockOnRejection: true, requireResolvedThreads: true, requireClosedSuggestions: true });
+      policy = validate('policy', { schemaVersion: session?.manifest.protocolVersion ?? VERSION, kind: 'review-policy', mode: 'quorum-v1', eligibleActorIds, minimumApprovals: Number(minimum), blockOnRejection: true, requireResolvedThreads: true, requireClosedSuggestions: true });
     }
     const actor = await this.actor(); if (!actor) return;
     let parents: string[] | undefined;
@@ -315,7 +371,7 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
       if (!selectedParents?.length) return; parents = selectedParents.map(p => p.label);
     }
     const operationId = newId('author');
-    const request = { source, store: selected.storageRoot, title: selected.title, include: slidev ? [selected.rootDocument] : selected.documentPaths, rootDocument: selected.rootDocument, actor, operationId, parents, policy, resourceRoots, slidev, clientArtifact: this.artifact, journalRoot: this.journalRoot };
+    const request = { source, store: selected.storageRoot, title: selected.title, include: slidev ? [selected.rootDocument] : selected.documentPaths, rootDocument: selected.rootDocument, actor, operationId, parents, policy, resourceRoots, reviewerEmails: selected.reviewerEmails, companionTargets: selected.companionTargets, slidev, clientArtifact: this.artifact, journalRoot: this.journalRoot };
     await this.runCreation(request);
   }
   private async runCreation(request: AuthorRequest, resume = false): Promise<void> {
@@ -332,7 +388,7 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
       try { return await authorReview({ ...request, resume, signal: controller.signal, progress: message => progress.report({ message }) }); }
       finally { subscription.dispose(); }
     });
-    if (result.outcome === 'review-created-client-failed') throw new Error(`Revision was published, but HTML installation failed: ${result.error}. Use Add Portable Browser Client to finish.`);
+    if (result.outcome === 'review-created-client-failed') throw new Error(`Revision was published, but client delivery failed: ${result.error}. Its evidence remains intact. Resume the same creation operation to finish delivery; do not create another review over this folder.`);
     await this.context.globalState.update('professional.pendingAuthoring', this.context.globalState.get<AuthorRequest[]>('professional.pendingAuthoring', []).filter(p => p.operationId !== request.operationId || p.store !== request.store));
     await this.open(result.store, request.source, undefined, request.actor);
   }
@@ -346,7 +402,7 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
     const storage = new NativeStorage(previous?.root ?? root, this.journalRoot), session = new ReviewSession(storage); await session.open();
     const configuration = vscode.workspace.getConfiguration('openMarkdownReview');
     // Only locally chosen identities may prefill the toolbox, never manifest.createdBy.
-    const reviewer = reviewerIdentity(initialReviewer) ?? reviewerIdentity(previous?.reviewer) ?? reviewerIdentity({ id: configuration.inspect<string>('actorId')?.globalValue, displayName: configuration.inspect<string>('actorName')?.globalValue });
+    const reviewer = reviewerForInput(session.manifest, initialReviewer, session.events) ?? reviewerForInput(session.manifest, previous?.reviewer, session.events) ?? reviewerForInput(session.manifest, { id: configuration.inspect<string>('actorId')?.globalValue, displayName: configuration.inspect<string>('actorName')?.globalValue }, session.events);
     const entry: Entry = { root: storage.identity, title: session.manifest.title, reviewId: session.manifest.reviewId, source: source ?? previous?.source, ...(reviewer ? { reviewer } : {}), availability: 'available' };
     this.entries = [entry, ...this.entries.filter(e => !sameReviewPath(e.root, entry.root))].sort(this.compareEntries);
     this.revisions.set(entry.root, session.revisions.size > 0);
@@ -378,12 +434,23 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
           this.readyPanels.add(panel);
           for (const action of this.pendingActions.get(panel) ?? []) await panel.webview.postMessage(action);
           this.pendingActions.delete(panel); await panel.webview.postMessage({ id: message.id, value: true });
+        } else if (message.method === 'openExport' || message.method === 'revealExport') {
+          if (message.args.length !== 1 || typeof message.args[0] !== 'string') throw new Error('Choose an archived PDF export.');
+          const target = await verifiedExportFile(storage, message.args[0]);
+          await vscode.commands.executeCommand(message.method === 'openExport' ? 'vscode.open' : 'revealFileInOS', vscode.Uri.file(target));
+          await panel.webview.postMessage({ id: message.id, value: true });
         } else if (message.method === 'rememberReviewer') {
-          const reviewer = message.args.length === 1 ? reviewerIdentity(message.args[0]) : undefined;
+          await session.refresh();
+          const reviewer = message.args.length === 1 ? reviewerForInput(session.manifest, message.args[0], session.events) : undefined;
           if (!reviewer) throw new Error('Enter a reviewer ID of 1–128 characters without control characters, and an optional display name.');
           this.entries = this.entries.map(e => sameReviewPath(e.root, entry.root) ? { ...e, reviewer } : e).sort(this.compareEntries);
           await this.persistEntries();
           await panel.webview.postMessage({ id: message.id, value: true });
+        } else if (message.method === 'revealSource') {
+          const connected = this.entries.find(current => sameReviewPath(current.root, entry.root));
+          const [revisionId, threadId] = message.args;
+          if (!connected || typeof revisionId !== 'string' || typeof threadId !== 'string') throw new Error('Invalid source-navigation request.');
+          await panel.webview.postMessage({ id: message.id, value: await this.revealSource(connected, revisionId, threadId) });
         } else if (message.method === 'applySuggestion') {
           const source = this.entries.find(current => sameReviewPath(current.root, entry.root))?.source;
           if (!source) throw new Error('This connection has no linked source workspace. Use “Link Local Source Workspace” before applying an edit.');
@@ -403,7 +470,7 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
           await panel.webview.postMessage({ id: message.id, value });
         } else {
           const connected = this.entries.find(e => sameReviewPath(e.root, entry.root));
-          await panel.webview.postMessage({ id: message.id, value: message.method === 'info' ? { identity: storage.identity, writable: true, canApply: !!connected?.source, canRememberReviewer: true, canNotifyReady: true, reviewer: connected?.reviewer } : await storageRequest(storage, message.method, message.args) });
+          await panel.webview.postMessage({ id: message.id, value: message.method === 'info' ? { identity: storage.identity, writable: true, canApply: !!connected?.source, canRememberReviewer: true, canNotifyReady: true, canOpenExports: true, reviewer: connected?.reviewer } : await storageRequest(storage, message.method, message.args) });
         }
       }
       catch (error) { await panel.webview.postMessage({ id: message.id, error: error instanceof Error ? error.message : String(error), code: (error as { code?: string }).code }); }

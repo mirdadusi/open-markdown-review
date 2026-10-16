@@ -3,9 +3,9 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 
 const profile = process.argv[2] ?? 'runtime';
-if (!['toolbox', 'runtime'].includes(profile)) throw new Error('Unknown dependency inventory profile.');
+if (!['toolbox', 'runtime', 'companion'].includes(profile)) throw new Error('Unknown dependency inventory profile.');
 const root = process.cwd(), seeds = new Set();
-const metadata = profile === 'toolbox' ? ['toolbox'] : ['toolbox', 'extension', 'cli'];
+const metadata = profile === 'toolbox' ? ['toolbox'] : profile === 'companion' ? ['toolbox', 'companion'] : ['toolbox', 'extension', 'cli', 'companion'];
 for (const name of metadata) {
   const meta = JSON.parse(await readFile(path.join(root, 'dist', `${name}-metafile.json`), 'utf8'));
   for (const input of Object.keys(meta.inputs)) {
@@ -46,7 +46,7 @@ for (const [directory, pkg] of [...packages].sort((a, b) => a[1].name.localeComp
   for (const file of files) { try { const text = await readFile(path.join(directory, file), 'utf8'); licenses.push({ file, sha256: createHash('sha256').update(text).digest('hex') }); notices.push(`${pkg.name}@${pkg.version} — ${file}\n${text}`); } catch { /* Some distributions have a license directory. */ } }
   components.push({ name: pkg.name, version: pkg.version, license: pkg.license ?? 'UNDECLARED', packagePath: path.relative(root, directory).split(path.sep).join('/'), directlyVisibleToBundler: seeds.has(directory), notices: licenses });
 }
-for (const file of ['LICENSE', 'third-party/UNICODE.txt', 'third-party/ROBOTO.txt']) {
+for (const file of ['LICENSE', 'third-party/UNICODE.txt', 'third-party/ROBOTO.txt', 'third-party/NOTO-SYMBOLS.txt', 'third-party/NOTO-MONO.txt']) {
   try { notices.push(`${file}\n${await readFile(file, 'utf8')}`); } catch { if (file.startsWith('third-party/')) throw new Error(`Required data/font notice is missing: ${file}`); }
 }
 const inventory = { schemaVersion: 'omr-runtime-inventory/1', profile, interpretation: 'Conservative production dependency closure seeded from actual bundle inputs; includes upstream prebundled transitives. Optional packages absent on this platform are not asserted to be shipped.', components };

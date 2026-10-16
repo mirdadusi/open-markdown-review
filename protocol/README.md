@@ -2,7 +2,7 @@
 
 This document defines the portable, serverless protocol. The key words MUST, MUST NOT, REQUIRED, SHOULD, SHOULD NOT, and MAY indicate interoperability requirements.
 
-This remains the normative contract for existing 0.4 packages. The [professional client specification](../spec/PROFESSIONAL-V1.md) and [0.5 implementation draft](../spec/PROTOCOL-0.5.md) define the next target, including CLI authoring, full HTML review parity, exact audit inventories, and changed lifecycle/publication rules. They do not retroactively change this protocol or claim the current implementation is conforming.
+This remains the normative contract for existing 0.4 packages. Protocol 0.5 is preserved in the [0.5 contract](../spec/PROTOCOL-0.5.md); the [professional client specification](../spec/PROFESSIONAL-V1.md) and [0.6 implementation draft](../spec/PROTOCOL-0.6.md) define the current development target. Neither later version retroactively changes this protocol.
 
 ## Package layout
 
@@ -288,4 +288,4 @@ A protocol 0.4 participant writer is conforming when it emits schema-valid files
 
 [`IMPLEMENTER-CHECKLIST.md`](IMPLEMENTER-CHECKLIST.md) maps these requirements to a client build sequence and required tests. The checked-in schemas are structural validation; the cross-file and state-machine rules in this document remain normative where JSON Schema cannot express them.
 
-See [`fixtures/v0.4/`](fixtures/v0.4/) for the current portable-path conformance package with Markdown, Mermaid, a table, an embedded SVG, replies, comment decisions, a suggested edit, and approval. [`examples/`](examples/) is retained as a complete legacy 0.3 compatibility package with audited exports.
+See [`fixtures/v0.6/`](fixtures/v0.6/) for the launcher-independent 0.6 core conformance package and deterministic invalid mutations defined by the 0.6 specification. [`fixtures/v0.4/`](fixtures/v0.4/) remains the portable-path compatibility package with Markdown, Mermaid, a table, an embedded SVG, replies, comment decisions, a suggested edit, and approval. [`examples/`](examples/) is retained as a complete legacy 0.3 compatibility package with audited exports.

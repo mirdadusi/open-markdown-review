@@ -1,6 +1,6 @@
 # Optional protocol profiles
 
-Core Open Markdown Review 0.5 remains framework-neutral. It defines frozen documents/resources, exact source anchors, events, causal decisions and audit evidence. This directory contains optional, independently versioned rendering and presentation profiles. A required profile is immutable package semantics; an unsupported participant client fails closed.
+Core Open Markdown Review 0.5 and 0.6 remain framework-neutral. They define frozen documents/resources, exact source anchors, events, causal decisions and audit evidence. This directory contains optional, independently versioned rendering and presentation profiles. A required profile is immutable package semantics; an unsupported participant client fails closed.
 
 The [sanitized Markdown HTML profile v1](sanitized-html-v1.md) is selected directly by the `sanitized-html-v1` required capability and the revision's `renderer.markdownProfile`. It defines deterministic safe rendering/resource discovery and does not use `manifest.extensions` or add profile files to the package.
 
@@ -33,4 +33,4 @@ Schema validation alone is insufficient: implementations also verify digests, ow
 - [Sanitized Markdown HTML v1](sanitized-html-v1.md), a rendering profile with no descriptor blob.
 - [Slidev static review v1](../../spec/SLIDEV-PROFILE-V1.md), with its [JSON schema](slidev/v1.schema.json).
 
-Core wire version remains 0.5.0; profile versioning is separate. Ordinary 0.5 packages retain their declared format and behavior.
+Profile versioning is separate from the 0.5 and 0.6 core wire versions. Ordinary 0.5 packages retain their declared format and behavior, while 0.6 packages use the schema family selected by their immutable manifest.

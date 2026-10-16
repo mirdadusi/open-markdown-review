@@ -1,12 +1,40 @@
-# Open Markdown Review 0.5.5
+# Open Markdown Review 0.6.0 (development)
 
-Review Markdown collaboratively without a review server. Authors work in VS Code; participants can use the same review package in VS Code or through its double-clicked HTML launcher in a supported Chrome or Edge browser. Documents, replies, decisions, approvals, and audit evidence remain files in one local-first package.
+Review Markdown collaboratively without a dedicated review server. Authors work in VS Code; participants can use the same review package in VS Code, through its double-clicked HTML launcher, or through an optional local companion when browser folder access is blocked. Documents, replies, decisions, approvals, and audit evidence remain files in one local-first package.
 
 ![Open Markdown Review showing a highlighted finding, Mermaid diagram, table, and discussion in VS Code](docs/images/marketplace/vscode-review.png)
 
-There is no application server, browser extension, cloud account, or separate review database. A package can live on ordinary disk, Git, a mounted network folder, or a folder synchronized by the participants' chosen storage provider.
+There is no dedicated application server, browser extension, required cloud account, or separate review database. The optional companion is a process on each reviewer's own computer. A package can live on ordinary disk, Git, a mounted network folder, or a folder synchronized by the participants' chosen storage provider.
 
-Version **0.5.5 is a regular release with known limitations**, not a qualified professional pilot. It adds a safe update path without changing the review protocol or 0.5.3 review behavior. Public installations use VS Code's native Marketplace updates; the enterprise derivative uses authenticated, checksum-verified GitHub Enterprise release updates. Markdown and optional Slidev review retain framework-neutral core wire version 0.5.0. Read the [0.5.5 release notes and limitations](docs/releases/0.5.5.md); existing 0.4 packages keep their legacy VS Code reader and are never silently migrated.
+## Optional local companion (0.6.0 development)
+
+Review creation now offers **Windows x64**, **macOS Apple Silicon** and **Linux x64** companion checkboxes. Select any combination, or none for HTML/VS Code only. The creator needs no compiler: exact prebuilt clients are verified before review publication, cached privately and copied beside the manifest with distinct platform filenames, checksums, notices and instructions. Uncached platforms need the matching published release assets. The VSIX contains the trusted catalog, not every native executable. See [creation, offline-cache, CLI and qualification details](docs/COMPANION-DELIVERY.md).
+
+For browsers whose organization policy blocks direct folder writes, the local companion opens the same toolbox at a private loopback address. The helper, not the browser File System Access API, reads and writes the explicitly selected review folder. Ordinary OS/share permissions and organizational application/localhost controls still apply.
+
+- **VS Code:** connect/select the review, then run **Markdown Review: Open Review in Browser (Local Companion)**. It is also in the review list's context menu and Active Review toolbar. Keep VS Code running. Remote extension hosts (WSL/SSH) should use the existing VS Code toolbox or a standalone companion on the reviewer desktop; no remote listener is exposed.
+- **Standalone Windows reviewer:** obtain a trusted Windows x64 companion distribution, verify `StartReview.exe.sha256`, and place `StartReview.exe` beside `manifest.json`. Double-click it: the default browser opens directly, without choosing the folder in the browser. Keep its console running until saves finish. The packaged executable includes Node.js and the toolbox; no Node/Python/VS Code installation or administrator rights are required by the software. Company application controls may require an approved signed build. Never run an unexpected executable just because it arrived in a shared review.
+- **Other folder:** run `StartReview.exe --store "C:\Reviews\DesignReview"`. macOS/Linux distributions use `StartReview`. Storage can be ordinary disk, a synchronized folder, or a mounted share accessible to that OS user. SMB remains unqualified, not a claimed tested deployment.
+  For network storage, prefer keeping the executable on local disk and pointing `--store` at the review; avoid loading a large runtime over a slow share. For OneDrive, hydrate the complete review folder before starting.
+- **Stop:** use **Stop local companion** or Ctrl+C. The helper stops after ten minutes without authenticated activity; an active review tab polls and keeps it alive. Closing VS Code stops helpers it owns. Do not stop during a pending save/export; interrupted publications must retain their original recovery intent.
+
+Comments, replies, suggestions, initiator decisions, reviewer invitations, finish/reopen and PDF exports use the existing protocol and frozen evidence. New revisions and source edits remain authoring capabilities in VS Code/CLI, not companion endpoints. Reviewer identity remains **self-asserted**, not authenticated Windows/Entra identity. Each participant runs their own helper. Changes appear after storage synchronization and toolbox refresh, not guaranteed cloud-wide real time.
+
+The page and API share one `127.0.0.1` origin. The helper requires a per-launch capability, same-origin/Host checks, restricts paths, and binds writes to one immutable manifest. Do not share its capability URL. Preferences/recovery remain in private local storage; the shared review folder remains authoritative. Direct HTML opening remains available where directory grants are permitted.
+
+```sh
+npm ci
+npm run compile
+node dist/companion.js --store /absolute/path/to/review
+npm run test:companion
+npm run package:companion -- win32-x64
+```
+
+Packaging writes `dist/companion/<target>/StartReview.exe` (Windows) or `StartReview`, checksum, MIT license, notices, usage and `build.json`. It verifies the official download checksum for the exact building Node.js version and embeds the toolbox/runtime. Targets: `win32-x64`, `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`; macOS packaging requires macOS signing tools. Windows/Linux builds are unsigned; macOS builds are ad-hoc signed, not notarized. Production signing, endpoint approval and target execution tests are separate release steps. No public CI workflows are added.
+
+See [Local companion transport](spec/LOCAL-COMPANION-0.6.md) for security and qualification requirements.
+
+The current development line targets product and wire version **0.6.0**. New reviews use the 0.6 protocol; existing 0.5 packages remain validated and operated under their original 0.5 schemas and capabilities and are never silently upgraded. The latest published Marketplace/GitHub release is still 0.5.5 with its [release notes and limitations](docs/releases/0.5.5.md).
 
 ## Install
 
@@ -67,11 +95,12 @@ With the extension installed, opening **the same Review-&lt;name&gt;.html file i
 - Markdown, GFM and sanitized structural HTML tables/cells, Mermaid, frozen local/data/HTTPS images (including raw `<img>`), explicit attachments, and audited external links.
 - Anchored comments, replies, visible highlights, click-through navigation, and searchable/paged discussion history. The discussion side panel defaults to every review document and can be narrowed to the selected Markdown document.
 - Separate initiator accept/reject decisions and resolve/reopen status. Accepting a concern does not resolve it.
+- A cross-document creator resolution workbench with queues for undecided, accepted-but-not-implemented, published-awaiting-verification, challenged, verified, disposed and conflicted findings. VS Code can open the exact linked source anchor; shared evidence records the exact descendant revision and before/after document digests, and reviewers can verify or challenge that outcome from either client.
 - Exact-string insertion, replacement and strikeout suggestions; accept/reject and explicit author-only source application.
 - Revision approval, rejection and withdrawal with freshly verified evidence and confirmation of the observed state.
 - Multiple packages and explicit immutable revision selection; arriving revisions never silently retarget a draft.
 - Independent content-addressed event files, conflict detection, partial-write recovery, and eventual synchronization.
-- Whole-revision offline review archives containing a challenge register, every frozen document with its challenge map, a dedicated comments/responses/findings section, participant stance history, diagrams, tables, suggestions, and the exact audit appendix. Finding links connect challenged locations to their full history; UI filters never shrink an audit export.
+- Whole-revision offline review archives containing a challenge register, every frozen document with its challenge map, a dedicated comments/responses/findings section, participant stance history, diagrams, tables, suggestions, and the exact audit appendix. Finding links connect challenged locations to their full history; UI filters never shrink an audit export. Export preparation can be cancelled before its final publication boundary without adding shared evidence.
 - CLI creation/revision/export/inspection/validation and safe HTML installation/update.
 
 Graphical creation is in VS Code; the same authoring service is available from the CLI. A participant browser does not need the source workspace.
@@ -93,6 +122,8 @@ The selected storage folder may already be the final empty OneDrive/synchronized
 To place an existing review in a shared location, right-click its entry and choose **Publish Verified Review Copy…**. Select an empty destination and stop all other writers while it runs. The extension rejects links and foreign top-level content, copies the complete package, hashes and re-reads every file, fully validates the destination, rechecks the source inventory, then switches the active connection to the destination. The old package is not deleted; it is disconnected and must not be used as a second active review history.
 
 Use **Link Local Source Workspace…** when a received, moved, or reconnected review should create later revisions or apply accepted suggestions to editable source. The extension privately checks every current reviewed path and reports exact, changed, or missing files. Changed files are expected when preparing a new revision; missing files prevent the link. The absolute source location stays in local VS Code state and is never written into the review package.
+
+To process comments, open **Creator workbench** under **Active Review**. Decide a finding, choose **Address in source** to jump to its exact Markdown location, edit and publish a descendant revision, then choose **Record published fix…** on the original finding. The record points to immutable revision bytes, not an unsaved editor. A reviewer opens that published revision and records **verified** or **challenged**; every transition is retained in the shared events and audit PDF.
 
 ## Remove or delete a review in VS Code
 
@@ -123,9 +154,19 @@ Creation captures saved disk bytes. Unsaved editors require an explicit save/use
 
 Creation can be cancelled before final publication. Its private capture checkpoints remain intact; run Create again to choose a saved operation to resume. Once final publication starts, the client finishes and reports the actual result.
 
+New creation plans scope content-publication recovery records to the review ID, so a folder can be reused for a different review after the previous package has been removed. Revisions of the same review share those records and still fail verification if acknowledged content disappears or changes. Saved plans from older builds retain their original recovery keys; do not delete recovery journals to bypass an integrity error. This is client-local bookkeeping, not a change to the open protocol or shared package files.
+
 To update documents, choose **Choose Documents and Create Revision**. Existing review evidence stays immutable. Parents are selected explicitly; a merge revision does not transfer earlier comments or approvals to new content.
 
 ### Reviewer identity and active review
+
+In 0.6 development, **Initial reviewer email addresses** in the creation form optionally limits participation to up to 100 initial addresses plus the initiator. Enter one address per line or separate them with commas. Leave the field empty for an open review. Reviewers enter their listed email in either client; matching is case-insensitive and requires no account registration or service. Email ownership remains self-asserted.
+
+For new restricted reviews, the initiator can select **Add reviewers** in the VS Code or browser toolbox later. Enter up to 100 additional emails per batch and save. Existing addresses are skipped; each new reviewer produces an independent `reviewer.invited` event, without changing the manifest or HTML binding. Additions apply to the whole review, appear as **Not started**, synchronize to other clients and remain available on later revisions. Ordinary reviewers cannot add others: the control is hidden, and both writer policy and received-event validation enforce the initiator role. The PDF records who added each reviewer and when. This does not send invitation email or grant OneDrive/filesystem access: separately share the folder with that person with editing permission. Existing completion and approval/quorum rules remain unchanged. Removal is not implemented. Older packages without `reviewer-invitations-v1` remain readable but require a new package to enable this capability; do not edit their immutable manifest.
+
+**Finish my review** records completion of the selected frozen revision and locks that participant's further feedback. **Reopen my review** restores it. Completion is separate from Approve/Reject: it never approves a revision or closes everybody else's review. **Reviewer progress** shows the initiator who has not started, is reviewing, has finished, or has reopened, with recorded transition times. A new revision starts fresh completion states. The offline audit PDF includes all invited emails, current states and the full finish/reopen history.
+
+CLI creation accepts repeatable `--reviewer-email alex@example.com --reviewer-email sam@example.com` parameters. The same authoring service and protocol rules apply to VS Code and CLI creation.
 
 Version 0.5.5 uses one **Reviews** list for current and legacy packages. Creating/opening a review or focusing its toolbox selects it in **Active Review** and the status bar. The selection remains when the toolbox is closed and is restored in the same workspace; sidebar actions reopen the toolbox when needed.
 
@@ -172,6 +213,22 @@ The toolbox always shows the current participant's review stance. With no active
 Warm scans reuse verified state and unchanged rendering. A bounded 64-event integrity sweep detects rewritten historical event files over time; explicit audits freshly verify the complete observed package. Native/browser adapters admit at most four concurrent file operations per process. An audit attempt deduplicates reads of files referenced by many earlier receipts.
 
 Missing, partial, changed or conflicting evidence is disclosed. Approval and export fail closed. These optimizations have regression tests, including 10,000 events, but do not establish Windows latency or real SMB performance; SMB qualification is excluded and untested.
+
+### Finding an exported PDF
+
+The archive begins with clickable navigation, reviewer status (not started, in progress, finished, reopened or conflicted), stances, full comments/replies, then document contents and the reviewed documents. It is independent of the selected document or discussion filter. Source highlights and challenge-map links open the full finding record; supported local Markdown/heading and HTML bookmark links navigate inside the PDF. PDF bookmarks provide another navigation option.
+
+PDF pages are paginated, not screenshots of the responsive review pane. Both use the same frozen, sanitized document content. Tables use content-weighted bounded columns and repeated headers; documents with tables wider than five columns use landscape pages. Images preserve aspect ratio, honor supported HTML sizes, fit their containing cell/page and do not automatically enlarge small graphics. The same exporter runs in the browser and VS Code.
+
+The offline PDF font set covers Latin (including Czech diacritics), Greek, Cyrillic, monospace source text and the bundled technical symbols such as `→`, `␣`, `✓` and `✗`. It does not promise every Unicode script or emoji. Unsupported glyphs cause a named `U+…` error before PDF publication instead of silent boxes or lost text. Source documents must remain valid UTF-8 as specified by the protocol; export never rewrites their encoding.
+
+`npm run test:browser` includes an exported-file quality fixture for wide/nested tables, images in cells, local/HTML-bookmark links, diacritics/symbols, replies and reviewer states. PDF qualification tools require Node.js 22.13 or newer. For an existing archive, `node scripts/inspect-pdf.mjs /absolute/path/to/archive.pdf` checks every page's text/image bounds and link destinations; this is a developer check, not a substitute for visual review.
+
+**Export audit PDF** saves the archive in the selected review folder as `exports/<sha256>.pdf`, alongside its exact-byte inventory; it does not automatically create a Downloads copy. Export progress and failures stay visible in a dedicated result panel until dismissed, including during automatic synchronization refreshes. After success, VS Code offers **Open PDF** and **Show in folder**. The browser offers **Download PDF** for an optional local copy. Reopening a package also exposes its latest admitted PDF export. Export actions verify the archived PDF digest; the native bridge accepts only an admitted export event ID, never an arbitrary local path.
+
+Legacy SVG images with a standard SVG 1.0/1.1 public declaration can be rendered and archived without changing their frozen bytes. The renderer removes only the allowlisted declaration before parsing and never fetches a DTD. Entities, internal subsets, unknown/system DTDs, scripts and external SVG resources remain blocked. Export errors identify the failing image and document.
+
+For a browser folder-picker denial, check organization-managed filesystem policies. For example, `DefaultFileSystemWriteGuardSetting = 2` blocks write requests; a web-domain exception does not authorize a locally opened `file:` launcher. This application cannot override that restriction. Use an organization-approved browser configuration or VS Code; do not disable security controls. Browser integration tests simulate policy denial and do not establish compatibility with a particular managed Windows environment.
 
 ## Build, test and package
 
@@ -238,7 +295,7 @@ New reviews use the declared sanitized structural HTML profile described above; 
 
 Run `node scripts/create-professional-example.mjs` after building to prepare the concrete example's HTML entry file. Open the generated `examples/professional/review/Review-*.html`, not the unconnected `dist/OpenMarkdownReview.html` build template.
 
-- [Protocol 0.5 contract](spec/PROTOCOL-0.5.md), [sanitized HTML profile](protocol/profiles/sanitized-html-v1.md), [JSON schemas](protocol/schemas/v0.5), [shared TypeScript types](src/professional/types.ts)
+- [Protocol 0.6 core contract](spec/PROTOCOL-0.6.md), [portable review package profile](spec/PORTABLE-REVIEW-PROFILE-0.6.md), [backward-compatible 0.5 contract](spec/PROTOCOL-0.5.md), [sanitized HTML profile](protocol/profiles/sanitized-html-v1.md), [0.6 conformance corpus](protocol/fixtures/v0.6), [versioned JSON schemas](protocol/schemas), [shared TypeScript types](src/professional/types.ts)
 - [Professional requirements](spec/PROFESSIONAL-V1.md), [acceptance gates](spec/ACCEPTANCE.md), [current evidence and limitations](spec/IMPLEMENTATION-STATUS.md)
 - [Security model](SECURITY.md), [legacy 0.4 documentation](docs/LEGACY-0.4.md)
 

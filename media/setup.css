@@ -1,7 +1,14 @@
 :root { color-scheme: light dark; --surface: var(--vscode-editorWidget-background); --surface2: var(--vscode-sideBar-background); --text: var(--vscode-editor-foreground); --muted: var(--vscode-descriptionForeground); --border: var(--vscode-widget-border, rgba(127,127,127,.35)); --accent: var(--vscode-button-background); --accentText: var(--vscode-button-foreground); --focus: var(--vscode-focusBorder); }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--vscode-editor-background); color: var(--text); font: 13px/1.5 var(--vscode-font-family); }
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
+.reviewers-card { display: grid; gap: 8px; }
+.companion-platforms { margin: 16px 0; padding: 14px; border: 1px solid var(--border); border-radius: 6px; }
+.companion-platforms legend { font-weight: 600; }
+.companion-platforms p { color: var(--muted); }
+.companion-option { display: inline-flex; align-items: center; gap: 8px; margin: 8px 24px 8px 0; cursor: pointer; }
+.reviewers-card textarea { width: 100%; resize: vertical; min-height: 90px; padding: 9px; border: 1px solid var(--border); border-radius: 4px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
+.reviewers-card .field-help { grid-column: 1; }
 .setup-shell { width: min(960px, calc(100% - 40px)); margin: 0 auto; padding: 34px 0 64px; }
 .hero { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 24px; }
 .eyebrow { color: var(--vscode-textLink-foreground); font-size: 10px; font-weight: 700; letter-spacing: .12em; }

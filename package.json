@@ -2,7 +2,7 @@
   "name": "open-markdown-review",
   "displayName": "Open Markdown Review",
   "description": "Local-first Markdown review for VS Code and portable browser participation, with append-only review evidence.",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "private": true,
   "license": "MIT",
   "publisher": "mirdadusi",
@@ -37,7 +37,8 @@
   "pricing": "Free",
   "main": "./dist/extension.js",
   "bin": {
-    "omr": "./dist/cli.js"
+    "omr": "./dist/cli.js",
+    "omr-companion": "./dist/companion.js"
   },
   "activationEvents": [
     "onCustomEditor:openMarkdownReview.entryFile",
@@ -52,6 +53,7 @@
     "onCommand:openMarkdownReview.createRevision",
     "onCommand:openMarkdownReview.addPortableBrowserClient",
     "onCommand:openMarkdownReview.openReview",
+    "onCommand:openMarkdownReview.openInBrowser",
     "onCommand:openMarkdownReview.addComment",
     "onCommand:openMarkdownReview.addSuggestion",
     "onCommand:openMarkdownReview.reply",
@@ -88,6 +90,11 @@
       }
     ],
     "commands": [
+      {
+        "command": "openMarkdownReview.openInBrowser",
+        "title": "Markdown Review: Open Review in Browser (Local Companion)",
+        "icon": "$(globe)"
+      },
       {
         "command": "openMarkdownReview.updatePortableBrowserClient",
         "title": "Markdown Review: Update Portable Browser Client",
@@ -307,6 +314,11 @@
       ],
       "view/title": [
         {
+          "command": "openMarkdownReview.openInBrowser",
+          "when": "view == openMarkdownReview.threads && openMarkdownReview.hasRevision",
+          "group": "navigation@1.1"
+        },
+        {
           "command": "openMarkdownReview.initialize",
           "when": "view == openMarkdownReview.reviews",
           "group": "navigation@1"
@@ -368,6 +380,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "openMarkdownReview.openInBrowser",
+          "when": "view == openMarkdownReview.reviews && (viewItem == markdownReview05Active || viewItem == markdownReview05Inactive)",
+          "group": "reviewSharing@3"
+        },
         {
           "command": "openMarkdownReview.removeReview",
           "when": "view == openMarkdownReview.reviews && (viewItem == markdownReviewActive || viewItem == markdownReviewInactive || viewItem == markdownReview05Active || viewItem == markdownReview05Inactive)",
@@ -498,9 +515,14 @@
     "build:webview": "esbuild src/webview/review.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=media/review.js --minify && esbuild src/webview/setup.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=media/setup.js --minify",
     "build:portable-browser": "esbuild src/professional/toolbox.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=dist/portable-browser.js --minify --metafile=dist/toolbox-metafile.json && node scripts/dependency-inventory.mjs toolbox && node scripts/assemble-portable-browser.mjs",
     "build:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/extension.js --external:vscode --external:sharp --minify --metafile=dist/extension-metafile.json && node scripts/copy-pdfkit-assets.mjs",
-    "build:schemas": "node scripts/build-professional-schemas.mjs",
+    "build:schemas": "node scripts/build-professional-schemas.mjs && node scripts/build-pdf-fonts.mjs",
     "build:cli": "esbuild src/professional/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:playwright --metafile=dist/cli-metafile.json",
-    "compile": "npm run build:schemas && npm run build:webview && tsc -p tsconfig.json && npm run build:extension && npm run build:portable-browser && npm run build:cli && node scripts/dependency-inventory.mjs runtime",
+    "build:companion": "esbuild src/professional/companionCli.ts --bundle --platform=node --format=cjs --target=node22 --outfile=dist/companion.js --metafile=dist/companion-metafile.json",
+    "package:companion": "npm run compile && node scripts/package-companion.mjs",
+    "test:companion": "npm run compile && node --test out/test/companion.test.js out/test/companion.browser.integration.js out/test/companion.launcher.integration.js",
+    "generate:fixture:v06": "esbuild scripts/generate-v06-conformance-fixture.mjs --bundle --packages=external --platform=node --format=esm --target=node20 --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/generate-v06-conformance-fixture.mjs && node dist/generate-v06-conformance-fixture.mjs",
+    "compile": "npm run build:schemas && npm run build:webview && tsc -p tsconfig.json && npm run build:extension && npm run build:portable-browser && npm run build:cli && npm run build:companion && node scripts/dependency-inventory.mjs companion && node scripts/dependency-inventory.mjs runtime && node scripts/companion-catalog.mjs copy",
+    "verify:companions": "node scripts/companion-catalog.mjs verify",
     "watch": "tsc -w -p tsconfig.json",
     "test": "npm run compile && node --test out/test/*.test.js test/release-policy.test.mjs",
     "test:browser": "npm run compile && node --test out/test/browser.integration.js",
@@ -514,12 +536,12 @@
     "package:marketplace": "node scripts/package-marketplace.mjs"
   },
   "dependencies": {
-    "@img/sharp-wasm32": "0.35.4",
+    "@img/sharp-wasm32": "0.35.5",
     "@noble/hashes": "1.8.0",
     "markdown-it": "^14.1.0",
     "pdfkit": "^0.17.2",
     "pdfmake": "0.3.11",
-    "sharp": "^0.35.4",
+    "sharp": "^0.35.5",
     "svg-to-pdfkit": "^0.1.8"
   },
   "overrides": {
@@ -527,7 +549,6 @@
   },
   "devDependencies": {
     "@slidev/parser": "52.19.1",
-    "yaml": "2.9.0",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.10.0",
     "@types/pdfkit": "^0.17.3",
@@ -537,8 +558,12 @@
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "esbuild": "^0.25.9",
+    "fontkit": "2.0.4",
     "mermaid": "^11.10.1",
+    "pdfjs-dist": "6.4.299",
     "playwright": "1.62.1",
-    "typescript": "^5.7.2"
+    "postject": "1.0.0-alpha.6",
+    "typescript": "^5.7.2",
+    "yaml": "2.9.0"
   }
 }

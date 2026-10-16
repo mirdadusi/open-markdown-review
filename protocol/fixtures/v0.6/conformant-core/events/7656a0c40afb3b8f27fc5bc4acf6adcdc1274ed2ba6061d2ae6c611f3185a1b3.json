@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "0.6.0",
+  "id": "event_rejected",
+  "type": "review.rejected",
+  "reviewId": "review_v06_conformance",
+  "revisionId": "revision_fixture_initial",
+  "revisionDigest": "sha256:725b4dc688583721ee32c6805181386da90d89d1f8f072b3732b3551f358a559",
+  "occurredAt": "2026-09-23T08:16:00.000Z",
+  "actor": {
+    "id": "fixture-auditor",
+    "displayName": "Fixture Auditor"
+  },
+  "operationId": "fixture_rejected",
+  "reason": "Temporary audit stance used to exercise withdrawal.",
+  "stancePredecessors": [],
+  "verification": {
+    "digest": "sha256:076c0de6fbbfcb21748e7d976474dabd0cd210cdd2eb223cd8e103fd0ee729d6",
+    "byteLength": 6187,
+    "mediaType": "application/json",
+    "blobPath": "blobs/sha256/07/076c0de6fbbfcb21748e7d976474dabd0cd210cdd2eb223cd8e103fd0ee729d6"
+  }
+}
