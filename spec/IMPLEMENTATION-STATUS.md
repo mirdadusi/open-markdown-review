@@ -19,6 +19,8 @@ The protocol core, portable-product profile, optional presentation profiles and 
 
 The repository contains unit/security/conformance tests, real Chromium scenarios, isolated VS Code extension-host tests, native-companion tests and installed-VSIX offline creation checks. The delivered Go catalog binds binaries to the shared core, HTML and license inputs. The embedded Mac receipt records exact-binary local browser/launcher and VS Code creation checks.
 
+The actual public 0.6.5 VSIXs passed native Windows x64 and Linux x64 qualification and local macOS ARM64 qualification. This includes isolated installation, all-platform offline creation, native participation/PDF and installed-extension creation/launch. Exact source and package hashes are recorded in the [final public distribution qualification](../docs/qualification/PUBLIC-0.6.5.md); this does not establish the remaining endpoint, transport or professional-acceptance boundaries below.
+
 Qualification must identify the actual source, artifact digest, operating system and test type. A package filename, successful cross-build, historical report, origin-private browser handle or simulated adapter is not native target qualification. Public distribution-specific evidence is recorded separately from historical implementation comparisons. Test counts are not a usability or security certificate.
 
 No organization-specific CI configuration or private evidence links are published here. The same test commands can be run on appropriate native Windows/Linux hosts; local Mac execution does not close those platform gates. Release-channel authorization is separate from professional acceptance and does not convert pending gates into passes.
