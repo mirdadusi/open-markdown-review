@@ -1,5 +1,5 @@
 import { appendFile, readFile } from 'node:fs/promises';
-import { releasePolicy } from './release-policy.mjs';
+import { releasePolicy, verifyReleaseNotes } from './release-policy.mjs';
 const args = process.argv.slice(2);
 if (args.length > 1 || (args.length === 1 && args[0] !== '--publication')) {
   throw new Error('Usage: node scripts/verify-release-qualification.mjs [--publication]');
@@ -9,10 +9,7 @@ const qualification = JSON.parse(await readFile('release-qualification.json', 'u
 const policy = releasePolicy(pkg, qualification, args[0] === '--publication');
 if (args[0] === '--publication') {
   const notes = await readFile(policy.notesFile, 'utf8');
-  if (!notes.trim() || (policy.prerelease && !/evaluation pre-release/i.test(notes))
-      || (!qualification.professionalPilotApproved && !/not approved for the professional pilot/i.test(notes))) {
-    throw new Error('Release notes must disclose the publication status and remaining professional-pilot limitations.');
-  }
+  verifyReleaseNotes(notes, policy, qualification);
   if (process.env.GITHUB_OUTPUT) {
     await appendFile(process.env.GITHUB_OUTPUT, `channel=${policy.channel}\nprerelease=${policy.prerelease}\nnotes-file=${policy.notesFile}\n`);
   }

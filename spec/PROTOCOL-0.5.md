@@ -211,7 +211,9 @@ Export uses a successful verification receipt and frozen renderer inputs. The ex
 
 The PDF is a derived, human-readable offline review archive using those exact event-file digests. It does not become protocol state and never replaces the package. Every current and superseded action on the selected revision is represented, including decision reasons, replies, withdrawals, conflicts, and application evidence. Prior export events are referenced as prior artifacts without recursively copying their PDF content.
 
-A conforming archive presents, in this logical order:
+The sequence below describes the legacy printed discussion profile. Current clients may use the [native PDF annotation profile](PDF-EXPORT-PROFILES.md) instead of printed finding sections/maps, with all the same evidence and exact-inventory obligations. Existing archives remain valid; native annotations never become protocol state. Clean document-only projections are outside the audit event family and cannot append `export.created`.
+
+The legacy printed profile presents, in this logical order:
 
 1. Review identity, revision, export identity, verification cutoff, policy result, actor assurance, and a challenge register.
 2. Every frozen document in protocol order with its digest, rendered frozen evidence, resource/external-reference disclosure, and a per-document challenge map.

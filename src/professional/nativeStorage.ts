@@ -91,7 +91,7 @@ export class NativeStorage implements Storage {
     try {
       const store = new NativeStorage(this.journalRoot, this.journalRoot);
       const entry = parseJson<JournalEntry & { base64?: string }>(await store.read(this.journalName(operation), LIMITS.pdf * 8), LIMITS.pdf * 8);
-      if (entry.base64 !== undefined) { entry.bytes = Array.from(Buffer.from(entry.base64, 'base64')); delete entry.base64; }
+      if (entry.base64 !== undefined) { entry.bytes = new Uint8Array(Buffer.from(entry.base64, 'base64')); delete entry.base64; }
       return entry;
     }
     catch (error) { if (error instanceof ProtocolError && error.code === 'missing') return undefined; throw error; }

@@ -19,7 +19,12 @@ export async function storageRequest(storage: NativeStorage, method: string, arg
       const value = args[1]; if (!Array.isArray(value) || value.length > LIMITS.pdf || value.some(v => !Number.isInteger(v) || v < 0 || v > 255) || typeof args[2] !== 'boolean') throw new ProtocolError('invalid', 'Invalid write request.');
       await storage.write(relative, new Uint8Array(value), args[2]); return null;
     }
-    case 'journalGet': if (typeof args[0] !== 'string') throw new ProtocolError('invalid', 'Invalid journal key.'); return await storage.journalGet(args[0]) ?? null;
+    case 'journalGet': {
+      if (typeof args[0] !== 'string') throw new ProtocolError('invalid', 'Invalid journal key.');
+      const entry = await storage.journalGet(args[0]);
+      // The legacy VS Code JSON bridge expects an array, not typed-array keys.
+      return entry ? { ...entry, bytes: Array.from(entry.bytes) } : null;
+    }
     case 'journalPut': {
       const entry = args[1] as JournalEntry;
       if (typeof args[0] !== 'string' || !entry || typeof entry.path !== 'string' || !Array.isArray(entry.bytes) || entry.bytes.length > LIMITS.pdf || typeof entry.acknowledged !== 'boolean') throw new ProtocolError('invalid', 'Invalid local journal request.');

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "0.6.0",
+  "id": "event_withdrawn",
+  "type": "review.withdrawn",
+  "reviewId": "review_v06_conformance",
+  "revisionId": "revision_fixture_initial",
+  "revisionDigest": "sha256:725b4dc688583721ee32c6805181386da90d89d1f8f072b3732b3551f358a559",
+  "occurredAt": "2026-09-23T08:17:00.000Z",
+  "actor": {
+    "id": "fixture-auditor",
+    "displayName": "Fixture Auditor"
+  },
+  "operationId": "fixture_withdrawn",
+  "reason": "Concern cleared by the published evidence.",
+  "stancePredecessors": [
+    "event_rejected"
+  ],
+  "verification": {
+    "digest": "sha256:27ee2fa9d38ffbb763819d63da598a5465f7c6d80274d4e22d054d758deeba1f",
+    "byteLength": 6531,
+    "mediaType": "application/json",
+    "blobPath": "blobs/sha256/27/27ee2fa9d38ffbb763819d63da598a5465f7c6d80274d4e22d054d758deeba1f"
+  }
+}

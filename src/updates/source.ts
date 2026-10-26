@@ -48,7 +48,8 @@ export function validateUpdateSource(value: unknown): UpdateSource {
       throw new Error("GitHub update source endpoints are invalid.");
     }
     const expectedReleases = `https://${value.host}/${value.owner}/${value.repository}/releases`;
-    const expectedApi = `https://${value.host}/api/v3/repos/${value.owner}/${value.repository}/releases/latest`;
+    const api = value.host === 'github.com' ? 'https://api.github.com' : `https://${value.host}/api/v3`;
+    const expectedApi = `${api}/repos/${value.owner}/${value.repository}/releases/latest`;
     if (value.releasesUrl !== expectedReleases || value.latestReleaseApiUrl !== expectedApi) {
       throw new Error("GitHub update source URLs do not match its repository identity.");
     }

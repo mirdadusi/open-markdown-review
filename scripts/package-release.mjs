@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, mkdtemp, cp, mkdir } from "node:fs/promises";
+import os from 'node:os';
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { vsixChannelArgs } from "./release-policy.mjs";
+import { verifyOfflineVsix } from './vsix-offline.mjs';
 
 const target = process.argv[2] === "portable" ? undefined : process.argv[2];
 const suffix = process.argv[3] ?? process.argv[2] ?? "portable";
@@ -33,10 +35,17 @@ if (target === "win32-x64") {
     const installed = JSON.parse(await readFile(nativePackagePath, "utf8"));
     if (installed.version !== expectedVersion) throw new Error(`expected ${expectedVersion}, found ${installed.version}`);
   } catch {
+    // Installing a cross-platform optional dependency into this checkout can
+    // re-resolve unrelated packages and change the frozen toolbox bytes. Stage
+    // the exact native package in isolation; never reify the application tree.
+    const staging = await mkdtemp(path.join(os.tmpdir(), 'omr-sharp-win-'));
     const staged = runNpm([
-      "install", "--no-save", "--package-lock=false", "--force", `@img/sharp-win32-x64@${expectedVersion}`,
+      "install", "--prefix", staging, "--no-save", "--package-lock=false", "--ignore-scripts", "--force", `@img/sharp-win32-x64@${expectedVersion}`,
     ]);
     assertCommandSucceeded(staged, "The Windows-native Sharp package could not be staged");
+    const destination = path.dirname(nativePackagePath);
+    await mkdir(path.dirname(destination), { recursive: true });
+    await cp(path.join(staging, 'node_modules/@img/sharp-win32-x64'), destination, { recursive: true, force: false, errorOnExist: true });
     const installed = JSON.parse(await readFile(nativePackagePath, "utf8"));
     if (installed.version !== expectedVersion) throw new Error(`The staged Windows-native Sharp version is ${installed.version}; expected ${expectedVersion}.`);
   }
@@ -48,6 +57,7 @@ const packaged = runNpm(args);
 assertCommandSucceeded(packaged, "VSIX packaging failed");
 
 const output = path.join(repoRoot, filename);
+await verifyOfflineVsix(output, JSON.parse(await readFile(path.join(repoRoot, 'companions/catalog.json'), 'utf8')));
 const digest = createHash("sha256").update(await readFile(output)).digest("hex");
 await writeFile(`${output}.sha256`, `${digest}  ${filename}\n`, "utf8");
 console.log(`Packaged ${filename} (${digest})`);

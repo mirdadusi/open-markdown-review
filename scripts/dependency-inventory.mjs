@@ -3,11 +3,12 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 
 const profile = process.argv[2] ?? 'runtime';
-if (!['toolbox', 'runtime'].includes(profile)) throw new Error('Unknown dependency inventory profile.');
+if (!['toolbox', 'runtime', 'companion'].includes(profile)) throw new Error('Unknown dependency inventory profile.');
 const root = process.cwd(), seeds = new Set();
-const metadata = profile === 'toolbox' ? ['toolbox'] : ['toolbox', 'extension', 'cli'];
+const metadata = profile === 'toolbox' ? ['toolbox'] : profile === 'companion' ? ['toolbox', 'companion'] : ['toolbox', 'extension', 'cli', 'companion'];
 for (const name of metadata) {
   const meta = JSON.parse(await readFile(path.join(root, 'dist', `${name}-metafile.json`), 'utf8'));
+  if (Object.keys(meta.inputs).some(input => input.startsWith('third-party/slidev-parser-core/'))) seeds.add(path.join(root, 'third-party/slidev-parser-core'));
   for (const input of Object.keys(meta.inputs)) {
     const match = /^(.*node_modules\/(?:@[^/]+\/)?[^/]+)\//.exec(input);
     if (match) seeds.add(path.resolve(match[1]));
@@ -22,6 +23,7 @@ async function dependency(directory, name) {
   }
 }
 const packages = new Map(), queue = [...seeds], missing = [];
+const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 while (queue.length) {
   const directory = queue.shift(); if (packages.has(directory)) continue;
   const pkg = JSON.parse(await readFile(path.join(directory, 'package.json'), 'utf8'));
@@ -29,10 +31,6 @@ while (queue.length) {
   // Prebundled pdfmake and Mermaid contain dependencies not individually visible
   // in esbuild metadata. Include their conservative production closure as well.
   for (const name of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies })) {
-    // The pure Slidev parser has no prebundled code: its actual JS imports are
-    // individually visible in esbuild. Its types-only declaration dependency
-    // pulls an entire unused editor/Vue toolchain that is not shipped.
-    if (pkg.name === '@slidev/parser' && name === '@slidev/types') continue;
     const resolved = await dependency(directory, name);
     if (resolved) queue.push(resolved);
     else if (!pkg.optionalDependencies?.[name]) missing.push(`${pkg.name}: ${name}`);
@@ -40,13 +38,15 @@ while (queue.length) {
 }
 if (missing.length) throw new Error(`Incomplete dependency inventory: ${missing.join(', ')}`);
 const components = [], notices = [];
-for (const [directory, pkg] of [...packages].sort((a, b) => a[1].name.localeCompare(b[1].name) || a[1].version.localeCompare(b[1].version))) {
-  const files = (await readdir(directory)).filter(name => /^(?:licen[sc]e|copying|notice)(?:[.-].*)?$/i.test(name));
+for (const [directory, pkg] of [...packages].sort((a, b) => compare(a[1].name, b[1].name) || compare(a[1].version, b[1].version))) {
+  const files = (await readdir(directory)).filter(name => /^(?:licen[sc]e|copying|notice)(?:[.-].*)?$/i.test(name)).sort();
   const licenses = [];
   for (const file of files) { try { const text = await readFile(path.join(directory, file), 'utf8'); licenses.push({ file, sha256: createHash('sha256').update(text).digest('hex') }); notices.push(`${pkg.name}@${pkg.version} — ${file}\n${text}`); } catch { /* Some distributions have a license directory. */ } }
-  components.push({ name: pkg.name, version: pkg.version, license: pkg.license ?? 'UNDECLARED', packagePath: path.relative(root, directory).split(path.sep).join('/'), directlyVisibleToBundler: seeds.has(directory), notices: licenses });
+  const upstream = pkg.name === '@open-markdown-review/slidev-parser-core' ? JSON.parse(await readFile(path.join(directory, 'ORIGIN.json'), 'utf8')) : undefined;
+  components.push({ name: pkg.name, version: pkg.version, license: pkg.license ?? 'UNDECLARED', packagePath: path.relative(root, directory).split(path.sep).join('/'), directlyVisibleToBundler: seeds.has(directory), notices: licenses, ...(upstream ? { upstream } : {}) });
 }
-for (const file of ['LICENSE', 'third-party/UNICODE.txt', 'third-party/ROBOTO.txt']) {
+const noticeFiles = ['LICENSE', 'third-party/UNICODE.txt', 'third-party/ROBOTO.txt', 'third-party/NOTO-SYMBOLS.txt', 'third-party/NOTO-MONO.txt'];
+for (const file of noticeFiles) {
   try { notices.push(`${file}\n${await readFile(file, 'utf8')}`); } catch { if (file.startsWith('third-party/')) throw new Error(`Required data/font notice is missing: ${file}`); }
 }
 const inventory = { schemaVersion: 'omr-runtime-inventory/1', profile, interpretation: 'Conservative production dependency closure seeded from actual bundle inputs; includes upstream prebundled transitives. Optional packages absent on this platform are not asserted to be shipped.', components };

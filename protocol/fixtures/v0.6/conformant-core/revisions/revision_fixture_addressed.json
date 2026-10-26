@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "0.6.0",
+  "id": "revision_fixture_addressed",
+  "reviewId": "review_v06_conformance",
+  "createdAt": "2026-09-23T08:10:00.000Z",
+  "createdBy": {
+    "id": "fixture-creator",
+    "displayName": "Fixture Creator"
+  },
+  "rootDocument": "architecture.md",
+  "documents": [
+    {
+      "path": "architecture.md",
+      "digest": "sha256:6f7cf0a1ef55a1afd87984df896a605e45c2eb3406722a6e103c7da11ccac6e9",
+      "blobPath": "blobs/sha256/6f/6f7cf0a1ef55a1afd87984df896a605e45c2eb3406722a6e103c7da11ccac6e9",
+      "mediaType": "text/markdown",
+      "byteLength": 359
+    }
+  ],
+  "resources": [
+    {
+      "id": "resource_e84ab1d07a864a4702b751dc",
+      "document": "architecture.md",
+      "originalReference": "assets/system.svg",
+      "sourceKind": "workspace",
+      "role": "image",
+      "alt": "System boundary",
+      "capturedAt": "2026-09-23T08:00:00.000Z",
+      "digest": "sha256:85dea3147743a86166ae35d7dcb003d5943b6d0bad5092a34fc8112219325768",
+      "blobPath": "blobs/sha256/85/85dea3147743a86166ae35d7dcb003d5943b6d0bad5092a34fc8112219325768",
+      "mediaType": "image/svg+xml",
+      "byteLength": 178
+    }
+  ],
+  "externalReferences": [
+    {
+      "uri": "https://example.com/evidence",
+      "label": "External evidence",
+      "id": "reference_152e3350a2695b734b4ae3b4",
+      "document": "architecture.md",
+      "relation": "link"
+    },
+    {
+      "uri": "mailto:owner@example.com",
+      "label": "Owner",
+      "id": "reference_22694190cade3310cde71e89",
+      "document": "architecture.md",
+      "relation": "link"
+    },
+    {
+      "uri": "file:///private/evidence.pdf",
+      "label": "Author file",
+      "id": "reference_656a1370ae91bc711989c9dc",
+      "document": "architecture.md",
+      "relation": "link"
+    }
+  ],
+  "mermaidDiagrams": [
+    {
+      "id": "diagram_416e9c19c4554676a3460df2",
+      "document": "architecture.md",
+      "ordinal": 0,
+      "source": "flowchart LR\n  Author --> Review",
+      "sourceDigest": "sha256:a649eb3dafd8d103a08265e476336eb044125d83f01f0c90559f0100981e7ae8"
+    }
+  ],
+  "diagnostics": [],
+  "renderer": {
+    "markdownProfile": "commonmark-gfm+sanitized-html-v1",
+    "mermaidVersion": "11.10.1"
+  },
+  "parents": [
+    "revision_fixture_initial"
+  ],
+  "policy": {
+    "digest": "sha256:f4d48ac291feef9d5ef5c7c21a8b0d4c8950ffc22aa8908fc121f73cdc660e31",
+    "blobPath": "blobs/sha256/f4/f4d48ac291feef9d5ef5c7c21a8b0d4c8950ffc22aa8908fc121f73cdc660e31",
+    "mediaType": "application/json",
+    "byteLength": 87
+  },
+  "creationOperationId": "fixture_revision_addressed"
+}

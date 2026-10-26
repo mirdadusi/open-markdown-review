@@ -14,6 +14,16 @@ out/**
 coverage/**
 output/**
 tmp/**
+third-party/fonts/**
+dist/companion/**
+dist/legacy-node/**
+dist/legacy-node-release/**
+dist/companion-release/**
+experiments/**
+legacy/**
+clients/companion-go/**
+dist/companion-go/**
+companions/**
 **/*.map
 node_modules/**
 **/node_modules/**

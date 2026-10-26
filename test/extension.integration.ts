@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rename } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { authorReview } from '../src/professional/authoring';
@@ -8,19 +8,25 @@ import { digest } from '../src/professional/bytes';
 import { chromium } from 'playwright';
 import { reviewerAndSidebar } from './reviewer.extension.integration';
 import { legacyRemoval } from './reviewRemoval.extension.integration';
+import { creationSetup } from './creation.extension.integration';
+import packageJson from '../package.json';
 
 /** Actual extension host smoke test; browser tests separately exercise shared UI actions. */
 export async function run(): Promise<void> {
-  const extension = vscode.extensions.getExtension('mirdadusi.open-markdown-review');
+  const extension = vscode.extensions.getExtension(`${packageJson.publisher}.${packageJson.name}`);
   assert.ok(extension); await extension.activate(); assert.ok(extension.isActive);
   assert.deepEqual(extension.packageJSON.extensionKind, ['workspace'], 'The extension must execute beside local or remote workspace files; WSL therefore uses the portable target.');
   const commands = await vscode.commands.getCommands(true);
-  for (const name of ['initialize', 'connectReview', 'openPackage05', 'updatePortableBrowserClient', 'linkSourceWorkspace', 'publishReviewPackage', 'addComment', 'exportPdf', 'removeReview', 'deleteReview', 'checkForUpdates', 'openUpdateSource']) assert.ok(commands.includes(`openMarkdownReview.${name}`), `Missing command: ${name}`);
+  for (const name of ['installUpdate', 'initialize', 'connectReview', 'openPackage05', 'openInBrowser', 'updatePortableBrowserClient', 'linkSourceWorkspace', 'publishReviewPackage', 'addComment', 'exportPdf', 'removeReview', 'deleteReview', 'checkForUpdates', 'openUpdateSource']) assert.ok(commands.includes(`openMarkdownReview.${name}`), `Missing command: ${name}`);
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'omr-extension-')), source = path.join(temporary, 'source'), root = path.join(temporary, 'review');
   await reviewerAndSidebar(extension.extensionPath, temporary);
   await legacyRemoval(extension.extensionPath, temporary);
+  await creationSetup(extension.extensionPath, temporary);
   await mkdir(source); await writeFile(path.join(source, 'a.md'), '# Extension-host review\n\nExact frozen source.\n');
-  const created = await authorReview({ source, store: root, rootDocument: 'a.md', actor: { id: 'author' }, operationId: 'extension_test', journalRoot: path.join(temporary, 'journal'), clientArtifact: path.join(extension.extensionPath, 'dist/OpenMarkdownReview.html') });
+  const request = { source, store: root, rootDocument: 'a.md', actor: { id: 'author' }, operationId: 'extension_test', journalRoot: path.join(temporary, 'journal'), clientArtifact: path.join(extension.extensionPath, 'dist/OpenMarkdownReview.html') };
+  const retired = await authorReview(request); await rename(root, path.join(temporary, 'retired-review'));
+  const created = await authorReview({ ...request, operationId: 'extension_recreated', title: 'Recreated review', reviewerEmails: ['alex@example.com'] });
+  assert.notEqual(created.reviewId, retired.reviewId, 'Reusing a retired package path creates an independent review without clearing journals.');
   const before = digest(await readFile(path.join(root, 'manifest.json'))), names = await readdir(path.join(root, 'events'));
   await vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(created.browserClientPath), 'openMarkdownReview.entryFile');
   const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
@@ -37,5 +43,6 @@ export async function run(): Promise<void> {
   assert.deepEqual(await readdir(path.join(slidesRoot, 'events')), slideEvents, 'Opening a received Slidev package must not execute a build or append events.');
   await vscode.commands.executeCommand('workbench.action.closeAllEditors');
   process.stdout.write('VS Code activation, contributed commands, same-file custom editor and read-only opening passed.\n');
+  process.stdout.write('VS Code host: recreating a retired review folder preserves recovery history and opens the new review identity.\n');
   process.stdout.write('VS Code Electron-hosted Slidev author capture and same-file review opening passed.\n');
 }

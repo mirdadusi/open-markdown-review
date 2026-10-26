@@ -1,10 +1,10 @@
 # Security model
 
-The 0.5 candidate shares validation, rendering and audit code between hosts, verifies exact bytes, precompiles schemas and inventories bundled dependencies. This is not a completed assurance result. See [implementation status and concrete remaining blockers](spec/IMPLEMENTATION-STATUS.md) and [acceptance gates](spec/ACCEPTANCE.md).
+The 0.6 reference client shares validation, rendering and audit code between VS Code, browsers and the Go companion, verifies exact bytes, precompiles schemas and inventories bundled dependencies. This is not a completed assurance result. See [implementation status and concrete remaining blockers](spec/IMPLEMENTATION-STATUS.md) and [acceptance gates](spec/ACCEPTANCE.md).
 
 ## Trust boundary
 
-Filesystem/provider access control governs who can read or alter the package. Actor IDs are self-asserted and events are unsigned in both 0.4 and 0.5. A verified digest is not authentication, a signature, or protection against a writer deliberately replacing a whole package. Do not use this base profile as proof of identity.
+Filesystem/provider access control governs who can read or alter the package. Actor IDs/emails are self-asserted and events are unsigned in the base 0.4, 0.5 and 0.6 profiles. Invited email membership and creator-only workflow controls do not verify email ownership. A verified digest is not authentication, a signature, or protection against a writer deliberately replacing a whole package. Do not use this base profile as proof of identity.
 
 ## Client protections
 

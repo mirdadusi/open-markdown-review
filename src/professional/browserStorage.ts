@@ -58,6 +58,6 @@ export class BrowserStorage implements Storage {
       try { const stable = new Uint8Array(bytes); await writable.write(stable.buffer); await writable.close(); } catch (error) { await writable.abort().catch(() => undefined); throw error; }
     } catch (error) { translated(error); }
   }
-  async journalGet(operation: string): Promise<JournalEntry | undefined> { const entry = await localValue<JournalEntry>(`journal:${this.identity}:${operation}`); return entry && { ...entry, bytes: Array.from(entry.bytes) }; }
+  async journalGet(operation: string): Promise<JournalEntry | undefined> { const entry = await localValue<JournalEntry>(`journal:${this.identity}:${operation}`); return entry && { ...entry, bytes: new Uint8Array(entry.bytes) }; }
   async journalPut(operation: string, entry: JournalEntry): Promise<void> { await localValue(`journal:${this.identity}:${operation}`, { ...entry, bytes: new Uint8Array(entry.bytes) }); }
 }

@@ -11,13 +11,13 @@ import { installVsixThroughWorkbench, VSIX_INSTALL_COMMANDS } from "../src/updat
 const enterpriseSource: GitHubReleaseUpdateSource = validateUpdateSource({
   schemaVersion: 1,
   channel: "github-release",
-  extensionId: "advanta-czechia.open-markdown-review",
-  host: "github.siemens.cloud",
-  owner: "Advanta-Czechia",
+  extensionId: "example-org.open-markdown-review",
+  host: "code.example.org",
+  owner: "example-org",
   repository: "open-markdown-review",
-  releasesUrl: "https://github.siemens.cloud/Advanta-Czechia/open-markdown-review/releases",
-  latestReleaseApiUrl: "https://github.siemens.cloud/api/v3/repos/Advanta-Czechia/open-markdown-review/releases/latest",
-  assetRedirectHosts: ["media.github.siemens.cloud"],
+  releasesUrl: "https://code.example.org/example-org/open-markdown-review/releases",
+  latestReleaseApiUrl: "https://code.example.org/api/v3/repos/example-org/open-markdown-review/releases/latest",
+  assetRedirectHosts: ["media.code.example.org"],
   artifactBaseName: "open-markdown-review",
 }) as GitHubReleaseUpdateSource;
 
@@ -43,8 +43,18 @@ test("update source binds the build to its declared distribution identity", asyn
     assert.equal(OMR_UPDATE_SOURCE.extensionId, "mirdadusi.open-markdown-review");
     assert.ok(!commands.has("openMarkdownReview.installUpdate"), "Marketplace builds must use VS Code's native Update action.");
   } else {
-    assert.equal(OMR_UPDATE_SOURCE.extensionId, "advanta-czechia.open-markdown-review");
+    assert.equal(OMR_UPDATE_SOURCE.extensionId, "example-org.open-markdown-review");
     assert.ok(commands.has("openMarkdownReview.installUpdate"));
+    assert.ok(pkg.activationEvents.includes("onCommand:openMarkdownReview.installUpdate"));
+    assert.equal(
+      pkg.contributes.commands.find((item: { command: string }) => item.command === "openMarkdownReview.installUpdate").enablement,
+      "openMarkdownReview.updateAvailable",
+    );
+    const extensionMenu = pkg.contributes.menus["extension/context"];
+    for (const command of ["checkForUpdates", "installUpdate", "openUpdateSource"]) {
+      assert.ok(extensionMenu.some((item: { command: string; when: string }) =>
+        item.command === `openMarkdownReview.${command}` && item.when === "extension == example-org.open-markdown-review"));
+    }
     assert.equal(pkg.contributes.configuration.properties["openMarkdownReview.updateChecks.enabled"].default, true);
   }
 });
@@ -69,8 +79,8 @@ test("GitHub release checks accept one exact target/checksum pair and preserve a
     draft: false,
     prerelease: false,
     assets: [
-      { name: names.vsix, url: "https://github.siemens.cloud/api/v3/repos/Advanta-Czechia/open-markdown-review/releases/assets/10" },
-      { name: names.checksum, url: "https://github.siemens.cloud/api/v3/repos/Advanta-Czechia/open-markdown-review/releases/assets/11" },
+      { name: names.vsix, url: "https://code.example.org/api/v3/repos/example-org/open-markdown-review/releases/assets/10" },
+      { name: names.checksum, url: "https://code.example.org/api/v3/repos/example-org/open-markdown-review/releases/assets/11" },
     ],
   };
   const fetchImpl = (async () => json(release, { etag: '"release-055"' })) as typeof fetch;
@@ -91,8 +101,8 @@ test("GitHub release checks reject prereleases, unsafe URLs, duplicates, and mis
     draft: false,
     prerelease: false,
     assets: [
-      { name: names.vsix, url: "https://github.siemens.cloud/api/v3/repos/Advanta-Czechia/open-markdown-review/releases/assets/10" },
-      { name: names.checksum, url: "https://github.siemens.cloud/api/v3/repos/Advanta-Czechia/open-markdown-review/releases/assets/11" },
+      { name: names.vsix, url: "https://code.example.org/api/v3/repos/example-org/open-markdown-review/releases/assets/10" },
+      { name: names.checksum, url: "https://code.example.org/api/v3/repos/example-org/open-markdown-review/releases/assets/11" },
     ],
   };
   for (const invalid of [
@@ -118,12 +128,12 @@ test("enterprise downloads validate redirects, checksum filename, size, and SHA-
       name: artifact.vsix,
       checksumName: artifact.checksum,
       target: "portable",
-      apiUrl: "https://github.siemens.cloud/api/v3/repos/Advanta-Czechia/open-markdown-review/releases/assets/10",
-      checksumApiUrl: "https://github.siemens.cloud/api/v3/repos/Advanta-Czechia/open-markdown-review/releases/assets/11",
+      apiUrl: "https://code.example.org/api/v3/repos/example-org/open-markdown-review/releases/assets/10",
+      checksumApiUrl: "https://code.example.org/api/v3/repos/example-org/open-markdown-review/releases/assets/11",
     },
   };
-  const checksumRedirect = `https://media.github.siemens.cloud/assets/${artifact.checksum}?signature=one`;
-  const vsixRedirect = `https://media.github.siemens.cloud/assets/${artifact.vsix}?signature=two`;
+  const checksumRedirect = `https://media.code.example.org/assets/${artifact.checksum}?signature=one`;
+  const vsixRedirect = `https://media.code.example.org/assets/${artifact.vsix}?signature=two`;
   const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const requestHeaders = init?.headers as Record<string, string> | undefined;

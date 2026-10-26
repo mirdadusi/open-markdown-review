@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.5
+
+This public release brings the 0.6 workflow to the VS Code extension and shared browser toolbox. The core wire version is 0.6.0; existing review evidence is not silently migrated.
+
+- Bundle Windows x64, macOS ARM64 and Linux x64 Go companions inside each VSIX. Creation copies the selected launchers into the review folder without downloads, a compiler or a reviewer-side runtime installation. The Node companion remains an explicit legacy/development option.
+- Add invited email rosters, initiator-only later invitations, and independent participant finish/reopen state. Identity is self-asserted, not email verification or OS authentication.
+- Add the creator's processing workbench: accepted findings, published-fix evidence, revision links and reviewer verification. Preserve initiator-only finding decisions and close/reopen controls.
+- Export either a review archive with native PDF comment annotations and reviewer progress, or a clean document-only PDF. Improve Unicode fonts, tables, image sizing and links.
+- Put Back, Previous/Next, a compact document counter and the continuous-reading checkbox beside Export PDF in the existing toolbar. Explicit document links start at the top; finding and heading links retain their precise targets.
+- Back up and upgrade an existing review's HTML and Go launchers while verifying that comments, documents, revisions, approvals and completion events remain unchanged.
+- Retain native Marketplace updates for the public extension, MIT-only licensing, and a single shared protocol/UI implementation across VS Code and browser participation.
+- Use Go 1.27.3 and patched publishing/schema dependencies. See [release notes](docs/releases/0.6.5.md) and [qualification boundaries](spec/IMPLEMENTATION-STATUS.md).
+
 ## 0.5.6
 
 Focused WSL/remote-workspace reliability hotfix. Core wire version remains 0.5.0 and professional-pilot qualification remains incomplete. See [release notes](docs/releases/0.5.6.md).

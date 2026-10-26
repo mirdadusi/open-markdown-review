@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "0.6.0",
+  "id": "event_verified",
+  "type": "thread.verification.recorded",
+  "reviewId": "review_v06_conformance",
+  "revisionId": "revision_fixture_initial",
+  "revisionDigest": "sha256:725b4dc688583721ee32c6805181386da90d89d1f8f072b3732b3551f358a559",
+  "occurredAt": "2026-09-23T08:12:00.000Z",
+  "actor": {
+    "id": "fixture-reviewer",
+    "displayName": "Fixture Reviewer"
+  },
+  "operationId": "fixture_verified",
+  "threadId": "thread_state_durability",
+  "addressedEventId": "event_addressed",
+  "verdict": "verified",
+  "note": "The published revision states the persistence requirement.",
+  "verificationPredecessors": []
+}

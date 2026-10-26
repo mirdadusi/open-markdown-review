@@ -45,8 +45,9 @@ export type UpdateFetchResult =
 
 export type UpdateDownloadResult =
   | { kind: "downloaded"; name: string; bytes: Uint8Array }
+  | { kind: "streamed"; name: string; byteLength: number }
   | { kind: "authentication-required" }
-  | { kind: "unavailable"; reason: "offline" | "timeout" | "server" }
+  | { kind: "unavailable"; reason: "offline" | "timeout" | "server" | "storage" }
   | { kind: "invalid-metadata"; detail: string };
 
 export interface StoredUpdateState {

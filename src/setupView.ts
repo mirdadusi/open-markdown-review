@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto";
 import path from "node:path";
 import * as vscode from "vscode";
 import { validateDocumentSelection } from "./protocol/scope";
+import { parseReviewerEmails } from './professional/reviewer';
+import { COMPANION_TARGETS, CompanionTarget, companionTargets } from './professional/companionTargets';
 
 export interface ReviewSetupDefaults {
   initialized: boolean;
@@ -14,6 +16,8 @@ export interface ReviewSetupDefaults {
   storageRoot: string;
   storageEditable: boolean;
   portableBrowserDefault: boolean;
+  reviewerEmails?: string[];
+  companionTargets?: CompanionTarget[];
 }
 
 export interface ReviewSetupResult {
@@ -22,13 +26,30 @@ export interface ReviewSetupResult {
   rootDocument: string;
   storageRoot: string;
   includePortableBrowser: boolean;
+  reviewerEmails?: string[];
+  companionTargets?: CompanionTarget[];
 }
 
 function escapeHtml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
-function html(context: vscode.ExtensionContext, webview: vscode.Webview, defaults: ReviewSetupDefaults): string {
+/** The native boundary validates the renderer payload independently. */
+export function reviewSetupSubmission(defaults: ReviewSetupDefaults, message: Record<string, unknown>): { errors: string[]; result?: ReviewSetupResult } {
+  const title = typeof message.title === 'string' ? message.title.trim() : '';
+  const documentPaths = Array.isArray(message.documentPaths) ? message.documentPaths.filter((item): item is string => typeof item === 'string').sort() : [];
+  const rootDocument = typeof message.rootDocument === 'string' ? message.rootDocument : '';
+  const storageRoot = typeof message.storageRoot === 'string' ? message.storageRoot : '';
+  const errors = validateDocumentSelection(defaults.availableDocuments, documentPaths, rootDocument);
+  let reviewerEmails: string[] | undefined, targets: CompanionTarget[] = [];
+  try { targets = defaults.initialized ? [] : companionTargets(message.companionTargets); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+  try { reviewerEmails = defaults.initialized ? defaults.reviewerEmails : parseReviewerEmails(typeof message.reviewerEmails === 'string' ? message.reviewerEmails : ''); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+  if (!defaults.initialized && !title) errors.unshift('Enter a review title.');
+  if (!storageRoot || storageRoot !== defaults.storageRoot) errors.unshift('Choose a valid review package location.');
+  return errors.length ? { errors } : { errors, result: { title: defaults.initialized ? defaults.title : title, documentPaths, rootDocument, storageRoot, includePortableBrowser: !defaults.initialized && message.includePortableBrowser === true, reviewerEmails, companionTargets: targets } };
+}
+
+export function reviewSetupHtml(context: vscode.ExtensionContext, webview: vscode.Webview, defaults: ReviewSetupDefaults): string {
   const nonce = randomBytes(18).toString("base64");
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "media", "setup.js"));
   const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, "media", "setup.css"));
@@ -39,10 +60,11 @@ function html(context: vscode.ExtensionContext, webview: vscode.Webview, default
 <link rel="stylesheet" href="${styleUri}"><title>Review setup</title></head><body>
 <main class="setup-shell"><header class="hero"><div><span class="eyebrow">OPEN MARKDOWN REVIEW</span><h1>${defaults.initialized ? "Choose documents for the next revision" : "Set up a Markdown review"}</h1><p>${defaults.initialized ? "The selected files will form one new immutable, auditable revision. The previous revision remains unchanged." : "Choose individual Markdown files or entire folders. Only selected files become part of the review."}</p></div><div class="step-badge">${defaults.initialized ? "New revision" : "Review setup"}</div></header>
 <section class="card details-card"><label for="review-title">Review title</label><input id="review-title" type="text" value="${escapeHtml(defaults.title)}" ${defaults.initialized ? "disabled" : ""}><span class="field-help">Shared with reviewers and shown in the audit PDF.</span></section>
+<section class="card reviewers-card"><label for="reviewer-emails">Initial reviewer email addresses (optional)</label><textarea id="reviewer-emails" rows="4" placeholder="alex@example.com&#10;sam@example.com" ${defaults.initialized ? 'readonly' : ''}>${escapeHtml((defaults.reviewerEmails ?? []).join('\n'))}</textarea><span class="field-help">Enter up to 100 addresses, separated by commas or new lines. Only these reviewers and the initiator can participate. Leave empty for an open review. The initiator can use Add reviewers in the toolbox later; ordinary reviewers cannot invite others. Initial addresses remain immutable, and all invitations and completion history appear in the audit PDF. Email ownership is self-asserted.</span></section>
 <section class="card storage-card"><div><label for="storage-location">Review package folder</label><span id="storage-mode" class="storage-mode"></span></div><div class="storage-control"><input id="storage-location" type="text" readonly value="${escapeHtml(defaults.storageRoot)}">${defaults.storageEditable ? '<button id="choose-storage" class="secondary">Choose or create folder…</button>' : ""}</div><span class="field-help">This selected folder is the complete review package. Keep the default <code>.review</code>, or choose any name and any normal local disk, mounted shared drive, NAS/SMB/NFS folder, Git workspace, or synchronized folder.</span></section>
 ${defaults.initialized ? "" : `<section class="card access-card"><div class="picker-heading"><div><h2>Participant access</h2><p>Every new review includes both VS Code access and the HTML review toolbox.</p></div><span class="recommended">Included</span></div><div class="access-options">
 <label class="access-option"><input type="radio" name="participant-access" value="portable" checked disabled><span><strong>VS Code + portable browser</strong><small>Creates one self-contained, review-named <code>Review-&lt;name&gt;.html</code> beside the package. Reviewers grant it access to this folder once; later openings resume automatically when permission remains granted. It embeds only review identity binding—not a copy of the review. JavaScript, Mermaid, styling and PDF libraries are bundled runtime dependencies.</small></span></label>
-</div><div class="browser-boundary"><strong>Browser safety boundary</strong><span>The browser asks the participant to choose this review folder and to enter a review identity. It cannot silently inherit Windows identity, and unsupported browsers remain read-only or show a compatibility message.</span></div></section>`}
+</div><fieldset class="companion-platforms"><legend>Optional local companions</legend><p>Include Go launchers for reviewers whose browser blocks folder access. All three platforms are bundled inside this extension and its updates. Creation copies only the selected executables into the review folder; no separate download, build or Node.js installation is needed. Leave all unchecked for HTML/VS Code only.</p>${COMPANION_TARGETS.map(target => `<label class="companion-option"><input type="checkbox" name="companion-target" value="${target.id}" ${(defaults.companionTargets ?? []).includes(target.id) ? 'checked' : ''}><span>${target.label}</span></label>`).join('')}<p>Bundled distributions are verified against the trusted client catalog before publication. A missing or mismatched bundle stops creation before evidence is published; reinstall the complete extension rather than download a separate companion. Signing/endpoint approval may be required.</p></fieldset><div class="browser-boundary"><strong>Browser safety boundary</strong><span>Direct HTML requires a folder grant. An approved local companion opens the same review without that browser picker; OS/share permissions still apply. Identity remains self-asserted, not a Windows login.</span></div></section>`}
 <section class="card picker-card"><div class="picker-heading"><div><h2>Markdown documents</h2><p>Select a folder to include all Markdown below it, or choose individual files.</p></div><div class="summary"><strong id="selected-count">0</strong><span>selected</span></div></div>
 <div class="toolbar"><div class="search-wrap"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Filter files and folders…"></div><button id="select-all" class="secondary">Select all</button><button id="clear-all" class="secondary">Clear</button></div>
 <div id="empty-state" class="empty-state" hidden>No Markdown files were found in this workspace.</div><div id="document-tree" class="document-tree" role="tree" aria-label="Markdown documents"></div></section>
@@ -67,7 +89,7 @@ export class ReviewSetupPanel {
         completed = true;
         resolve(value);
       };
-      panel.webview.html = html(context, panel.webview, defaults);
+      panel.webview.html = reviewSetupHtml(context, panel.webview, defaults);
       const messageDisposable = panel.webview.onDidReceiveMessage((message: Record<string, unknown>) => {
         if (message.command === "cancel") {
           finish();
@@ -93,26 +115,12 @@ export class ReviewSetupPanel {
           return;
         }
         if (message.command !== "submit") return;
-        const title = typeof message.title === "string" ? message.title.trim() : "";
-        const documentPaths = Array.isArray(message.documentPaths)
-          ? message.documentPaths.filter((item): item is string => typeof item === "string").sort()
-          : [];
-        const rootDocument = typeof message.rootDocument === "string" ? message.rootDocument : "";
-        const storageRoot = typeof message.storageRoot === "string" ? message.storageRoot : "";
-        const errors = validateDocumentSelection(defaults.availableDocuments, documentPaths, rootDocument);
-        if (!defaults.initialized && !title) errors.unshift("Enter a review title.");
-        if (!storageRoot || storageRoot !== defaults.storageRoot) errors.unshift("Choose a valid review package location.");
+        const { errors, result } = reviewSetupSubmission(defaults, message);
         if (errors.length) {
           void panel.webview.postMessage({ command: "validation", errors });
           return;
         }
-        finish({
-          title: defaults.initialized ? defaults.title : title,
-          documentPaths,
-          rootDocument,
-          storageRoot,
-          includePortableBrowser: !defaults.initialized && message.includePortableBrowser === true,
-        });
+        finish(result);
         panel.dispose();
       });
       panel.onDidDispose(() => {

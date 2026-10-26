@@ -1,0 +1,20 @@
+{
+  "name": "@open-markdown-review/slidev-parser-core",
+  "version": "52.19.1-omr.1",
+  "private": true,
+  "description": "Unmodified MIT Slidev 52.19.1 pure parser modules for immutable v1 review compatibility",
+  "license": "MIT",
+  "type": "module",
+  "main": "./core.mjs",
+  "types": "./core.d.ts",
+  "exports": {
+    ".": {
+      "types": "./core.d.ts",
+      "default": "./core.mjs"
+    }
+  },
+  "dependencies": {
+    "@antfu/utils": "9.3.0",
+    "yaml": "2.9.1"
+  }
+}

@@ -1,0 +1,112 @@
+{
+  "schemaVersion": "omr-companion-catalog/2",
+  "runtime": "go",
+  "version": "0.6.5",
+  "delivery": "bundled-v1",
+  "companionDigest": "sha256:19d184ba079f9037f5da9f093c5b07b4188ab02a01817d50bf6f5e36143b9e6f",
+  "toolboxDigest": "sha256:77f9b32bc84516203515fde5f63da8036ada669c359b5abbb242cb33dcda3de4",
+  "targets": [
+    {
+      "target": "win32-x64",
+      "build": {
+        "schemaVersion": "omr-go-build/1",
+        "runtime": "go",
+        "version": "0.6.5",
+        "target": "win32-x64",
+        "toolchain": "go1.27.3",
+        "inputs": {
+          "hostSource": "sha256:c518d5e9b5bf3fbda7f3ca0b1bd6937e8a3b714e711ee5a7ae6a902b8a73877a",
+          "core": "sha256:19d184ba079f9037f5da9f093c5b07b4188ab02a01817d50bf6f5e36143b9e6f",
+          "toolbox": "sha256:77f9b32bc84516203515fde5f63da8036ada669c359b5abbb242cb33dcda3de4",
+          "notices": "sha256:e5f320e9af5d98b92de7299583918e6f81d51d5a5d66c57ef428859b4fa2c0df",
+          "goMod": "sha256:7beb086b8e6760ef5a3c7642a2dc33d80a3623b5d0ce5d0ebf6c4f1ba1be92a4",
+          "goSum": "sha256:c4088bf017865b29f3a3221c615a84a0657a12a197400a1d7bf577c01d89435a"
+        },
+        "testFaults": false,
+        "digest": "sha256:eef6cce001e23e2d6a52dfcc57794c65cd22ae13f093b2d41ed62df604c23d21",
+        "byteLength": 25507840,
+        "qualified": false,
+        "codeSigning": "unsigned; organization approval may be required",
+        "qualification": "Packaging is not target-platform runtime qualification."
+      },
+      "executable": {
+        "filename": "StartReview-windows-x64.exe",
+        "byteLength": 25507840,
+        "digest": "sha256:eef6cce001e23e2d6a52dfcc57794c65cd22ae13f093b2d41ed62df604c23d21"
+      },
+      "notices": {
+        "filename": "StartReview-windows-x64.exe.NOTICES.txt",
+        "byteLength": 275884,
+        "digest": "sha256:e5f320e9af5d98b92de7299583918e6f81d51d5a5d66c57ef428859b4fa2c0df"
+      }
+    },
+    {
+      "target": "darwin-arm64",
+      "build": {
+        "schemaVersion": "omr-go-build/1",
+        "runtime": "go",
+        "version": "0.6.5",
+        "target": "darwin-arm64",
+        "toolchain": "go1.27.3",
+        "inputs": {
+          "hostSource": "sha256:c518d5e9b5bf3fbda7f3ca0b1bd6937e8a3b714e711ee5a7ae6a902b8a73877a",
+          "core": "sha256:19d184ba079f9037f5da9f093c5b07b4188ab02a01817d50bf6f5e36143b9e6f",
+          "toolbox": "sha256:77f9b32bc84516203515fde5f63da8036ada669c359b5abbb242cb33dcda3de4",
+          "notices": "sha256:e5f320e9af5d98b92de7299583918e6f81d51d5a5d66c57ef428859b4fa2c0df",
+          "goMod": "sha256:7beb086b8e6760ef5a3c7642a2dc33d80a3623b5d0ce5d0ebf6c4f1ba1be92a4",
+          "goSum": "sha256:c4088bf017865b29f3a3221c615a84a0657a12a197400a1d7bf577c01d89435a"
+        },
+        "testFaults": false,
+        "digest": "sha256:4fea6cc33436a006c45cc0e20d425b1b51b639ad7b5751ba8503b3288a75f8c9",
+        "byteLength": 24484594,
+        "qualified": false,
+        "codeSigning": "Go linker ad-hoc signature; not notarized",
+        "qualification": "Packaging is not target-platform runtime qualification."
+      },
+      "executable": {
+        "filename": "StartReview-macos-arm64",
+        "byteLength": 24484594,
+        "digest": "sha256:4fea6cc33436a006c45cc0e20d425b1b51b639ad7b5751ba8503b3288a75f8c9"
+      },
+      "notices": {
+        "filename": "StartReview-macos-arm64.NOTICES.txt",
+        "byteLength": 275884,
+        "digest": "sha256:e5f320e9af5d98b92de7299583918e6f81d51d5a5d66c57ef428859b4fa2c0df"
+      }
+    },
+    {
+      "target": "linux-x64",
+      "build": {
+        "schemaVersion": "omr-go-build/1",
+        "runtime": "go",
+        "version": "0.6.5",
+        "target": "linux-x64",
+        "toolchain": "go1.27.3",
+        "inputs": {
+          "hostSource": "sha256:c518d5e9b5bf3fbda7f3ca0b1bd6937e8a3b714e711ee5a7ae6a902b8a73877a",
+          "core": "sha256:19d184ba079f9037f5da9f093c5b07b4188ab02a01817d50bf6f5e36143b9e6f",
+          "toolbox": "sha256:77f9b32bc84516203515fde5f63da8036ada669c359b5abbb242cb33dcda3de4",
+          "notices": "sha256:e5f320e9af5d98b92de7299583918e6f81d51d5a5d66c57ef428859b4fa2c0df",
+          "goMod": "sha256:7beb086b8e6760ef5a3c7642a2dc33d80a3623b5d0ce5d0ebf6c4f1ba1be92a4",
+          "goSum": "sha256:c4088bf017865b29f3a3221c615a84a0657a12a197400a1d7bf577c01d89435a"
+        },
+        "testFaults": false,
+        "digest": "sha256:ffb614a12d26ed6cf8fd07769c00dae9d444ed0222dee89805491b2d61817cf3",
+        "byteLength": 25096352,
+        "qualified": false,
+        "codeSigning": "unsigned; organization approval may be required",
+        "qualification": "Packaging is not target-platform runtime qualification."
+      },
+      "executable": {
+        "filename": "StartReview-linux-x64",
+        "byteLength": 25096352,
+        "digest": "sha256:ffb614a12d26ed6cf8fd07769c00dae9d444ed0222dee89805491b2d61817cf3"
+      },
+      "notices": {
+        "filename": "StartReview-linux-x64.NOTICES.txt",
+        "byteLength": 275884,
+        "digest": "sha256:e5f320e9af5d98b92de7299583918e6f81d51d5a5d66c57ef428859b4fa2c0df"
+      }
+    }
+  ]
+}

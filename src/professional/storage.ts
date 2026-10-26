@@ -1,6 +1,9 @@
 import { digest, jsonBytes, parseJson, safePath } from './bytes';
 import { FileEvidence, LIMITS, ProtocolError, StoredContent } from './types';
-export interface JournalEntry { path: string; bytes: number[]; acknowledged: boolean; digest?: string }
+// In-memory bytes are binary, not one boxed JS number per byte. Legacy number
+// arrays remain accepted by adapters; private persisted/wire encodings are
+// explicit at their boundaries, never inferred from JSON.stringify(Uint8Array).
+export interface JournalEntry { path: string; bytes: Uint8Array | number[]; acknowledged: boolean; digest?: string }
 /** Global adapter admission avoids nested scans multiplying shared-drive requests. */
 export class IoLimiter {
   private running = 0; private readonly waiting: Array<() => void> = [];
@@ -31,7 +34,7 @@ export function blobEvidence(bytes: Uint8Array, mediaType: string): FileEvidence
   const hash = digest(bytes).slice(7); return evidence(`blobs/sha256/${hash.slice(0, 2)}/${hash}`, bytes, mediaType);
 }
 /** Exact-intent recovery is local-only. No provider file is repaired without its journal. */
-export async function publish(store: Storage, operation: string, file: FileEvidence, bytes: Uint8Array): Promise<void> {
+export async function publish(store: Storage, operation: string, file: FileEvidence, bytes: Uint8Array, requireExisting = false): Promise<void> {
   if (!store.writable) throw new ProtocolError('permission', 'This connection is read-only.');
   safePath(file.path);
   if (digest(bytes) !== file.digest || bytes.length !== file.byteLength) throw new ProtocolError('invalid', 'Publication bytes differ from intent.');
@@ -43,10 +46,11 @@ export async function publish(store: Storage, operation: string, file: FileEvide
   }
   // Acknowledged records intentionally retain no large bytes. Never reconstruct a lost shared file.
   if (journal?.acknowledged) throw new ProtocolError('integrity', `An acknowledged immutable publication disappeared or changed: ${file.path}. Preserve the package for inspection and start a new capture in a different empty folder; never reconstruct acknowledged evidence automatically.`);
+  if (requireExisting) throw new ProtocolError('integrity', `Previously published review content disappeared or changed: ${file.path}.`);
   const recover = !!journal && !!existing && existing.length < bytes.length && existing.every((b, i) => b === bytes[i]);
   if (existing && !recover) throw new ProtocolError('integrity', `Refusing to overwrite existing file: ${file.path}`);
   if (!journal) {
-    journal = { path: file.path, bytes: Array.from(bytes), acknowledged: false };
+    journal = { path: file.path, bytes: bytes.slice(), acknowledged: false };
     await store.journalPut(operation, journal);
   }
   try {

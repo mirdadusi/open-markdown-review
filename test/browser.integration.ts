@@ -1,30 +1,37 @@
 import test from 'node:test';
 import './slidev.integration';
 import './reviewer.browser.integration';
+import './reader.browser.integration';
+import './participation.browser.integration';
+import './export.browser.integration';
+import './companion.browser.integration';
+import './companion.launcher.integration';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
-import { authorReview } from '../src/professional/authoring';
+import { authorReview, installClient } from '../src/professional/authoring';
 import { NativeStorage } from '../src/professional/nativeStorage';
 import { storageResponse } from '../src/professional/bridge';
 import { digest, parseJson } from '../src/professional/bytes';
 import { AuditInventory, LIMITS } from '../src/professional/types';
+import { verifiedExportFile } from '../src/professional/exportAccess';
 
 test('real Chromium bundle: create, images/Mermaid/tables, repeated selection, reply, resolution and whole audit PDF', { timeout: 120000 }, async () => {
   const temporary = await mkdtemp(path.join(process.env.OMR_TEST_REVIEW_ROOT || os.tmpdir(), 'omr-browser-')), source = path.join(temporary, 'source'), root = path.join(temporary, 'review'), journal = await mkdtemp(path.join(os.tmpdir(), 'omr-private-journal-'));
   await mkdir(path.join(source, 'images'), { recursive: true });
-  await writeFile(path.join(source, 'a.md'), '# Architecture\n\nHello repeated repeated.\n\n![External diagram](images/diagram.svg)\n\n```mermaid\nflowchart LR\n  A[Author] --> B[Review]\n```\n\n| Name | Role |\n| --- | --- |\n| Mira | Author |\n\n<table id="html-risk" onclick="globalThis.compromised=true"><thead><tr><th rowspan="2">Risk</th><th>Owner</th></tr></thead><tbody><tr><td><u>Reviewer</u></td></tr></tbody></table>\n\n<img src="images/diagram.svg" alt="HTML diagram" onerror="globalThis.compromised=true">\n\n<a href="https://example.com/evidence" onclick="globalThis.compromised=true">External evidence</a>\n\n<script>globalThis.compromised=true</script>\n\n[Evidence](evidence.txt "review:attach")\n');
+  await writeFile(path.join(source, 'a.md'), '# Architecture\n\nHello repeated repeated.\n\n![External diagram](images/diagram.svg)\n\n```mermaid\nflowchart LR\n  A[Author] --> B[Review]\n```\n\n| Name | Role |\n| --- | --- |\n| Mira | Author |\n\n<table id="html-risk" onclick="globalThis.compromised=true"><thead><tr><th rowspan="2">Risk</th><th>Owner</th></tr></thead><tbody><tr><td><u>Reviewer</u></td></tr></tbody></table>\n\n<img src="images/diagram.svg" alt="HTML diagram" onerror="globalThis.compromised=true">\n\n<a href="https://example.com/evidence" onclick="globalThis.compromised=true">External evidence</a>\n\n[Email owner](mailto:owner@example.com) · [Unsafe HTTP](http://example.com/plain) · [Local author path](file:///private/evidence.pdf)\n\n<script>globalThis.compromised=true</script>\n\n[Evidence](evidence.txt "review:attach")\n');
   await writeFile(path.join(source, 'b.md'), '# Second document\n\nThis must appear in the complete PDF.\n');
   await writeFile(path.join(source, 'evidence.txt'), 'Frozen reference evidence.');
-  await writeFile(path.join(source, 'images/diagram.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><rect width="240" height="80" fill="#2458a6"/><text x="12" y="45" fill="white">Captured image</text></svg>');
+  await writeFile(path.join(source, 'images/diagram.svg'), '<?xml version="1.0"?>\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><rect width="240" height="80" fill="#2458a6"/><text x="12" y="45" fill="white">Captured image</text></svg>');
   const artifact = path.resolve('dist/OpenMarkdownReview.html');
   const created = await authorReview({ source, store: root, rootDocument: 'a.md', actor: { id: 'author' }, operationId: 'browser_fixture', clientArtifact: artifact, journalRoot: journal });
   assert.equal(created.outcome, 'completed');
   const store = new NativeStorage(root, journal);
   let failNextPdf = false;
+  const exportActions: Array<{ method: string; target: string }> = [];
   const browser = await chromium.launch({ headless: true, channel: 'chromium', ...(process.env.OMR_TEST_BROWSER ? { executablePath: process.env.OMR_TEST_BROWSER } : {}) });
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }), errors: string[] = [];
@@ -32,6 +39,8 @@ test('real Chromium bundle: create, images/Mermaid/tables, repeated selection, r
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.exposeFunction('omrHost', async (method: string, args: unknown[]) => {
+      if (method === 'info') return { ok: true, value: { identity: store.identity, writable: true, canOpenExports: true } };
+      if (method === 'openExport' || method === 'revealExport') { exportActions.push({ method, target: await verifiedExportFile(store, String(args[0])) }); return { ok: true, value: true }; }
       if (delayManifest && method === 'read' && args[0] === 'manifest.json') { delayManifest = false; await openingGate; }
       if (failNextPdf && method === 'write' && String(args[0]).endsWith('.pdf')) {
         failNextPdf = false; await store.write(String(args[0]), new Uint8Array(args[1] as number[]).slice(0, 17), false);
@@ -58,8 +67,13 @@ test('real Chromium bundle: create, images/Mermaid/tables, repeated selection, r
     assert.equal(await page.locator('#document [onclick], #document [onerror], #document script').count(), 0);
     assert.equal(await page.evaluate(() => (globalThis as typeof globalThis & { compromised?: boolean }).compromised), undefined);
     assert.equal(await page.locator('#document a[href="https://example.com/evidence"][rel="noopener noreferrer"]').count(), 1);
+    assert.equal(await page.locator('#document a[href="mailto:owner@example.com"][rel="noopener noreferrer"]').count(), 1);
+    assert.equal(await page.locator('#document a.blocked-reference').count(), 2, 'HTTP and file references remain visible but cannot be opened by the client.');
     await page.locator('#actor-id').fill('reviewer'); await page.locator('#actor-name').fill('Review Participant');
-    await page.locator('#document table[data-source-bookmark="html-risk"] [data-kind="table-cell"]').last().click();
+    const keyboardCell = page.locator('#document table[data-source-bookmark="html-risk"] [data-kind="table-cell"]').last();
+    await keyboardCell.focus(); await keyboardCell.press('Enter');
+    assert.equal(await page.locator('#selection-actions').isVisible(), true, 'Semantic targets expose review actions through the keyboard.');
+    assert.match(await page.locator('#selection-action-label').innerText(), /table-cell/i);
     await page.locator('#comment').click(); assert.equal(await page.locator('#composer').evaluate(dialog => (dialog as HTMLDialogElement).open), true);
     await page.locator('#cancel').click();
     await page.locator('[data-zoom]').click(); await page.locator('#zoom-scale').focus(); await page.locator('#zoom-scale').press('End'); assert.equal(await page.locator('#zoom-content svg').evaluate(el => (el as SVGElement).style.width), '3200px'); await page.locator('#zoom-close').click();
@@ -108,26 +122,111 @@ test('real Chromium bundle: create, images/Mermaid/tables, repeated selection, r
     await page.locator('#save').click(); await submitted(); assert.match(await page.locator('#stance-status').innerText(), /approved/);
     // Filters and selected document must never reduce audit scope.
     await page.locator('#documents [data-document="b.md"]').click(); await page.locator('#open-only').check();
+    const exportEventsBeforeCancel = await page.evaluate(() => window.omrAutomation!.session()!.events.filter(event => event.type === 'export.created').length);
+    await page.locator('#export').click(); await page.locator('#cancel-operation').waitFor({ state: 'visible' }); await page.locator('#cancel-operation').click();
+    await page.waitForFunction(() => document.getElementById('toast')!.textContent!.includes('Export cancelled'), undefined, { timeout: 45000 });
+    assert.equal(await page.evaluate(() => window.omrAutomation!.session()!.events.filter(event => event.type === 'export.created').length), exportEventsBeforeCancel, 'Cancelling export before publication never creates shared evidence.');
+    assert.equal(await page.locator('#cancel-operation').isVisible(), false);
     const exported = await page.evaluate(async revision => window.omrAutomation!.export({ id: 'reviewer' }, revision!, 'browser_export'), created.revisionId) as { pdfPath: string; inventoryPath: string };
     const pdf = await readFile(path.join(root, exported.pdfPath)), inventory = parseJson<AuditInventory>(await readFile(path.join(root, exported.inventoryPath)), LIMITS.inventory);
     assert.ok(pdf.subarray(0, 5).toString() === '%PDF-'); assert.equal(inventory.pdf.digest, digest(pdf)); assert.equal(inventory.documents.length, 2); assert.equal(inventory.renderedDiagrams.length, 1); assert.equal(inventory.events.length, 8);
+    const revision = await page.evaluate(() => window.omrAutomation!.session()!.revision!);
+    assert.deepEqual(revision.externalReferences.map(reference => reference.uri).sort(), ['file:///private/evidence.pdf', 'http://example.com/plain', 'https://example.com/evidence', 'mailto:owner@example.com']);
     for (const file of inventory.events) assert.equal(digest(await readFile(path.join(root, file.path))), file.digest);
     // The normal button, not just an automation operation ID, survives close/retry.
     failNextPdf = true; await page.locator('#export').click();
     await page.waitForFunction(() => document.getElementById('status')!.textContent!.includes('Export did not finish'));
-    const pointerKey = `export-ui:${digest(`${created.revisionId}\0reviewer`).slice(7)}`;
+    assert.equal(await page.locator('#export-result').getAttribute('data-kind'), 'error');
+    await page.waitForTimeout(6500); // Two automatic refreshes must not erase the error.
+    assert.match(await page.locator('#status').innerText(), /Export did not finish/);
+    assert.equal(await page.locator('#export-result').getAttribute('data-kind'), 'error');
+    const pointerKey = `export-ui:review:${digest(`${created.revisionId}\0reviewer`).slice(7)}`;
     const pending = (await store.journalGet(pointerKey))!; assert.equal(pending.acknowledged, false);
     const pendingOperation = parseJson<{ operationId: string }>(new Uint8Array(pending.bytes)).operationId;
     await page.reload(); await page.waitForSelector('#document .diagram svg', { timeout: 45000 });
     await page.locator('#actor-id').fill('reviewer'); await page.locator('#export').click();
     await page.waitForFunction(() => document.getElementById('toast')!.textContent!.includes('Saved exports/'), { timeout: 45000 });
+    assert.equal(await page.locator('#export-result').getAttribute('data-kind'), 'success');
+    assert.match(await page.locator('#export-result-path').innerText(), /Review folder: exports\/[a-f0-9]{64}\.pdf/);
+    await page.locator('#open-export').click(); await page.locator('#reveal-export').click();
+    for (let attempt = 0; attempt < 100 && exportActions.length < 2; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
+    assert.deepEqual(exportActions.map(a => a.method), ['openExport', 'revealExport']);
+    assert.equal(exportActions[0].target, exportActions[1].target);
+    assert.equal(await page.locator('#download-export').isVisible(), false);
+    await assert.rejects(verifiedExportFile(store, '../../private/file.pdf'), /verified PDF export/);
+    await assert.rejects(verifiedExportFile(store, 'browser_fixture_publication'), /verified PDF export/);
     const resumed = (await store.journalGet(pointerKey))!; assert.equal(resumed.acknowledged, true);
     assert.equal(parseJson<{ operationId: string }>(new Uint8Array(resumed.bytes)).operationId, pendingOperation);
     const exportsAfterRetry = await page.evaluate(() => window.omrAutomation!.session()!.events.filter(e => e.type === 'export.created').length);
     assert.equal(exportsAfterRetry, 2, 'One automation export plus exactly one recovered UI export.');
+    await page.locator('#export-mode').selectOption('clean');
+    failNextPdf = true; await page.locator('#export').click();
+    await page.locator('#export-result[data-kind="error"]').waitFor({ timeout: 45000 });
+    const cleanPointerKey = `export-ui:clean:${digest(`${created.revisionId}\0reviewer`).slice(7)}`;
+    const cleanPointer = (await store.journalGet(cleanPointerKey))!, cleanOperation = parseJson<{ operationId: string }>(new Uint8Array(cleanPointer.bytes)).operationId;
+    assert.equal(cleanPointer.acknowledged, false); assert.notEqual(cleanOperation, pendingOperation);
+    await page.reload(); await page.waitForSelector('#document .diagram svg', { timeout: 45000 });
+    await page.locator('#actor-id').fill('reviewer'); await page.locator('#export-mode').selectOption('clean'); await page.locator('#export').click();
+    await page.locator('#export-result[data-kind="success"]').waitFor({ timeout: 45000 });
+    await page.locator('#open-export').click(); await page.locator('#reveal-export').click();
+    for (let attempt = 0; attempt < 100 && exportActions.length < 4; attempt++) await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(exportActions.length, 4); assert.equal(exportActions[2].target, exportActions[3].target);
+    const cleanTarget = await verifiedExportFile(store, `document-export:${cleanOperation}`), cleanBytes = await readFile(cleanTarget);
+    const altered = Buffer.from(cleanBytes); altered[altered.length - 1] ^= 1; await writeFile(cleanTarget, altered);
+    await assert.rejects(verifiedExportFile(store, `document-export:${cleanOperation}`), /digest|mismatch/i); await writeFile(cleanTarget, cleanBytes);
+    await assert.rejects(verifiedExportFile(store, 'document-export:../private'), /Invalid clean/);
+    await assert.rejects(verifiedExportFile(store, 'document-export:missing'), /no private export record/);
+    const cleanPlanKey = `document-export-plan:${cleanOperation}`, cleanPlan = (await store.journalGet(cleanPlanKey))!, plan = parseJson<Record<string, unknown>>(new Uint8Array(cleanPlan.bytes));
+    await store.journalPut(cleanPlanKey, { ...cleanPlan, bytes: Array.from(new TextEncoder().encode(JSON.stringify({ ...plan, reviewId: 'foreign-review' }))) });
+    await assert.rejects(verifiedExportFile(store, `document-export:${cleanOperation}`), /does not match/);
+    await store.journalPut(cleanPlanKey, { ...cleanPlan, bytes: Array.from(new TextEncoder().encode(JSON.stringify({ ...plan, revisionId: 'unknown-revision' }))) });
+    await assert.rejects(verifiedExportFile(store, `document-export:${cleanOperation}`), /unknown revision/);
+    await store.journalPut(cleanPlanKey, cleanPlan);
+    assert.equal(parseJson<{ operationId: string }>(new Uint8Array((await store.journalGet(cleanPointerKey))!.bytes)).operationId, cleanOperation);
+    assert.equal(await page.evaluate(() => window.omrAutomation!.session()!.events.filter(e => e.type === 'export.created').length), exportsAfterRetry);
     for (const width of [320, 768, 1024, 1440]) { await page.setViewportSize({ width, height: 1000 }); assert.ok(await page.locator('#actor-id').isVisible()); }
+    const archived = await readFile(exportActions[0].target), changed = Buffer.from(archived); changed[changed.length - 1] ^= 1;
+    await writeFile(exportActions[0].target, changed);
+    await assert.rejects(verifiedExportFile(store, (await page.evaluate(() => window.omrAutomation!.session()!.events.filter(e => e.type === 'export.created').at(-1)!.id))), /verified PDF export|digest|mismatch/i);
+    await writeFile(exportActions[0].target, archived);
     assert.deepEqual(errors, []);
     process.stdout.write(`Browser fixture and PDF: ${root}\n`);
+  } finally { await browser.close(); }
+});
+test('real Chromium opens the checked-in 0.6 conformance fixture without changing its source of truth', { timeout: 120000 }, async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'omr-v06-browser-fixture-'));
+  const root = path.join(temporary, 'review'), journal = path.join(temporary, 'journal');
+  await cp(path.resolve('protocol/fixtures/v0.6/conformant-core'), root, { recursive: true });
+  const store = new NativeStorage(root, journal);
+  const entry = await installClient(store, path.resolve('dist/OpenMarkdownReview.html'));
+  const eventsBefore = await readdir(path.join(root, 'events'));
+  const browser = await chromium.launch({ headless: true, channel: 'chromium', ...(process.env.OMR_TEST_BROWSER ? { executablePath: process.env.OMR_TEST_BROWSER } : {}) });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } }), errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.exposeFunction('omrHost', (method: string, args: unknown[]) => storageResponse(store, method, args));
+    await page.goto(pathToFileURL(entry).href);
+    await page.waitForSelector('#document .diagram svg', { timeout: 45000 });
+    assert.equal(await page.locator('#document table').count(), 1);
+    assert.equal(await page.locator('#document img').count(), 1);
+    assert.equal(await page.locator('#document a[href="https://example.com/evidence"]').count(), 1);
+    assert.equal(await page.locator('#document a[href="mailto:owner@example.com"]').count(), 1);
+    assert.equal(await page.locator('#document a.blocked-reference').count(), 1, 'The file URI is visible evidence, not an actionable browser link.');
+    await page.locator('#revisions').selectOption('revision_fixture_initial');
+    await page.waitForFunction(() => document.querySelectorAll('.thread').length === 1);
+    await page.locator('#actor-id').fill('fixture-reviewer');
+    assert.match(await page.locator('#stance-status').innerText(), /approved/);
+    assert.equal(await page.locator('.thread').count(), 1);
+    assert.match(await page.locator('.thread').innerText(), /closed.*verified/is);
+    assert.match(await page.locator('.thread').innerText(), /Yes\. The revised wording/);
+    assert.match(await page.locator('.suggestion').innerText(), /applied/);
+    await page.locator('.suggestion [data-action="locate"]').click();
+    await page.locator('#document [data-suggestion-jump]').waitFor();
+    const diagnostics = await page.evaluate(() => window.omrAutomation!.session()!.diagnostics);
+    assert.deepEqual(diagnostics, []);
+    assert.deepEqual((await readdir(path.join(root, 'events'))).sort(), eventsBefore.sort(), 'Opening and rendering a received review does not create shared events.');
+    assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });
 test('browser adapter uses real directory handles and IndexedDB: two participants converge, approve/reject/withdraw, export and retry', { timeout: 120000 }, async () => {
@@ -190,6 +289,12 @@ test('browser adapter uses real directory handles and IndexedDB: two participant
     const diagnostics = await a.evaluate(() => window.omrAutomation!.session()!.diagnostics); assert.deepEqual(diagnostics, []);
     const generated = await a.evaluate(async pdfPath => { let parent = await (await navigator.storage.getDirectory()).getDirectoryHandle('review'); const parts = pdfPath.split('/'), name = parts.pop()!; for (const p of parts) parent = await parent.getDirectoryHandle(p); return (await (await parent.getFileHandle(name)).getFile()).size; }, result.pdfPath);
     assert.ok(generated > 1000);
+    await a.reload(); await a.waitForSelector('#document [data-source-map]');
+    assert.equal(await a.locator('#export-result').getAttribute('data-kind'), 'success');
+    const downloadStarted = a.waitForEvent('download'); await a.locator('#download-export').click(); const download = await downloadStarted;
+    assert.match(download.suggestedFilename(), /-archive\.pdf$/);
+    const downloaded = await readFile((await download.path())!); assert.equal(downloaded.subarray(0, 5).toString(), '%PDF-');
+    assert.equal(digest(downloaded), result.pdfPath.slice('exports/'.length, -4).replace(/^/, 'sha256:'));
     const wrongContext = await browser.newContext();
     try {
       await wrongContext.route('https://wrong-review.invalid/**', route => route.fulfill({ contentType: 'text/html', body: html }));

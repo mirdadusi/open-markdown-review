@@ -1,6 +1,6 @@
 # Limited pilot plan
 
-The scenarios below describe the earlier 0.4 pilot. The new 0.5 implementation candidate is tracked in [implementation status](spec/IMPLEMENTATION-STATUS.md). Entry to the professional pilot is governed by [the professional specification](spec/PROFESSIONAL-V1.md) and [its mandatory acceptance gates](spec/ACCEPTANCE.md). Windows/share testing is CI-only, on disposable runner-owned fixtures. This historical checklist is not evidence that the new gates are closed.
+The scenarios below are a historical 0.4/0.5 checklist, not a qualification report for 0.6.5. Current behavior and remaining limits are tracked in [implementation status](spec/IMPLEMENTATION-STATUS.md). Entry to the professional pilot is governed by [the professional specification](spec/PROFESSIONAL-V1.md) and [its mandatory acceptance gates](spec/ACCEPTANCE.md). Native Windows/Linux checks require their own hosts; real SMB shares remain untested. Direct HTML folder permission and the Go localhost companion are distinct participation paths. This checklist does not establish that any gate has passed.
 
 ## Recommended group
 

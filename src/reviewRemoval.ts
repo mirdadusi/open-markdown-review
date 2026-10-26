@@ -6,6 +6,7 @@ import { validateManifest } from './protocol/validation';
 import { validate } from './professional/validation';
 import { IoLimiter } from './professional/storage';
 import { mapWithConcurrency } from './protocol/concurrency';
+import { COMPANION_ARTIFACTS } from './professional/clientArtifacts';
 
 /** Local coordination only. Other processes/machines must stop writing before deletion. */
 export class ReviewActivity {
@@ -30,7 +31,7 @@ export class ReviewActivity {
 export interface RemovalTarget { root: string; title: string; reviewId?: string; protectedPaths: string[] }
 export interface RemovalPlan { root: string; title: string; reviewId: string; files: number; directories: number; bytes: number; fingerprint: string }
 const folders = new Set(['events', 'revisions', 'blobs', 'exports', 'client-backups']);
-const files = new Set(['manifest.json', '.gitattributes', 'OpenMarkdownReview.html', '.DS_Store', 'desktop.ini', 'Thumbs.db']);
+const files = new Set(['manifest.json', '.gitattributes', 'OpenMarkdownReview.html', '.DS_Store', 'desktop.ini', 'Thumbs.db', ...COMPANION_ARTIFACTS]);
 const isReviewFile = (name: string) => files.has(name) || /^Review-[A-Za-z0-9._-]{1,64}\.html$/.test(name);
 const within = (parent: string, child: string) => { const relative = path.relative(parent, child); return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative)); };
 export const canUseWorkspaceTrash = (remoteName?: string): boolean => !remoteName;
@@ -68,7 +69,7 @@ export async function inspectReviewRemoval(target: RemovalTarget): Promise<Remov
   const manifestPath = path.join(root, 'manifest.json'), manifestStat = await lstat(manifestPath);
   if (!manifestStat.isFile() || manifestStat.isSymbolicLink() || manifestStat.size > 1024 * 1024) throw new Error('Invalid review manifest for deletion.');
   const manifestBytes = await readFile(manifestPath), value = JSON.parse(manifestBytes.toString('utf8'));
-  const manifest = value.protocolVersion === '0.5.0' ? validate('manifest', value) : (() => {
+  const manifest = value.protocolVersion === '0.5.0' || value.protocolVersion === '0.6.0' ? validate('manifest', value) : (() => {
     const checked = validateManifest(value);
     if (!checked.ok) throw new Error('Invalid or unsupported review manifest. Nothing will be deleted.');
     return checked.value;
@@ -81,7 +82,7 @@ export async function inspectReviewRemoval(target: RemovalTarget): Promise<Remov
 
 export interface RemovalActions {
   confirm(plan?: RemovalPlan): Promise<boolean>;
-  close(): void;
+  close(): void | Promise<void>;
   trash(root: string): Promise<void>;
   forget(): Promise<void>;
 }
@@ -94,8 +95,10 @@ export async function removeReview(target: RemovalTarget, mode: 'forget' | 'tras
     const current = await inspectReviewRemoval(target);
     if (current.root !== plan.root || current.fingerprint !== plan.fingerprint) throw new Error('The review changed during confirmation. Nothing was deleted; stop other writers and try again.');
   }
-  actions.close();
+  await actions.close();
   if (plan) {
+    const stopped = await inspectReviewRemoval(target);
+    if (stopped.root !== plan.root || stopped.fingerprint !== plan.fingerprint) throw new Error('The review changed while its local clients were stopping. Nothing was deleted; inspect the latest review and try again.');
     try { await actions.trash(plan.root); }
     catch (error) { throw new Error(`Could not move the review to Trash/Recycle Bin. No permanent-delete fallback was attempted; the review remains in your list. Check the folder before retrying. ${error instanceof Error ? error.message : String(error)}`); }
   }

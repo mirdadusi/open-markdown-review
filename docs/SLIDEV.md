@@ -10,7 +10,7 @@ Use a trusted Slidev project with Node 22+ and project-local `@slidev/cli@52.19.
 npm install --save-dev @slidev/cli@52.19.1 @slidev/theme-default@0.25.0 playwright-chromium@1.62.1
 ```
 
-Slidev can execute themes, components and configuration with your permissions. Its dependency graph includes currently unpatched `image-size` advisories in PPTX export; OMR calls only PNG export. Do not use the pinned example runtime for PPTX export. See the [scope and dependency note](../spec/SLIDEV-PROFILE-V1.md#qualification-and-exclusions).
+Slidev can execute themes, components and configuration with your permissions. Audit your author project separately; the review client's clean audit does not certify that runtime. OMR calls only PNG export. The repository-owned fixture pins the image-size security fix and has one explicitly approved, time-bounded braces advisory; that exception must not be applied to arbitrary author projects. See the [dependency review](DEPENDENCY-SECURITY.md) and [profile exclusions](../spec/SLIDEV-PROFILE-V1.md#qualification-and-exclusions).
 
 ## VS Code
 
@@ -57,10 +57,11 @@ npm ci
 npm test
 npx playwright install chromium
 node scripts/install-slidev-fixture.mjs
+node --test test/slidev-parser-parity.integration.mjs
 node --test out/test/browser.integration.js
 node scripts/test-extension.mjs
 ```
 
-The fixture installer uses a separately locked runtime under `examples/slidev`, audits it with narrow, time-bounded PPTX-only exceptions, and does not change the main application's audit. Linux and Windows CI execute the real capture and browser scenarios. Native browser permissions and SMB qualification are separate; SMB testing remains skipped by decision.
+The fixture installer uses a separately locked runtime under `examples/slidev`. Its single approved braces advisory is bound to that lockfile, affected versions and a maximum 30-day review window; new high/critical findings fail closed. The application audit has no exceptions. The retained pure parser is checked byte-for-byte and behaviorally against the independently installed upstream fixture. Linux and Windows CI execute real capture/browser scenarios. Native browser permissions and SMB qualification are separate; SMB testing remains skipped by decision.
 
 Protocol details: [profile transport](../protocol/profiles/README.md), [Slidev v1 specification](../spec/SLIDEV-PROFILE-V1.md), [schema](../protocol/profiles/slidev/v1.schema.json), [example deck](../examples/slidev/slides.md).

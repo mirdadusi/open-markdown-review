@@ -728,9 +728,9 @@ test("portable browser client is generic, self-contained, bounded, and installed
   const scriptEnd = html.lastIndexOf("</script>");
   assert.ok(scriptStart > 0 && scriptEnd > scriptStart);
   assert.doesNotThrow(() => new Function(html.slice(scriptStart, scriptEnd)), "assembled browser bundle must remain syntactically valid");
-  // 0.5.1 embeds the optional Slidev parser/schema so source-map verification
-  // remains offline. Keep an explicit 7 MiB ceiling (currently about 6.1 MiB).
-  assert.ok(bytes.byteLength < 7 * 1024 * 1024, "portable browser artifact should remain practical for a shared folder");
+  // Slidev verification plus compressed offline technical/monospace font coverage.
+  // Fonts expand lazily on export; retain a concrete 8 MiB distribution budget.
+  assert.ok(bytes.byteLength < 8 * 1024 * 1024, "portable browser artifact should remain practical for a shared folder");
 
   const reviewRoot = await mkdtemp(path.join(os.tmpdir(), "omr-browser-client-"));
   t.after(async () => rm(reviewRoot, { recursive: true, force: true }));

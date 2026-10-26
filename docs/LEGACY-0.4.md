@@ -2,7 +2,7 @@ Historical documentation. For new reviews use the current README and protocol 0.
 
 # Open Markdown Review 0.4
 
-The next professional pilot is specified in [Professional review client specification](spec/PROFESSIONAL-V1.md), with a [protocol 0.5 implementation draft](spec/PROTOCOL-0.5.md) and [acceptance gates/work packages](spec/ACCEPTANCE.md). Its contract is one authoritative review package, equal reviewer capabilities in HTML and VS Code, and shared authoring through graphical setup or CLI parameters. These are target requirements; the current 0.4.6 implementation has known blockers from the 2026-09-08 review and has not passed those gates. The CLI examples in the specification are not commands implemented by this release.
+The next professional pilot is specified in [Professional review client specification](../spec/PROFESSIONAL-V1.md), with a [protocol 0.5 implementation draft](../spec/PROTOCOL-0.5.md) and [acceptance gates/work packages](../spec/ACCEPTANCE.md). Its contract is one authoritative review package, equal reviewer capabilities in HTML and VS Code, and shared authoring through graphical setup or CLI parameters. These are target requirements; the historical 0.4.6 implementation had known blockers from the 2026-09-08 review and had not passed those gates. The CLI examples in the specification are not commands implemented by that historical release.
 
 Open Markdown Review is a serverless, local-first review system for technical Markdown. Each review is a self-contained folder. Its default name is `.review`, but it can be named `.architecture-review`, `safety-approval`, or anything else and stored inside the source repository or anywhere on a normal local disk, mounted SMB/NFS/NAS share, mapped network drive, Syncthing folder, removable disk, or cloud-synchronized folder. No OneDrive, SharePoint, or hosted service is required.
 
@@ -222,13 +222,9 @@ The sample PDF is also rendered to PNG with Poppler and visually inspected for c
 - Very large or unusually wide tables should be included in pilot test cases before broad deployment.
 - Browser publication uses preflight collision checking plus exact post-write readback because the browser folder API has no atomic exclusive-create primitive. The protocol 0.5 content-addressed event layout in `STANDARDIZATION.md` must replace this pilot compromise before browser participant-writer conformance is claimed for high-assurance concurrent review.
 
-See [PILOT.md](PILOT.md) for the test plan, [SECURITY.md](SECURITY.md) for the threat model, [protocol/README.md](protocol/README.md) for normative 0.4 rules, and [protocol/STANDARDIZATION.md](protocol/STANDARDIZATION.md) for the client-neutral standard boundary and next-version requirements.
+See [PILOT.md](../PILOT.md) for the test plan, [SECURITY.md](../SECURITY.md) for the threat model, [protocol/README.md](../protocol/README.md) for normative 0.4 rules, and [protocol/STANDARDIZATION.md](../protocol/STANDARDIZATION.md) for the client-neutral standard boundary and next-version requirements.
 
 ## License
 
-Open Markdown Review is dual-licensed. You may use it under either:
-
-- the standard [MIT License](LICENSE); or
-- [M.I.R.D.A. philosophy](PHILOSOPHY.md).
-
-The package metadata expresses this choice as `MIT`.
+The current public project is licensed solely under the [MIT License](../LICENSE).
+[M.I.R.D.A.](../PHILOSOPHY.md) describes the project's philosophy, not an additional license or condition.

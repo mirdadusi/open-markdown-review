@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "0.6.0",
+  "id": "event_reply",
+  "type": "comment.replied",
+  "reviewId": "review_v06_conformance",
+  "revisionId": "revision_fixture_initial",
+  "revisionDigest": "sha256:725b4dc688583721ee32c6805181386da90d89d1f8f072b3732b3551f358a559",
+  "occurredAt": "2026-09-23T08:02:00.000Z",
+  "actor": {
+    "id": "fixture-creator",
+    "displayName": "Fixture Creator"
+  },
+  "operationId": "fixture_reply",
+  "threadId": "thread_state_durability",
+  "commentId": "reply_state_durability",
+  "inReplyTo": "comment_state_durability",
+  "body": {
+    "format": "markdown",
+    "text": "Yes. The revised wording will make that requirement explicit."
+  }
+}

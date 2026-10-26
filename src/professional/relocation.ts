@@ -7,9 +7,10 @@ import { digest } from './bytes';
 import { contained, NativeStorage } from './nativeStorage';
 import { ReviewSession } from './session';
 import { LIMITS, ProtocolError } from './types';
+import { COMPANION_ARTIFACTS } from './clientArtifacts';
 
 const PACKAGE_DIRECTORIES = new Set(['events', 'revisions', 'blobs', 'exports', 'client-backups']);
-const PACKAGE_FILES = new Set(['manifest.json', '.gitattributes', 'OpenMarkdownReview.html', '.DS_Store', 'desktop.ini', 'Thumbs.db']);
+const PACKAGE_FILES = new Set(['manifest.json', '.gitattributes', 'OpenMarkdownReview.html', '.DS_Store', 'desktop.ini', 'Thumbs.db', ...COMPANION_ARTIFACTS]);
 const isPackageFile = (name: string) => PACKAGE_FILES.has(name) || /^Review-[A-Za-z0-9._-]{1,64}\.html$/.test(name);
 const MAX_ENTRIES = 100_000;
 const MAX_DEPTH = 32;

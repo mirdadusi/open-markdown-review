@@ -3,30 +3,39 @@ import { SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE } from './html';
 export type { ActorRef, MarkdownAnchor, StoredContent, Sha256Digest } from "../protocol/types";
 export { SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE } from './html';
 
-export const VERSION = "0.5.0" as const;
+export const VERSION = "0.6.0" as const;
+export const LEGACY_VERSION = "0.5.0" as const;
+export type ProtocolVersion = typeof VERSION | typeof LEGACY_VERSION;
 export const CREATOR_THREAD_CONTROL = 'creator-thread-control-v1' as const;
-export const OPTIONAL_CAPABILITIES = ['presentation-profiles-v1', CREATOR_THREAD_CONTROL, SANITIZED_HTML_CAPABILITY] as const;
+export const THREAD_ADDRESSING = 'thread-addressing-v1' as const;
+export const REVIEWER_ROSTER = 'reviewer-roster-v1' as const;
+export const REVIEWER_COMPLETION = 'reviewer-completion-v1' as const;
+export const REVIEWER_INVITATIONS = 'reviewer-invitations-v1' as const;
+export const OPTIONAL_CAPABILITIES = ['presentation-profiles-v1', CREATOR_THREAD_CONTROL, THREAD_ADDRESSING, REVIEWER_ROSTER, REVIEWER_COMPLETION, REVIEWER_INVITATIONS, SANITIZED_HTML_CAPABILITY] as const;
+export interface Reviewer { id: string; email: string }
 export const CAPABILITIES = ["quote-anchor-v1", "range-anchor-v1", "semantic-anchor-v1", "content-addressed-resources-v1", "revision-parents-v1", "thread-lifecycle-v2", "suggested-edit-v2", "review-stance-v1", "review-policy-v1", "audit-inventory-v1"] as const;
 export interface Manifest {
-  protocol: "open-markdown-review"; protocolVersion: typeof VERSION;
+  protocol: "open-markdown-review"; protocolVersion: ProtocolVersion;
   reviewId: string; title: string; createdAt: string; createdBy: ActorRef; documents: string[];
   eventDirectory: "events"; revisionDirectory: "revisions"; blobDirectory: "blobs/sha256"; exportDirectory: "exports";
   eventLayout: "sha256-flat-v1"; identityProfile: "self-asserted-v1"; limitsProfile: "pilot-v1";
   creationOperationId: string; capabilities: string[]; requiredCapabilities: string[];
+  reviewers?: Reviewer[];
   extensions?: Array<{ id: string; schemaUri: string; schemaDigest: Sha256Digest; schemaBlobPath: string; affectsState: boolean }>;
 }
 export type Revision = Omit<ReviewRevision, "schemaVersion" | "resources" | "renderer"> & {
-  schemaVersion: typeof VERSION; parents: string[]; policy: StoredContent; creationOperationId: string;
+  schemaVersion: ProtocolVersion; parents: string[]; policy: StoredContent; creationOperationId: string;
   resources: Array<Omit<ReviewRevision["resources"][number], "sourceKind"> & { sourceKind: "workspace" | "granted-root" | "remote" | "data" }>;
   renderer: { markdownProfile: 'commonmark-gfm' | typeof SANITIZED_HTML_PROFILE; mermaidVersion: string };
 };
-export type Policy = { schemaVersion: typeof VERSION; kind: "review-policy" } & (
+export type Policy = { schemaVersion: ProtocolVersion; kind: "review-policy" } & (
   { mode: "assertions-only" } |
   { mode: "quorum-v1"; eligibleActorIds: string[]; minimumApprovals: number; blockOnRejection: boolean; requireResolvedThreads: boolean; requireClosedSuggestions: boolean }
 );
 export interface Envelope {
-  schemaVersion: typeof VERSION; id: string; reviewId: string; revisionId: string;
+  schemaVersion: ProtocolVersion; id: string; reviewId: string; revisionId: string;
   revisionDigest: Sha256Digest; occurredAt: string; actor: ActorRef; operationId: string;
+  reviewerInvitationId?: string;
 }
 type Upgraded<E extends ReviewEvent> = E extends { type: "export.created" } ? never : E extends ReviewEvent
   ? Omit<E, keyof Envelope> & Envelope & (
@@ -37,15 +46,20 @@ type Upgraded<E extends ReviewEvent> = E extends { type: "export.created" } ? ne
     E extends { type: "suggestion.applied" } ? { acceptanceIds: string[] } : object
   ) : never;
 export type Event = Upgraded<ReviewEvent> |
+  (Envelope & { type: "reviewer.invited"; reviewer: Reviewer }) |
   (Envelope & { type: "thread.reopened"; threadId: string; reason: string; statusPredecessors: string[] }) |
+  (Envelope & { type: "thread.addressed"; threadId: string; toRevisionId: string; document: string; sourceDigestBefore: Sha256Digest; sourceDigestAfter: Sha256Digest; summary: string; decisionIds: string[]; addressingPredecessors: string[] }) |
+  (Envelope & { type: "thread.verification.recorded"; threadId: string; addressedEventId: string; verdict: "verified" | "challenged"; note?: string; verificationPredecessors: string[] }) |
   (Envelope & { type: "review.withdrawn"; reason: string; stancePredecessors: string[]; verification: StoredContent }) |
+  (Envelope & { type: "review.completed"; completionPredecessors: string[]; verification: StoredContent; note?: string }) |
+  (Envelope & { type: "review.reopened"; completionPredecessors: string[]; note?: string }) |
   (Envelope & { type: "export.created"; exportId: string; format: "application/pdf"; pdf: FileEvidence; inventory: FileEvidence; renderer: Renderer });
 export type Payload = Event extends infer E ? E extends Event ? Omit<E, keyof Envelope> : never : never;
 export interface FileEvidence { path: string; digest: Sha256Digest; byteLength: number; mediaType: string }
 export interface EventEvidence extends FileEvidence { eventId: string; revisionId: string }
 export type PolicyResult = "not-evaluated" | "satisfied" | "unsatisfied" | "conflicted";
 export interface Verification {
-  schemaVersion: typeof VERSION; kind: "verification-inventory"; reviewId: string; revisionId: string; verifiedAt: string;
+  schemaVersion: ProtocolVersion; kind: "verification-inventory"; reviewId: string; revisionId: string; verifiedAt: string;
   manifest: FileEvidence; revision: FileEvidence; policy: FileEvidence; contextRevisions: FileEvidence[];
   documents: FileEvidence[]; resources: FileEvidence[]; events: EventEvidence[]; policyResult: PolicyResult;
 }

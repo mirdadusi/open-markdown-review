@@ -11,7 +11,8 @@ import type { GitHubReleaseUpdateSource, UpdateDownloadResult, UpdateFetchResult
 
 const MAX_METADATA_BYTES = 256 * 1024;
 const MAX_CHECKSUM_BYTES = 512;
-const MAX_VSIX_BYTES = 128 * 1024 * 1024;
+export const MAX_VSIX_BYTES = 256 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 180_000;
 const DEFAULT_TIMEOUT_MS = 15_000;
 type FetchResponse = Awaited<ReturnType<typeof fetch>>;
 
@@ -26,7 +27,7 @@ interface FetchOptions {
   arch?: string;
 }
 
-interface DownloadOptions {
+export interface DownloadOptions {
   source: GitHubReleaseUpdateSource;
   release: UpdateRelease;
   token?: string;
@@ -34,9 +35,12 @@ interface DownloadOptions {
   timeoutMs?: number;
   maxBytes?: number;
   signal?: AbortSignal;
+  /** Untrusted chunks go only to private staging; never install until verified. */
+  writeChunk?: (bytes: Uint8Array) => Promise<void>;
 }
 
 class ResponseTooLargeError extends Error {}
+class UpdateSinkError extends Error {}
 
 function headers(token: string | undefined, accept: string): Record<string, string> {
   const result: Record<string, string> = { Accept: accept, "User-Agent": "Open-Markdown-Review-update-check" };
@@ -156,7 +160,7 @@ export async function downloadVerifiedVsix(options: DownloadOptions): Promise<Up
   }
   const fetchImpl = options.fetchImpl ?? fetch;
   const linked = linkedAbort(options.signal);
-  const timer = setTimeout(() => linked.controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const timer = setTimeout(() => linked.controller.abort(), options.timeoutMs ?? DOWNLOAD_TIMEOUT_MS);
   try {
     const checksumResponse = await assetResponse(fetchImpl, release.artifact.checksumApiUrl, source, options.token, linked.controller.signal);
     if ([401, 403, 404].includes(checksumResponse.status)) return { kind: "authentication-required" };
@@ -171,12 +175,34 @@ export async function downloadVerifiedVsix(options: DownloadOptions): Promise<Up
     if ([401, 403, 404].includes(artifactResponse.status)) return { kind: "authentication-required" };
     if (artifactResponse.status >= 500) return { kind: "unavailable", reason: "server" };
     if (!artifactResponse.ok) return { kind: "invalid-metadata", detail: "Release VSIX could not be downloaded." };
-    const bytes = await limitedBytes(artifactResponse, options.maxBytes ?? MAX_VSIX_BYTES);
-    if (createHash("sha256").update(bytes).digest("hex") !== checksumMatch[1]) {
+    const maximum = options.maxBytes ?? MAX_VSIX_BYTES;
+    if (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > MAX_VSIX_BYTES) return { kind: 'invalid-metadata', detail: 'Invalid download size limit.' };
+    const declaredHeader = artifactResponse.headers.get('content-length');
+    const declared = declaredHeader === null ? undefined : Number(declaredHeader);
+    if (declared !== undefined && (!Number.isSafeInteger(declared) || declared < 0 || declared > maximum)) {
+      await artifactResponse.body?.cancel(); throw new ResponseTooLargeError();
+    }
+    const reader = artifactResponse.body?.getReader(), hash = createHash('sha256'), chunks: Uint8Array[] = []; let total = 0;
+    try {
+      if (reader) for (;;) {
+        const { done, value } = await reader.read(); if (done) break;
+        if (linked.controller.signal.aborted) throw new DOMException('Download cancelled.', 'AbortError');
+        total += value.byteLength; if (total > maximum) throw new ResponseTooLargeError();
+        hash.update(value);
+        if (options.writeChunk) {
+          try { await options.writeChunk(value); } catch (error) { throw new UpdateSinkError('Private update staging failed.', { cause: error }); }
+        } else chunks.push(value);
+      }
+      if (linked.controller.signal.aborted) throw new DOMException('Download cancelled.', 'AbortError');
+    } catch (error) { try { await reader?.cancel(); } catch { /* Preserve the original failure. */ } throw error; }
+    finally { reader?.releaseLock(); }
+    if (declared !== undefined && total !== declared) return { kind: 'invalid-metadata', detail: 'Downloaded VSIX length differs from its response.' };
+    if (hash.digest("hex") !== checksumMatch[1]) {
       return { kind: "invalid-metadata", detail: "Downloaded VSIX failed SHA-256 verification." };
     }
-    return { kind: "downloaded", name: release.artifact.name, bytes };
+    return options.writeChunk ? { kind: 'streamed', name: release.artifact.name, byteLength: total } : { kind: "downloaded", name: release.artifact.name, bytes: Buffer.concat(chunks) };
   } catch (error) {
+    if (error instanceof UpdateSinkError) return { kind: 'unavailable', reason: 'storage' };
     if (error instanceof ResponseTooLargeError) return { kind: "invalid-metadata", detail: "Release artifact is larger than the allowed limit." };
     if (error instanceof Error && error.name === "AbortError") return { kind: "unavailable", reason: "timeout" };
     return { kind: "unavailable", reason: "offline" };

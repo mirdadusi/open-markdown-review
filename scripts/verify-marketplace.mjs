@@ -91,7 +91,7 @@ for (const match of readmeWithoutFencedExamples.matchAll(markdownImagePattern)) 
 }
 
 const publicFiles = ["package.json", "README.md", "SUPPORT.md", "SECURITY.md"];
-const privateMarkers = [/github\.siemens\.cloud/i, /Advanta-Czechia/i, /czprga\d*/i];
+const privateMarkers = [/LicenseRef-MIRDA/i, /file:\/\/\/Users\//i, /\/Users\/[^/]+\/(?:Documents|Source)\//];
 for (const relativePath of publicFiles) {
   const content = await readFile(path.join(repoRoot, relativePath), "utf8");
   for (const marker of privateMarkers) {

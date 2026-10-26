@@ -34,3 +34,12 @@ export function vsixChannelArgs(channel = 'professional') {
   if (channel === 'professional' || channel === 'standard') return [];
   throw new Error(`Unknown VSIX release channel: ${channel}`);
 }
+
+/** Keep qualification details in their report, without prescribing a release-note sentence. */
+export function verifyReleaseNotes(notes, policy, qualification) {
+  if (typeof notes !== 'string' || !notes.trim()) throw new Error('Release notes must not be empty.');
+  if (policy.prerelease && !/evaluation pre-release/i.test(notes)) throw new Error('Evaluation release notes must identify the pre-release channel.');
+  if (!qualification.professionalPilotApproved && (typeof qualification.statusReport !== 'string' || !qualification.statusReport.trim() || !notes.includes(qualification.statusReport))) {
+    throw new Error('Release notes must reference the qualification report.');
+  }
+}

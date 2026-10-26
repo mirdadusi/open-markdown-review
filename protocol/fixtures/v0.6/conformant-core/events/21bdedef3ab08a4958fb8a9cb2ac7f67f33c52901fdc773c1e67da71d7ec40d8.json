@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "0.6.0",
+  "id": "event_approved",
+  "type": "review.approved",
+  "reviewId": "review_v06_conformance",
+  "revisionId": "revision_fixture_initial",
+  "revisionDigest": "sha256:725b4dc688583721ee32c6805181386da90d89d1f8f072b3732b3551f358a559",
+  "occurredAt": "2026-09-23T08:15:00.000Z",
+  "actor": {
+    "id": "fixture-reviewer",
+    "displayName": "Fixture Reviewer"
+  },
+  "operationId": "fixture_approved",
+  "note": "Approved after verifying the addressed finding.",
+  "stancePredecessors": [],
+  "verification": {
+    "digest": "sha256:39da9601929057ac2f92a50511c282f504f334adb4e2190cc16c3c0e8efbbcf0",
+    "byteLength": 5843,
+    "mediaType": "application/json",
+    "blobPath": "blobs/sha256/39/39da9601929057ac2f92a50511c282f504f334adb4e2190cc16c3c0e8efbbcf0"
+  }
+}

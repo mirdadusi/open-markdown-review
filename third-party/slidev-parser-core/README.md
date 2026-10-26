@@ -1,0 +1,7 @@
+# Pinned Slidev v1 parser core
+
+These are the **unmodified** `dist/core.mjs` and `dist/utils.mjs` modules from MIT-licensed `@slidev/parser@52.19.1`, plus its complete license. `ORIGIN.json` retains the npm tarball URL/integrity and exact source-file digests. The local package has its own name and narrow maintained TypeScript declarations; it is not presented as a new upstream release.
+
+The review profile v1 freezes 52.19.1 source-mapping semantics. Installing the upstream package also installs `@slidev/types` and its otherwise unused editor/Vue/build-tool chain. This small source distribution removes that dependency tree rather than concealing its audit findings, while preserving the exact existing parser. Only the pure parser is called; filesystem/project-execution entry points are not retained. The remaining `@antfu/utils` and `yaml` dependencies stay in npm's ordinary lockfile and audit.
+
+Every build verifies the module and license digests. The dependency inventory includes this package, its upstream provenance and its full license. Tests compare output with the independently installed upstream parser in the isolated author fixture. Source changes or future parser upgrades require explicit provenance review, differential tests and a protocol/profile compatibility decision; never edit these modules to silently change v1 semantics. Monitor upstream parser advisories as well as the installed dependency audit: `npm audit` alone does not inspect vendored code.

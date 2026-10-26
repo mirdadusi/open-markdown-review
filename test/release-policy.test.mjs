@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
-import { releasePolicy, vsixChannelArgs } from '../scripts/release-policy.mjs';
+import { releasePolicy, verifyReleaseNotes, vsixChannelArgs } from '../scripts/release-policy.mjs';
 
 const pkg = { version: '0.5.0' };
 const record = () => ({
@@ -71,24 +71,39 @@ test('evaluation VSIX packages are marked pre-release and unknown channels fail 
   assert.throws(() => vsixChannelArgs('preview'), /Unknown VSIX release channel/);
 });
 
-test('checked-in release discloses limitations and cannot bypass the professional CLI gate', async () => {
+test('checked-in qualification cannot bypass publication or professional gates', async () => {
   const actualPkg = JSON.parse(await readFile('package.json', 'utf8'));
   const qualification = JSON.parse(await readFile('release-qualification.json', 'utf8'));
-  const publicationApproved = qualification.publication?.approved === true && qualification.publication?.approvedBy === 'user';
-  const policy = publicationApproved ? releasePolicy(actualPkg, qualification, true) : undefined;
-  if (!publicationApproved) assert.throws(() => releasePolicy(actualPkg, qualification, true), /not approved|explicit recorded user approval/i);
-  const notes = await readFile(policy?.notesFile ?? `docs/releases/${actualPkg.version}.md`, 'utf8');
-  if (policy?.prerelease) {
-    assert.match(notes, /evaluation pre-release/i);
-  }
-  if (!qualification.professionalPilotApproved) {
-    assert.match(notes, /not approved for the professional pilot/i);
-    assert.match(notes, /SMB.*untested/i);
+  if (qualification.publication?.approved) {
+    const policy = releasePolicy(actualPkg, qualification, true);
+    const notes = await readFile(policy.notesFile, 'utf8');
+    if (policy.prerelease) assert.match(notes, /evaluation pre-release/i);
+    if (!qualification.professionalPilotApproved) {
+      assert.ok(notes.includes(qualification.statusReport));
+      assert.match(notes, /SMB.*untested/i);
+    }
+    assert.doesNotMatch(notes, /Not approved for the professional pilot\./i);
+  } else {
+    assert.throws(() => releasePolicy(actualPkg, qualification, true), /not approved|requires explicit recorded user approval/);
   }
   const defaultGate = spawnSync(process.execPath, ['scripts/verify-release-qualification.mjs'], { encoding: 'utf8' });
   assert.equal(defaultGate.status, qualification.professionalPilotApproved && !qualification.blockingGates.length ? 0 : 1);
   const publicationGate = spawnSync(process.execPath, ['scripts/verify-release-qualification.mjs', '--publication'], {
     encoding: 'utf8', env: { ...process.env, GITHUB_OUTPUT: '' },
   });
-  assert.equal(publicationGate.status, publicationApproved ? 0 : 1, publicationGate.stderr);
+  assert.equal(publicationGate.status, qualification.publication?.approved ? 0 : 1, publicationGate.stderr);
+});
+
+test('concise release notes reference qualification without prescribed approval wording or changing gates', () => {
+  const qualification = record(); qualification.publication.channel = 'standard';
+  const before = structuredClone(qualification), policy = releasePolicy(pkg, qualification, true);
+  const notes = '# Changes\n\n- Clean review folders.\n\n[Qualification limits](../../spec/IMPLEMENTATION-STATUS.md).';
+  assert.doesNotThrow(() => verifyReleaseNotes(notes, policy, qualification));
+  assert.deepEqual(qualification, before);
+  assert.throws(() => releasePolicy(pkg, qualification), /not approved/);
+  for (const value of ['', '   ', '# Changes\n\n- Clean review folders.']) assert.throws(() => verifyReleaseNotes(value, policy, qualification));
+  qualification.publication.channel = 'evaluation';
+  const evaluation = releasePolicy(pkg, qualification, true);
+  assert.throws(() => verifyReleaseNotes(notes, evaluation, qualification), /pre-release channel/);
+  assert.doesNotThrow(() => verifyReleaseNotes('Evaluation pre-release\n\n' + notes, evaluation, qualification));
 });

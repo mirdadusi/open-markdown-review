@@ -1,10 +1,11 @@
-import { execFile } from "node:child_process";
 import * as vscode from "vscode";
 import { downloadVerifiedVsix, fetchLatestGitHubRelease } from "./githubReleaseClient";
 import { hasNewerRelease, isStrictSemVer } from "./policy";
 import { OMR_UPDATE_SOURCE } from "./source";
 import type { GitHubReleaseUpdateSource, StoredUpdateState, UpdateFetchResult, UpdateRelease } from "./types";
 import { installVsixThroughWorkbench, VSIX_INSTALL_COMMANDS } from "./vsixInstaller";
+import { githubCliToken } from './token';
+import { stageVerifiedVsix } from './stagedDownload';
 
 const CONFIG_ENABLED = "openMarkdownReview.updateChecks.enabled";
 const UPDATE_AVAILABLE_CONTEXT = "openMarkdownReview.updateAvailable";
@@ -81,7 +82,7 @@ export function registerUpdateService(context: vscode.ExtensionContext): void {
   const token = async (mode: CheckMode): Promise<string | undefined> => {
     try {
       const session = await vscode.authentication.getSession(
-        "github-enterprise",
+        source.host === "github.com" ? "github" : "github-enterprise",
         ["repo"],
         mode === "manual" ? { createIfNone: true } : { silent: true },
       );
@@ -137,7 +138,8 @@ export function registerUpdateService(context: vscode.ExtensionContext): void {
     installing = true;
     try {
       const accessToken = await token("manual");
-      const result = await vscode.window.withProgress({
+      const directory = vscode.Uri.joinPath(context.globalStorageUri, 'updates');
+      const downloaded = await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: `Downloading and verifying Open Markdown Review ${release.version}…`,
         cancellable: true,
@@ -145,16 +147,29 @@ export function registerUpdateService(context: vscode.ExtensionContext): void {
         const controller = new AbortController();
         const cancellation = cancellationToken.onCancellationRequested(() => controller.abort());
         try {
-          return await downloadVerifiedVsix({ source, release, token: accessToken, signal: controller.signal });
+          const options = { source, release, token: accessToken, signal: controller.signal };
+          // Remote extension hosts normally expose their own native file URI.
+          // Other providers retain a bounded buffer fallback; never reinterpret
+          // a non-file URI as a local filesystem path.
+          if (directory.scheme === 'file') return await stageVerifiedVsix(directory.fsPath, options);
+          return { result: await downloadVerifiedVsix(options), file: undefined };
         } finally { cancellation.dispose(); }
       });
+      const result = downloaded.result;
       if (result.kind === "authentication-required") return void await authenticationRequired(true);
-      if (result.kind === "unavailable") return void vscode.window.showWarningMessage("The enterprise update could not be downloaded. Check your network connection and try again.");
+      if (result.kind === "unavailable") return void vscode.window.showWarningMessage(result.reason === 'storage'
+        ? 'The update could not be staged. Check free disk space and private extension-storage permissions, then retry.'
+        : "The enterprise update could not be downloaded. Check your network connection and try again.");
       if (result.kind === "invalid-metadata") return void vscode.window.showErrorMessage(`Markdown Review refused the update: ${result.detail}`);
-      const directory = vscode.Uri.joinPath(context.globalStorageUri, "updates");
-      const vsix = vscode.Uri.joinPath(directory, result.name);
-      await vscode.workspace.fs.createDirectory(directory);
-      await vscode.workspace.fs.writeFile(vsix, result.bytes);
+      let vsix: vscode.Uri;
+      if (result.kind === 'streamed') {
+        if (!downloaded.file) throw new Error('Verified update has no staged file.');
+        vsix = vscode.Uri.file(downloaded.file);
+      } else {
+        vsix = vscode.Uri.joinPath(directory, result.name);
+        await vscode.workspace.fs.createDirectory(directory);
+        await vscode.workspace.fs.writeFile(vsix, result.bytes);
+      }
       let installCommand: (typeof VSIX_INSTALL_COMMANDS)[number];
       try {
         installCommand = await installVsixThroughWorkbench(vsix, (command, ...args) => vscode.commands.executeCommand(command, ...args));
@@ -247,6 +262,7 @@ export function registerUpdateService(context: vscode.ExtensionContext): void {
     const checkGeneration = generation, stored = state();
     const accessToken = await token(mode);
     if (mode === "automatic" && (!enabled() || checkGeneration !== generation)) return;
+    if (!accessToken) return void await handle({ kind: "authentication-required" }, mode, stored, installImmediately);
     const controller = mode === "automatic" ? new AbortController() : undefined;
     if (controller) activeAutomatic = controller;
     const result = await fetchLatestGitHubRelease({
@@ -280,11 +296,4 @@ export function registerUpdateService(context: vscode.ExtensionContext): void {
   const now = Date.now();
   if (Number.isFinite(checkedAt) && checkedAt + DAY_MS > now) schedule(checkedAt + DAY_MS - now);
   else schedule(INITIAL_DELAY_MS + Math.floor(Math.random() * INITIAL_SPREAD_MS));
-}
-
-function githubCliToken(host: string): Promise<string | undefined> {
-  return new Promise(resolve => {
-    execFile("gh", ["auth", "token", "--hostname", host], { encoding: "utf8", timeout: 10_000, maxBuffer: 16 * 1024 },
-      (error, stdout) => resolve(error ? undefined : stdout.trim() || undefined));
-  });
 }

@@ -12,18 +12,34 @@ import { LIMITS, ProtocolError } from './types';
 import { validate } from './validation';
 import { applyAcceptedSuggestion } from './applySuggestion';
 import { checkpoint, OperationControl } from './operation';
+import { companionTargets } from './companionTargets';
+import { inspectClientUpgrade, upgradeReviewClient } from './clientUpgrade';
+import { pdfExportMode } from './pdfProfiles';
 
 export async function runCli(argv: string[], artifact = path.resolve(__dirname, 'OpenMarkdownReview.html'), control: OperationControl = {}): Promise<{ exitCode: number; result: unknown }> {
-  if (!argv.length || argv.includes('--help')) return { exitCode: 0, result: { schemaVersion: 'omr-cli-result/1', ok: true, outcome: 'completed', help: 'omr review create --source PATH --store PATH --root-document FILE --actor-id ID --operation-id ID [--include FILE] [--include-dir DIR] [--exclude PATH] [--resource-root PATH] [--policy FILE] [--profile markdown|slidev-v1] [--notes include|exclude] [--trust-slidev-project] [--browser-executable PATH] [--dry-run] [--resume]\nomr revision create (same parameters, plus repeatable --parent REVISION)\nomr review inspect|validate --store PATH [--revision ID]\nomr review export --store PATH --actor-id ID --operation-id ID [--revision ID] [--browser-executable PATH]\nomr client install --store PATH\nomr client update --store PATH --expect-client-digest sha256:HEX\nomr suggestion apply --store PATH --source PATH --revision ID --suggestion ID --expect-source-digest sha256:HEX --actor-id ID --operation-id ID [--resume]\nAll commands emit JSON; --json is accepted explicitly. Node 22+ is required. Export additionally requires the Playwright Chromium runtime.' } };
+  if (!argv.length || argv.includes('--help')) return { exitCode: 0, result: { schemaVersion: 'omr-cli-result/1', ok: true, outcome: 'completed', help: [
+    'omr review create --source PATH --store PATH --root-document FILE --actor-id ID --operation-id ID [--include FILE] [--include-dir DIR] [--exclude PATH] [--resource-root PATH] [--reviewer-email EMAIL] [--policy FILE] [--profile markdown|slidev-v1] [--notes include|exclude] [--trust-slidev-project] [--browser-executable PATH] [--dry-run] [--resume]',
+    '--reviewer-email is repeatable and restricts participation to those addresses plus the initiator; omit for an open review.',
+    'Creation also accepts repeatable --companion-target win32-x64|darwin-arm64|linux-x64 and optional --companion-catalog TRUSTED_FILE. Selected runtimes are verified before publication; dry run never downloads them.',
+    'omr revision create (same capture parameters, plus repeatable --parent REVISION; the reviewer list is immutable)',
+    'omr review inspect|validate --store PATH [--revision ID]',
+    'omr review export --store PATH --actor-id ID --operation-id ID [--revision ID] [--export-mode review|clean] [--browser-executable PATH]',
+    'omr client install --store PATH',
+    'omr client update --store PATH --expect-client-digest sha256:HEX',
+    'omr client inspect --store PATH',
+    'omr client upgrade --store PATH --expect-manifest-digest sha256:HEX --expect-client-digest sha256:HEX --expect-tooling-fingerprint sha256:HEX --companion-target TARGET (repeat per platform; stop old launchers first)',
+    'omr suggestion apply --store PATH --source PATH --revision ID --suggestion ID --expect-source-digest sha256:HEX --actor-id ID --operation-id ID [--resume]',
+    'All commands emit JSON; --json is accepted explicitly. Node 22+ is required. Export additionally requires the Playwright Chromium runtime.'
+  ].join('\n') } };
   const [group, command, ...raw] = argv, flags = new Map<string, string[]>();
   const booleans = new Set(['json', 'dry-run', 'full', 'resume', 'trust-slidev-project']);
-  const known = new Set(['source', 'store', 'title', 'include', 'include-dir', 'exclude', 'root-document', 'actor-id', 'actor-name', 'operation-id', 'parent', 'resource-root', 'policy', 'revision', 'browser-executable', 'suggestion', 'expect-source-digest', 'expect-client-digest', 'profile', 'notes', ...booleans]);
+  const known = new Set(['source', 'store', 'title', 'include', 'include-dir', 'exclude', 'root-document', 'actor-id', 'actor-name', 'operation-id', 'parent', 'resource-root', 'reviewer-email', 'companion-target', 'companion-catalog', 'policy', 'revision', 'browser-executable', 'suggestion', 'expect-source-digest', 'expect-client-digest', 'expect-manifest-digest', 'expect-tooling-fingerprint', 'profile', 'notes', 'export-mode', ...booleans]);
   const result: Record<string, unknown> = { schemaVersion: 'omr-cli-result/1', command: `${group} ${command}`, ok: false, outcome: 'failed' };
   try {
     checkpoint(control);
     for (let i = 0; i < raw.length; i++) { const key = raw[i].replace(/^--/, ''); if (!raw[i].startsWith('--') || !known.has(key)) throw new ProtocolError('invalid', `Unknown parameter: ${raw[i]}`); const value = booleans.has(key) ? 'true' : raw[++i]; if (!value || value.startsWith('--')) throw new ProtocolError('invalid', `Missing value for --${key}`); flags.set(key, [...(flags.get(key) ?? []), value]); }
     const creation = ['source', 'title', 'include', 'include-dir', 'exclude', 'root-document', 'actor-id', 'actor-name', 'operation-id', 'resource-root', 'policy', 'dry-run', 'resume', 'profile', 'notes', 'trust-slidev-project', 'browser-executable'];
-    const supported: Record<string, string[]> = { 'review create': creation, 'revision create': [...creation, 'parent'], 'review inspect': [], 'review validate': ['revision', 'full'], 'review export': ['revision', 'actor-id', 'actor-name', 'operation-id', 'browser-executable'], 'client install': [], 'client update': ['expect-client-digest'], 'suggestion apply': ['source', 'revision', 'suggestion', 'expect-source-digest', 'actor-id', 'actor-name', 'operation-id', 'resume'] };
+    const supported: Record<string, string[]> = { 'review create': [...creation, 'reviewer-email', 'companion-target', 'companion-catalog'], 'revision create': [...creation, 'parent'], 'review inspect': [], 'review validate': ['revision', 'full'], 'review export': ['revision', 'actor-id', 'actor-name', 'operation-id', 'browser-executable', 'export-mode'], 'client install': [], 'client update': ['expect-client-digest'], 'client inspect': [], 'client upgrade': ['expect-manifest-digest', 'expect-client-digest', 'expect-tooling-fingerprint', 'companion-target'], 'suggestion apply': ['source', 'revision', 'suggestion', 'expect-source-digest', 'actor-id', 'actor-name', 'operation-id', 'resume'] };
     const accepted = supported[`${group} ${command}`];
     if (!accepted) throw new ProtocolError('invalid', 'Unknown command. Run omr --help.');
     for (const key of flags.keys()) if (!['store', 'json', ...accepted].includes(key)) throw new ProtocolError('invalid', `--${key} does not apply to ${group} ${command}.`);
@@ -43,23 +59,26 @@ export async function runCli(argv: string[], artifact = path.resolve(__dirname, 
       if (profile === 'slidev-v1' && !['include', 'exclude'].includes(notes ?? '')) throw new ProtocolError('invalid', 'Slidev requires --notes include or --notes exclude.');
       if (profile === 'markdown' && (notes || flags.has('trust-slidev-project') || flags.has('browser-executable'))) throw new ProtocolError('invalid', 'Slidev capture parameters require --profile slidev-v1.');
       const slidev = profile === 'slidev-v1' ? { notes: notes === 'include' ? 'included' as const : 'excluded' as const, trustProject: flags.has('trust-slidev-project'), browserExecutable: one('browser-executable') } : undefined;
-      const created = await authorReview({ source: path.resolve(one('source', true)!), store: root, title: one('title'), include: flags.get('include'), includeDir: flags.get('include-dir'), exclude: flags.get('exclude'), rootDocument: one('root-document', true)!, actor: actor(), operationId: flags.has('dry-run') ? one('operation-id') ?? 'dry_run' : operation(), parents: group === 'revision' ? flags.get('parent') ?? [] : undefined, resourceRoots: flags.get('resource-root'), policy: policyFile ? validate('policy', parseJson(await readFile(policyFile), LIMITS.policy)) : undefined, dryRun: flags.has('dry-run'), resume: flags.has('resume'), clientArtifact: artifact, journalRoot, slidev, ...control });
+      const created = await authorReview({ source: path.resolve(one('source', true)!), store: root, title: one('title'), include: flags.get('include'), includeDir: flags.get('include-dir'), exclude: flags.get('exclude'), rootDocument: one('root-document', true)!, actor: actor(), operationId: flags.has('dry-run') ? one('operation-id') ?? 'dry_run' : operation(), parents: group === 'revision' ? flags.get('parent') ?? [] : undefined, resourceRoots: flags.get('resource-root'), reviewerEmails: flags.get('reviewer-email'), companionTargets: companionTargets(flags.get('companion-target')), companionCatalog: one('companion-catalog') ? path.resolve(one('companion-catalog')!) : undefined, policy: policyFile ? validate('policy', parseJson(await readFile(policyFile), LIMITS.policy)) : undefined, dryRun: flags.has('dry-run'), resume: flags.has('resume'), clientArtifact: artifact, journalRoot, slidev, ...control });
       Object.assign(result, created, { operationId: one('operation-id'), ok: created.outcome !== 'review-created-client-failed' });
       return { exitCode: created.outcome === 'review-created-client-failed' ? 7 : 0, result };
     }
     if (group === 'client' && command === 'install') { const target = await installClient(store, artifact); return { exitCode: 0, result: { ...result, ok: true, outcome: 'completed', browserClientPath: target } }; }
     if (group === 'client' && command === 'update') { const updated = await updateClient(store, artifact, one('expect-client-digest', true)!); return { exitCode: 0, result: { ...result, ok: true, outcome: 'completed', ...updated } }; }
+    if (group === 'client' && command === 'inspect') return { exitCode: 0, result: { ...result, ok: true, outcome: 'completed', ...await inspectClientUpgrade(store) } };
+    if (group === 'client' && command === 'upgrade') { const upgraded = await upgradeReviewClient({ store, artifact, targets: companionTargets(flags.get('companion-target')), expectManifestDigest: one('expect-manifest-digest', true)!, expectClientDigest: one('expect-client-digest', true)!, expectToolingFingerprint: one('expect-tooling-fingerprint', true)!, ...control }); return { exitCode: 0, result: { ...result, ok: true, outcome: 'completed', ...upgraded } }; }
     if (group !== 'review' || !['inspect', 'validate', 'export'].includes(command)) throw new ProtocolError('invalid', 'Supported commands: review create/inspect/validate/export, revision create, client install.');
     const session = new ReviewSession(store); await session.open();
     if (command === 'inspect') return { exitCode: session.diagnostics.length ? 3 : 0, result: { ...result, ok: !session.diagnostics.length, outcome: 'completed', manifest: session.manifest, revisions: [...session.revisions.values()].map(r => ({ id: r.id, parents: r.parents, rootDocument: r.rootDocument })), heads: session.heads.map(r => r.id), events: session.events.length, diagnostics: session.diagnostics } };
     const revision = one('revision') ?? session.revision?.id; if (!revision) throw new ProtocolError('invalid', 'Choose --revision explicitly when there are multiple heads.'); await session.pin(revision);
     if (command === 'validate') { const audit = await session.audit(session.context({ id: 'validation' })); return { exitCode: 0, result: { ...result, ok: true, outcome: 'completed', inventory: audit.inventory } }; }
+    const exportMode = pdfExportMode(one('export-mode') ?? 'review');
     const { chromium } = await import('playwright');
     const browser = await chromium.launch({ headless: true, channel: 'chromium', ...(one('browser-executable') ? { executablePath: one('browser-executable') } : {}) });
     try {
       const page = await browser.newPage(); await page.exposeFunction('omrHost', (method: string, args: unknown[]) => storageResponse(store, method, args));
       await page.goto(pathToFileURL(artifact).href); await page.waitForFunction(() => !!window.omrAutomation?.session()?.revision, { timeout: 60000 });
-      const exported = await page.evaluate(async ({ actor, revision, operation }) => window.omrAutomation!.export(actor, revision, operation), { actor: actor(), revision, operation: operation() });
+      const exported = await page.evaluate(async ({ actor, revision, operation, mode }) => window.omrAutomation!.export(actor, revision, operation, mode), { actor: actor(), revision, operation: operation(), mode: exportMode });
       return { exitCode: 0, result: { ...result, ok: true, outcome: 'completed', ...exported as object } };
     } finally { await browser.close(); }
   } catch (error) {

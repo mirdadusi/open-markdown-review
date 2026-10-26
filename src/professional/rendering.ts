@@ -154,7 +154,13 @@ export function selectionAnchor(host: HTMLElement, rendered: RenderedSource, sou
 }
 function documentRange(span: Element, node: Node, offset: number): number { const range = span.ownerDocument.createRange(); range.selectNodeContents(span); range.setEnd(node, offset); return range.toString().length; }
 /** CSS annotations retain document DOM, selection, scroll and rendered diagrams. */
-export function annotate(host: HTMLElement, rendered: RenderedSource, source: string, events: readonly Event[], document: string): void {
+export interface AnnotationRanges { comments: Range[]; edits: Range[] }
+export function applyAnnotationHighlights(ranges: AnnotationRanges) {
+  const api = globalThis as typeof globalThis & { Highlight?: new (...ranges: Range[]) => unknown };
+  const registry = (CSS as typeof CSS & { highlights?: Map<string, unknown> }).highlights;
+  if (registry && api.Highlight) { registry.set('omr-comments', new api.Highlight(...ranges.comments)); registry.set('omr-edits', new api.Highlight(...ranges.edits)); }
+}
+export function annotate(host: HTMLElement, rendered: RenderedSource, source: string, events: readonly Event[], document: string, combined?: AnnotationRanges): void {
   const commentRanges: Range[] = [], suggestionRanges: Range[] = [];
   const suggestionMarkers: Array<{ id: string; end: number; range: Range }> = [];
   const openEdits = new Set(fold(events, events[0]?.revisionId ?? '').suggestions.filter(s => s.open && s.root.operation.kind !== 'insert').map(s => s.root.id));
@@ -191,9 +197,10 @@ export function annotate(host: HTMLElement, rendered: RenderedSource, source: st
     if (event.type === 'comment.created') for (const element of elements) { element.classList.add('commented'); const previous = element.getAttribute('data-thread-ids'); element.setAttribute('data-thread-ids', `${previous ? previous + ' ' : ''}${event.threadId}`); element.setAttribute('title', 'Click to open attached review comments'); }
     if (event.type === 'suggestion.created') for (const element of elements) { element.classList.add('suggested'); const previous = element.getAttribute('data-suggestion-ids'); element.setAttribute('data-suggestion-ids', `${previous ? previous + ' ' : ''}${event.suggestionId}`); element.setAttribute('title', 'Click to open attached suggested edits'); }
   }
-  const api = globalThis as typeof globalThis & { Highlight?: new (...ranges: Range[]) => unknown };
   const registry = (CSS as typeof CSS & { highlights?: Map<string, unknown> }).highlights;
-  if (registry && api.Highlight) { registry.set('omr-comments', new api.Highlight(...commentRanges)); registry.set('omr-edits', new api.Highlight(...suggestionRanges)); host.classList.add('exact-highlights'); }
+  if (combined) { combined.comments.push(...commentRanges); combined.edits.push(...suggestionRanges); }
+  else applyAnnotationHighlights({ comments: commentRanges, edits: suggestionRanges });
+  if (registry && (globalThis as { Highlight?: unknown }).Highlight) host.classList.add('exact-highlights');
   // CSS highlights do not participate in hit testing. An empty button rendered
   // through ::before gives each exact edit range an accessible, unambiguous
   // source-to-card link without adding text that would corrupt source mapping.

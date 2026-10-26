@@ -1,0 +1,59 @@
+[
+  {
+    "id": "manifest-unknown-version",
+    "target": "manifest.json",
+    "pointer": "/protocolVersion",
+    "operation": "replace",
+    "value": "9.9.9",
+    "expectedCode": "unsupported"
+  },
+  {
+    "id": "manifest-state-extension",
+    "target": "manifest.json",
+    "pointer": "/extensions",
+    "operation": "replace",
+    "value": [{ "id": "urn:fixture:state:1", "schemaUri": "urn:fixture:state-schema:1", "schemaDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000", "schemaBlobPath": "blobs/sha256/00/0000000000000000000000000000000000000000000000000000000000000000", "affectsState": true }],
+    "expectedCode": "invalid"
+  },
+  {
+    "id": "revision-parent-missing",
+    "target": "revisions/revision_fixture_addressed.json",
+    "pointer": "/parents/0",
+    "operation": "replace",
+    "value": "revision_not_published",
+    "expectedCode": "integrity"
+  },
+  {
+    "id": "event-addressing-wrong-digest",
+    "eventId": "event_addressed",
+    "pointer": "/sourceDigestAfter",
+    "operation": "replace",
+    "value": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "expectedCode": "invalid"
+  },
+  {
+    "id": "event-challenge-without-note",
+    "eventId": "event_verified",
+    "mutations": [
+      { "pointer": "/verdict", "operation": "replace", "value": "challenged" },
+      { "pointer": "/note", "operation": "remove" }
+    ],
+    "expectedCode": "invalid"
+  },
+  {
+    "id": "event-non-creator-addressing",
+    "eventId": "event_addressed",
+    "pointer": "/actor/id",
+    "operation": "replace",
+    "value": "fixture-reviewer",
+    "expectedCode": "invalid"
+  },
+  {
+    "id": "event-dangling-predecessor",
+    "eventId": "event_verified",
+    "pointer": "/verificationPredecessors",
+    "operation": "replace",
+    "value": ["event_not_present"],
+    "expectedCode": "invalid"
+  }
+]

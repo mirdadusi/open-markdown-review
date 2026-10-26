@@ -171,10 +171,12 @@ document.querySelector("#cancel")!.addEventListener("click", () => vscode.postMe
 document.querySelector("#submit")!.addEventListener("click", () => vscode.postMessage({
   command: "submit",
   title: document.querySelector<HTMLInputElement>("#review-title")!.value,
+  reviewerEmails: document.querySelector<HTMLTextAreaElement>('#reviewer-emails')!.value,
   documentPaths: [...selected].sort(),
   rootDocument: rootSelect.value,
   storageRoot,
   includePortableBrowser: document.querySelector<HTMLInputElement>('input[name="participant-access"]:checked')?.value === "portable",
+  companionTargets: [...document.querySelectorAll<HTMLInputElement>('input[name="companion-target"]:checked')].map(input => input.value),
 }));
 window.addEventListener("message", (event) => {
   const message = event.data as { command?: string; errors?: string[]; storageRoot?: string; insideWorkspace?: boolean };

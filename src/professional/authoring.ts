@@ -1,6 +1,8 @@
 import { mkdir, readdir, readFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { ActorRef, CAPABILITIES, CREATOR_THREAD_CONTROL, Event, LIMITS, Manifest, Policy, ProtocolError, Revision, SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE } from './types';
+import { ActorRef, CAPABILITIES, CREATOR_THREAD_CONTROL, Event, LIMITS, Manifest, Policy, ProtocolError, REVIEWER_COMPLETION, REVIEWER_ROSTER, Revision, SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE, THREAD_ADDRESSING, VERSION } from './types';
+import { parseReviewerEmails, reviewerRoster } from './reviewer';
+import { REVIEWER_INVITATIONS } from './types';
 import { decode, digest, encode, jsonBytes, newId, parseJson, safePath, stableId } from './bytes';
 import { contained, NativeStorage } from './nativeStorage';
 import { blobEvidence, contentRef, evidence, publish, publishBlob, readOptional } from './storage';
@@ -14,16 +16,28 @@ import { collectSlidev, redactNotes } from './profiles/slidevSource';
 import { captureSlidev, SlidevOptions } from './profiles/slidevCapture';
 import { PRESENTATION_CAPABILITY, SLIDEV_ID, SLIDEV_SCHEMA_BYTES, SLIDEV_VERSION, SlidevProfile, slidevDeclaration } from './profiles/slidev';
 import { loadProfiles } from './profiles/registry';
+import { CompanionTarget, companionTargets } from './companionTargets';
+import { installCompanions, prepareCompanions } from './companionDelivery';
 import { transientReviewLocation } from './locations';
 
 export interface AuthorRequest extends OperationControl {
   source: string; store: string; title?: string; include?: string[]; includeDir?: string[]; exclude?: string[];
   rootDocument: string; actor: ActorRef; operationId: string; parents?: string[]; resourceRoots?: string[];
   policy?: Policy; dryRun?: boolean; resume?: boolean; clientArtifact: string; journalRoot: string;
+  reviewerEmails?: string[];
+  companionTargets?: CompanionTarget[];
+  /** Explicit trusted distribution catalog, principally for CLI/offline builds. */
+  companionCatalog?: string;
+  /** Ephemeral credential provider; never serialized into review evidence. */
+  companionToken?: () => Promise<string | undefined>;
   slidev?: SlidevOptions;
 }
-export interface AuthorResult { reviewId: string; revisionId?: string; store: string; browserClientPath: string; documentPaths: string[]; outcome: 'planned' | 'completed' | 'already-completed' | 'review-created-client-failed'; error?: string }
-interface Plan { fingerprint: string; manifest: Manifest; revision: Revision; publication: Event; blobs: Array<{ path: string; mediaType: string }> }
+export interface AuthorResult { reviewId: string; revisionId?: string; store: string; browserClientPath: string; documentPaths: string[]; companionPaths?: string[]; outcome: 'planned' | 'completed' | 'already-completed' | 'review-created-client-failed'; error?: string }
+interface Plan {
+  fingerprint: string; manifest: Manifest; revision: Revision; publication: Event; blobs: Array<{ path: string; mediaType: string }>;
+  /** Private recovery format, not shared protocol evidence. Absence retains legacy keys. */
+  publicationJournalVersion?: 'review-v1';
+}
 export interface LauncherBinding { schemaVersion: 'omr-launcher/1'; reviewId: string; title: string; manifestDigest: string }
 const LAUNCHER_MARKER = '__OPEN_MARKDOWN_REVIEW_BOOTSTRAP__';
 const LEGACY_CLIENT = 'OpenMarkdownReview.html';
@@ -52,6 +66,11 @@ function bindClient(bytes: Uint8Array, manifest: Manifest, manifestBytes: Uint8A
   if (occurrences !== 1) throw new ProtocolError('invalid', 'Portable review client has an invalid launcher bootstrap marker.');
   const binding: LauncherBinding = { schemaVersion: 'omr-launcher/1', reviewId: manifest.reviewId, title: manifest.title, manifestDigest: digest(manifestBytes) };
   return encode(html.replace(LAUNCHER_MARKER, Buffer.from(JSON.stringify(binding), 'utf8').toString('base64')));
+}
+/** Validate the trusted template and bind it without modifying the review. */
+export async function previewClientUpdate(store: NativeStorage, artifact: string): Promise<{ sourceDigest: string; bytes: Uint8Array }> {
+  const descriptor = await manifestForClient(store), source = await readFile(artifact);
+  return { sourceDigest: digest(source), bytes: bindClient(source, descriptor.manifest, descriptor.bytes) };
 }
 function isInside(root: string, target: string) { const p = path.relative(root, target); return p !== '..' && !p.startsWith(`..${path.sep}`) && !path.isAbsolute(p); }
 function detectedImageMediaType(bytes: Uint8Array): string | undefined {
@@ -117,6 +136,8 @@ async function capture(reference: string, document: string, request: AuthorReque
 /** The only source-to-review authoring service; GUI and CLI call this same contract. */
 export async function authorReview(request: AuthorRequest): Promise<AuthorResult> {
   checkpoint(request, 'Planning the selected Markdown scope');
+  const selectedCompanions = companionTargets(request.companionTargets);
+  if (selectedCompanions.length && request.parents !== undefined) throw new ProtocolError('invalid', 'Companion delivery is selected when creating a review, not when publishing a document revision.');
   const transient = transientReviewLocation(request.store);
   if (transient) throw new ProtocolError('invalid', `The review package cannot be stored in ${transient}, because generated content can disappear or be replaced. Choose a durable local, shared, synchronized, or Git folder.`);
   if (request.slidev && (!['included', 'excluded'].includes(request.slidev.notes) || !request.dryRun && request.slidev.trustProject !== true)) throw new ProtocolError('permission', 'Slidev requires an explicit notes policy and approval to run the trusted author project.');
@@ -133,9 +154,12 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
   if (documentPaths.length > LIMITS.documents) throw new ProtocolError('unsupported', 'Slidev imports exceed the document limit.');
   if (slidevSources && [...slidevSources.documents.keys()].some(p => !documentPaths.includes(p) || (request.exclude ?? []).some(x => p === x || p.startsWith(x + '/')))) throw new ProtocolError('invalid', 'A required Slidev import is excluded or changed since authoring started.');
   const result: AuthorResult = { reviewId: '', store: path.resolve(request.store), browserClientPath: path.join(path.resolve(request.store), clientFilename(request.title?.trim() || path.basename(request.source))), documentPaths, outcome: 'planned' };
-  const fingerprint = digest(jsonBytes({ source: path.resolve(request.source), store: path.resolve(request.store), title: request.title, documentPaths, include: request.include, includeDir: request.includeDir, exclude: request.exclude, rootDocument: request.rootDocument, actor: request.actor, parents: request.parents, policy: request.policy, resourceRoots: request.resourceRoots, slidev: request.slidev }));
+  const reviewers = request.reviewerEmails ? reviewerRoster(parseReviewerEmails(request.reviewerEmails)) : undefined;
+  // Resolve every selected runtime before the first shared publication.
+  const companions = request.dryRun ? undefined : await prepareCompanions({ targets: selectedCompanions, artifact: request.clientArtifact, journalRoot: request.journalRoot, catalogFile: request.companionCatalog, companionToken: request.companionToken, signal: request.signal, progress: request.progress });
+  const fingerprint = digest(jsonBytes({ source: path.resolve(request.source), store: path.resolve(request.store), title: request.title, documentPaths, include: request.include, includeDir: request.includeDir, exclude: request.exclude, rootDocument: request.rootDocument, actor: request.actor, parents: request.parents, policy: request.policy, resourceRoots: request.resourceRoots, slidev: request.slidev, reviewers, ...(companions ? { companionDelivery: { targets: companions.targets, catalogDigest: companions.catalogDigest } } : {}) }));
   if (request.dryRun) {
-    validate('policy', request.policy ?? { schemaVersion: '0.5.0', kind: 'review-policy', mode: 'assertions-only' });
+    validate('policy', request.policy ?? { schemaVersion: VERSION, kind: 'review-policy', mode: 'assertions-only' });
     // Reads local Markdown only. No capture, output directory, journal or network access.
     for (const p of documentPaths) { checkpoint(request, `Planning ${p}`); inspect(decode(await new NativeStorage(request.source, request.journalRoot).read(p, LIMITS.markdown)), p, SANITIZED_HTML_PROFILE); }
     return result;
@@ -152,6 +176,7 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
     if (existing) {
       if (request.parents === undefined) throw new ProtocolError('invalid', 'This folder already contains a review. Use revision create with explicit parents.');
       manifest = validate('manifest', parseJson(existing, LIMITS.manifest));
+      if (reviewers && JSON.stringify(reviewers) !== JSON.stringify(manifest.reviewers ?? [])) throw new ProtocolError('invalid', 'The initial reviewer email list is immutable. Use Add reviewers in the toolbox to invite additional participants.');
       if (!!request.slidev !== !!manifest.extensions?.some(e => e.id === SLIDEV_ID)) throw new ProtocolError('unsupported', 'A review retains its original presentation profile. Use the same profile for revisions, or create a separate review.');
       const session = new ReviewSession(store); await session.open();
       if (session.diagnostics.length || parents.some(p => !session.revisions.has(p))) throw new ProtocolError('invalid', 'Parent revisions are unavailable or invalid.');
@@ -160,8 +185,8 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
       let contents: string[] = []; try { contents = await readdir(request.store); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
       if (contents.length) throw new ProtocolError('invalid', 'A new review requires an empty or nonexistent target directory.');
       if (parents.length) throw new ProtocolError('invalid', 'A new review cannot have parents.');
-      const capabilities = [...CAPABILITIES, CREATOR_THREAD_CONTROL, SANITIZED_HTML_CAPABILITY, ...(request.slidev ? [PRESENTATION_CAPABILITY] : [])];
-      manifest = started?.manifest ?? validate('manifest', { protocol: 'open-markdown-review', protocolVersion: '0.5.0', reviewId: newId('review'), title: request.title?.trim() || path.basename(request.source), createdAt: new Date().toISOString(), createdBy: request.actor, documents: documentPaths, eventDirectory: 'events', revisionDirectory: 'revisions', blobDirectory: 'blobs/sha256', exportDirectory: 'exports', eventLayout: 'sha256-flat-v1', identityProfile: 'self-asserted-v1', limitsProfile: 'pilot-v1', creationOperationId: request.operationId, capabilities, requiredCapabilities: capabilities, ...(request.slidev ? { extensions: [slidevDeclaration()] } : {}) });
+      const capabilities = [...CAPABILITIES, CREATOR_THREAD_CONTROL, THREAD_ADDRESSING, REVIEWER_COMPLETION, ...(reviewers?.length ? [REVIEWER_ROSTER, REVIEWER_INVITATIONS] : []), SANITIZED_HTML_CAPABILITY, ...(request.slidev ? [PRESENTATION_CAPABILITY] : [])];
+      manifest = started?.manifest ?? validate('manifest', { protocol: 'open-markdown-review', protocolVersion: VERSION, reviewId: newId('review'), title: request.title?.trim() || path.basename(request.source), createdAt: new Date().toISOString(), createdBy: request.actor, documents: documentPaths, eventDirectory: 'events', revisionDirectory: 'revisions', blobDirectory: 'blobs/sha256', exportDirectory: 'exports', eventLayout: 'sha256-flat-v1', identityProfile: 'self-asserted-v1', limitsProfile: 'pilot-v1', creationOperationId: request.operationId, capabilities, requiredCapabilities: capabilities, ...(reviewers?.length ? { reviewers } : {}), ...(request.slidev ? { extensions: [slidevDeclaration()] } : {}) });
     }
     checkpoint(request);
     await mkdir(stagedRoot, { recursive: true, mode: 0o700 });
@@ -236,20 +261,38 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
         await staged.write('capture/slidev.json', jsonBytes({ resources: additional }), false);
       }
     }
-    const policy = validate('policy', request.policy ?? { schemaVersion: '0.5.0', kind: 'review-policy', mode: 'assertions-only' });
-    const revision = validate('revision', { schemaVersion: '0.5.0', id: newId('revision'), reviewId: manifest.reviewId, createdAt: new Date().toISOString(), createdBy: request.actor, rootDocument: request.rootDocument, documents, resources, externalReferences: [...new Map(references.map(r => [r.id, r])).values()], mermaidDiagrams: diagrams, diagnostics, renderer: { markdownProfile, mermaidVersion: mermaidPackage.version }, parents, policy: await put(jsonBytes(policy), 'application/json'), creationOperationId: request.operationId });
+    const policy = validate('policy', request.policy ?? { schemaVersion: manifest.protocolVersion, kind: 'review-policy', mode: 'assertions-only' });
+    if (policy.schemaVersion !== manifest.protocolVersion) throw new ProtocolError('invalid', 'Policy version must match the review protocol version.');
+    const revision = validate('revision', { schemaVersion: manifest.protocolVersion, id: newId('revision'), reviewId: manifest.reviewId, createdAt: new Date().toISOString(), createdBy: request.actor, rootDocument: request.rootDocument, documents, resources, externalReferences: [...new Map(references.map(r => [r.id, r])).values()], mermaidDiagrams: diagrams, diagnostics, renderer: { markdownProfile, mermaidVersion: mermaidPackage.version }, parents, policy: await put(jsonBytes(policy), 'application/json'), creationOperationId: request.operationId });
     if (request.slidev) await loadProfiles(manifest, revision, new Map(await Promise.all(documents.map(async d => [d.path, decode(await staged.read(d.blobPath, LIMITS.markdown))] as const))), c => staged.read(c.blobPath, c.byteLength));
-    const publication = validate('event', { schemaVersion: '0.5.0', id: newId(), type: 'revision.created', reviewId: manifest.reviewId, revisionId: revision.id, revisionDigest: digest(jsonBytes(revision)), revisionPath: `revisions/${revision.id}.json`, occurredAt: new Date().toISOString(), actor: request.actor, operationId: `${request.operationId}_publication` });
-    plan = { fingerprint, manifest, revision, publication, blobs: [...blobs.values()] };
+    const publication = validate('event', { schemaVersion: manifest.protocolVersion, id: newId(), type: 'revision.created', reviewId: manifest.reviewId, revisionId: revision.id, revisionDigest: digest(jsonBytes(revision)), revisionPath: `revisions/${revision.id}.json`, occurredAt: new Date().toISOString(), actor: request.actor, operationId: `${request.operationId}_publication` });
+    plan = { fingerprint, manifest, revision, publication, blobs: [...blobs.values()], publicationJournalVersion: 'review-v1' };
     await staged.write('plan.json', jsonBytes(plan), false);
   }
+  if (plan.publicationJournalVersion !== undefined && plan.publicationJournalVersion !== 'review-v1') throw new ProtocolError('unsupported', 'Unsupported authoring publication journal version. No shared files were published.');
   checkpoint(request, 'Publishing captured content; the revision is not yet visible');
+  const publishedBlobs = new Set<string>();
+  if (request.parents?.length) {
+    const published = new ReviewSession(store); await published.open();
+    if (published.diagnostics.length) throw new ProtocolError('integrity', 'Existing review evidence could not be verified before revision publication.');
+    for (const revision of published.revisions.values()) for (const item of [...revision.documents, ...revision.resources, revision.policy]) publishedBlobs.add(item.blobPath);
+  }
   await mkdir(request.store, { recursive: true });
   const old = await readOptional(store, 'manifest.json', LIMITS.manifest);
   if (old && digest(old) !== digest(jsonBytes(plan.manifest))) throw new ProtocolError('integrity', 'Target contains another manifest.');
   if (!old) await publish(store, `${plan.manifest.creationOperationId}_manifest`, evidence('manifest.json', jsonBytes(plan.manifest), 'application/json'), jsonBytes(plan.manifest));
   for (const dir of ['events', 'revisions', 'exports']) await mkdir(path.join(request.store, dir), { recursive: true });
-  await mapWithConcurrency(plan.blobs, 4, async blob => { checkpoint(request); const bytes = await staged.read(blob.path, LIMITS.content); checkpoint(request); await publish(store, blob.path, evidence(blob.path, bytes, blob.mediaType), bytes); });
+  await mapWithConcurrency(plan.blobs, 4, async blob => {
+    checkpoint(request); const bytes = await staged.read(blob.path, LIMITS.content); checkpoint(request);
+    // A reused folder is not the same review. Keep content acknowledgements shared
+    // across revisions of one review, but isolated from retired review identities.
+    // Existing saved plans retain their original keys: an upgrade is never an
+    // implicit authorization to reconstruct previously acknowledged evidence.
+    const operation = plan.publicationJournalVersion === 'review-v1' ? `review:${plan.manifest.reviewId}:${blob.path}` : blob.path;
+    // Referenced evidence also stays protected when an older review first uses
+    // scoped keys, or when this client has no acknowledgement for a received copy.
+    await publish(store, operation, evidence(blob.path, bytes, blob.mediaType), bytes, publishedBlobs.has(blob.path));
+  });
   checkpoint(request);
   const revisionBytes = jsonBytes(plan.revision); await publish(store, `${request.operationId}_descriptor`, evidence(`revisions/${plan.revision.id}.json`, revisionBytes, 'application/json'), revisionBytes);
   checkpoint(request, 'Final publication started; finishing the review and entry file safely');
@@ -260,7 +303,10 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
   if (!await readOptional(store, '.gitattributes', 1048576)) await store.write('.gitattributes', attrs, false);
   Object.assign(result, { reviewId: plan.manifest.reviewId, revisionId: plan.revision.id, outcome: 'completed' });
   result.browserClientPath = path.join(store.root, clientFilename(plan.manifest.title, plan.manifest.reviewId));
-  try { result.browserClientPath = await installClient(store, request.clientArtifact); }
+  try {
+    result.browserClientPath = await installClient(store, request.clientArtifact);
+    if (companions) result.companionPaths = await installCompanions(store, companions, request.progress);
+  }
   catch (error) { result.outcome = 'review-created-client-failed'; result.error = String(error); }
   return result;
 }
@@ -280,8 +326,10 @@ export async function installedClientFile(store: NativeStorage): Promise<string>
   throw new ProtocolError('missing', `Portable review client is missing (expected ${filename}).`);
 }
 /** Only an explicitly expected current hash authorizes replacement of executable HTML. */
-export async function updateClient(store: NativeStorage, artifact: string, expectedDigest: string): Promise<{ path: string; backupPath?: string }> {
-  const descriptor = await manifestForClient(store), currentFile = await installedClientFile(store), bytes = bindClient(await readFile(artifact), descriptor.manifest, descriptor.bytes);
+export async function updateClient(store: NativeStorage, artifact: string, expectedDigest: string, expectedArtifactDigest?: string): Promise<{ path: string; backupPath?: string }> {
+  const descriptor = await manifestForClient(store), currentFile = await installedClientFile(store), source = await readFile(artifact);
+  if (expectedArtifactDigest && digest(source) !== expectedArtifactDigest) throw new ProtocolError('changed', 'Trusted client template changed after upgrade preflight. The prior client remains available in backups.');
+  const bytes = bindClient(source, descriptor.manifest, descriptor.bytes);
   const old = await store.read(currentFile, 64 * 1024 * 1024), oldDigest = digest(old);
   if (oldDigest !== expectedDigest) throw new ProtocolError('changed', 'HTML changed since update confirmation. No replacement was made.');
   if (currentFile === descriptor.filename && oldDigest === digest(bytes)) return { path: path.join(store.root, descriptor.filename) };

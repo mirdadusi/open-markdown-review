@@ -14,6 +14,8 @@ import { ReviewSession } from '../src/professional/session';
 test('Windows CI real file entry and native folder permission: comment persists on SMB without a bridge', { timeout: 120000 }, async () => {
   assert.equal(process.platform, 'win32'); assert.equal(process.env.CI, 'true');
   const share = process.env.OMR_TEST_REVIEW_ROOT; assert.ok(share && share.startsWith('\\\\localhost\\omr_ci_'));
+  const selector = process.env.OMR_TEST_FOLDER_SELECTOR;
+  assert.ok(selector && path.isAbsolute(selector), 'Supply an independently reviewed native folder-selector fixture on the disposable Windows test host. No organization CI automation is distributed here.');
   const local = await mkdtemp(path.join(os.tmpdir(), 'omr-permission-source-')), source = path.join(local, 'source'); await mkdir(source);
   await writeFile(path.join(source, 'a.md'), '# Real folder grant\n\nSelect this reviewed sentence.\n');
   const root = path.join(await mkdtemp(path.join(share, 'omr-permissions-')), 'review');
@@ -22,7 +24,7 @@ test('Windows CI real file entry and native folder permission: comment persists 
   try {
     const page = await browser.newPage(); await page.goto(pathToFileURL(created.browserClientPath).href);
     assert.equal(await page.evaluate(() => !!window.omrHost), false, 'No native storage bridge is permitted in this qualification.');
-    const grant = promisify(execFile)('powershell.exe', ['-NoProfile', '-File', path.resolve('scripts/select-ci-review-folder.ps1'), '-BrowserPid', String(server.process().pid), '-Folder', root], { timeout: 35000 });
+    const grant = promisify(execFile)('powershell.exe', ['-NoProfile', '-File', selector, '-BrowserPid', String(server.process().pid), '-Folder', root], { timeout: 35000 });
     // Start both promises before waiting so failures cannot become unhandled.
     await Promise.all([grant, page.locator('#connect').click()]);
     await page.waitForSelector('#document [data-source-map]', { timeout: 20000 });

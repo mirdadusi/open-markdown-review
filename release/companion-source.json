@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "channel": "github-release",
+  "extensionId": "mirdadusi.open-markdown-review",
+  "host": "github.com",
+  "owner": "mirdadusi",
+  "repository": "open-markdown-review",
+  "releasesUrl": "https://github.com/mirdadusi/open-markdown-review/releases",
+  "latestReleaseApiUrl": "https://api.github.com/repos/mirdadusi/open-markdown-review/releases/latest",
+  "assetRedirectHosts": ["release-assets.githubusercontent.com", "objects.githubusercontent.com"],
+  "artifactBaseName": "open-markdown-review"
+}

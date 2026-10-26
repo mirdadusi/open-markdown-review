@@ -37,14 +37,42 @@ export function parseJson<T = unknown>(bytes: Uint8Array, limit: number = LIMITS
   const space = () => { while (/[ \t\r\n]/.test(source[cursor] ?? 'x')) cursor++; };
   const string = (): string => {
     const start = cursor++;
+    // Ordinary printable ASCII cannot contain escapes, controls or surrogate
+    // code units. Scan it in a native string/regexp operation instead of one
+    // interpreted iteration per base64 byte. Every other string still takes
+    // the original code-unit validator below, before any JSON decoder runs.
+    const end = source.indexOf('"', cursor);
+    if (end >= cursor) {
+      const plain = source.slice(cursor, end);
+      if (!/\\|[^\x20-\x7e]/.test(plain)) { cursor = end + 1; return plain; }
+    }
+    // Validate the original UTF-16 code units BEFORE JSON.parse can replace
+    // malformed surrogates (e.g. Goja's Go-backed JSON decoder). This guard
+    // applies to keys and values in every host, including escaped/literal pairs.
+    let high = false;
     while (cursor < source.length) {
       const char = source[cursor++];
-      if (char === '\\') { cursor++; continue; }
       if (char === '"') {
+        if (high) fail();
         let value: string; try { value = JSON.parse(source.slice(start, cursor)); } catch { return fail(); }
         if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(value)) fail();
         return value;
       }
+      let unit = char.charCodeAt(0);
+      if (char === '\\') {
+        const escaped = source[cursor++];
+        if (escaped === 'u') {
+          const hex = source.slice(cursor, cursor + 4);
+          if (!/^[a-fA-F0-9]{4}$/.test(hex)) fail();
+          unit = parseInt(hex, 16); cursor += 4;
+        } else {
+          if (!escaped || !'"\\/bfnrt'.includes(escaped)) fail();
+          unit = 0; // A non-Unicode escape cannot complete a surrogate pair.
+        }
+      } else if (unit < 32) fail();
+      if (high && (unit < 0xdc00 || unit > 0xdfff)) fail();
+      if (unit >= 0xdc00 && unit <= 0xdfff && !high) fail();
+      high = unit >= 0xd800 && unit <= 0xdbff;
     }
     return fail();
   };

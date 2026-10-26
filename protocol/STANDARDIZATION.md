@@ -2,7 +2,7 @@
 
 This document records what the Open Markdown Review standard must specify so that independently implemented file-based clients can interoperate. It is the design contract for the next protocol revision. [`README.md`](README.md) remains the normative protocol 0.4 specification until the wire-format changes below have schemas, fixtures, and two independent implementations.
 
-Update, 2026-09-08: the [professional client specification](../spec/PROFESSIONAL-V1.md), [0.5 implementation draft](../spec/PROTOCOL-0.5.md), and [acceptance/work-package plan](../spec/ACCEPTANCE.md) turn this earlier design boundary into the concrete next-pilot contract. Those documents take precedence for next-pilot scope and detailed behavior. This document remains the broader roadmap; signed identity, automatic transport, and migration are future profiles rather than mandatory 0.5 pilot features. HTML is the generic full reviewer interface to the same package; source authoring is one service exposed by VS Code and CLI.
+Update, 2026-09-23: the [professional client specification](../spec/PROFESSIONAL-V1.md), [0.6 implementation draft](../spec/PROTOCOL-0.6.md), and [acceptance/work-package plan](../spec/ACCEPTANCE.md) turn this design boundary into the concrete 0.6 contract. The unchanged 0.5 contract remains separately documented and implemented for backward compatibility. This document remains the broader roadmap; signed identity, automatic transport, and migration are future profiles rather than mandatory 0.6 features. HTML is the generic full reviewer interface to the same package; source authoring is one service exposed by VS Code and CLI.
 
 The standard is deliberately about files and deterministic state, not VS Code, a browser brand, SMB, Git, or a hosted service.
 
@@ -65,7 +65,7 @@ The standard MUST define, independently of operating system APIs:
 
 Protocol 0.4 requires exclusive creation of `<event.id>.json`, which a normal browser directory handle may not be able to guarantee. The next writer profile MUST remove this hidden Node/filesystem dependency.
 
-The candidate v0.5 event layout is content-addressed publication:
+Protocol 0.5 introduced, and 0.6 retains, content-addressed event publication:
 
 ```text
 events/<64-lowercase-sha256-of-exact-event-bytes>.json
@@ -144,6 +144,7 @@ For every event family, the standard MUST specify required capabilities, root id
 - root comments and nested/flat replies;
 - resolution and reopening;
 - comment decisions including accepted, rejected, won't-fix, and duplicate;
+- creator disposition, exact descendant-revision implementation evidence, and reviewer verification/challenge as independent registers;
 - suggested insert, replace, and delete operations and their accept/reject/apply lifecycle;
 - revision approval, rejection, and optional withdrawal;
 - audit export publication;
@@ -237,7 +238,7 @@ The HTML application code MUST NOT embed a mutable copy of review state. It open
 
 ## Standardization roadmap and next-pilot scope
 
-The following roadmap gaps require schemas, types, fixtures, fold algorithms, and tests in their respective implementing profiles. The [0.5 draft](../spec/PROTOCOL-0.5.md) specifies the subset required for the professional pilot; optional signed identity and extension evolution must not be mistaken for implemented or mandatory pilot capabilities:
+The following roadmap gaps require schemas, types, fixtures, fold algorithms, and tests in their respective implementing profiles. The [0.6 draft](../spec/PROTOCOL-0.6.md) specifies the currently implemented subset; optional signed identity and extension evolution must not be mistaken for implemented or mandatory 0.6 capabilities:
 
 | Change | Reason |
 | --- | --- |
@@ -248,6 +249,7 @@ The following roadmap gaps require schemas, types, fixtures, fold algorithms, an
 | Explicit actor assurance and optional signed-event proof | Distinguish typed names from authenticated keys. |
 | Identity authorization/revocation events and trust bootstrap | Make no-server authenticated participation deterministic. |
 | Causal lifecycle transitions | Support reopening/withdrawal without last-write-wins. |
+| Causal finding-addressing and verification registers | Distinguish accepted intent, published implementation, and independently checked outcome without a mutable task database. |
 | Review-policy descriptor and revision binding | Separate individual assertions from a defensible approval conclusion. |
 | Portable Unicode/path-collision rules | Prevent Windows/macOS/Linux clients from referring to different physical files. |
 | Extension namespace and schema-digest rules | Allow open evolution without silent semantic downgrade. |
@@ -256,7 +258,7 @@ The following roadmap gaps require schemas, types, fixtures, fold algorithms, an
 
 ## Exit criteria for a new protocol version
 
-Protocol 0.5 MUST NOT be labeled final until:
+Protocol 0.6 MUST NOT be labeled final until:
 
 1. JSON Schemas, TypeScript types, independent runtime validation, and normative prose agree.
 2. A checked-in fixture exercises every required feature and error condition.
@@ -264,5 +266,5 @@ Protocol 0.5 MUST NOT be labeled final until:
 4. A VS Code client and an independently built browser/file client read the same package and produce equivalent state.
 5. Each client observes the other's comments, replies, lifecycle actions, approvals/rejections, and export records.
 6. Both verify exact frozen Markdown, images, Mermaid, tables, attachments, external-reference metadata, and audit inventories.
-7. Windows local disk and a real mapped SMB share pass concurrent-writer, partial-transfer, permission-loss, reconnect, and performance tests.
+7. Every transport for which compatibility is claimed passes concurrent-writer, partial-transfer, permission-loss, reconnect, and performance tests. The 0.6 candidate requires Windows local-disk evidence; SMB remains explicitly excluded and untested until an authorized fixture exists.
 8. The signed profile, if claimed, passes tamper, wrong-key, revoked-key, unknown-key, rollback-disclosure, and conflicting-authorization tests.

@@ -77,8 +77,9 @@ export function isAllowedReleaseUrl(value: string, source: GitHubReleaseUpdateSo
 export function isAllowedAssetApiUrl(value: string, source: GitHubReleaseUpdateSource): boolean {
   try {
     const url = new URL(value);
-    const prefix = `/api/v3/repos/${source.owner}/${source.repository}/releases/assets/`;
-    return url.protocol === "https:" && url.hostname === source.host && url.port === "" &&
+    const apiHost = source.host === 'github.com' ? 'api.github.com' : source.host;
+    const prefix = `${source.host === 'github.com' ? '' : '/api/v3'}/repos/${source.owner}/${source.repository}/releases/assets/`;
+    return url.protocol === "https:" && url.hostname === apiHost && url.port === "" &&
       !url.username && !url.password && !url.search && !url.hash &&
       url.pathname.startsWith(prefix) && /^[0-9]+$/.test(url.pathname.slice(prefix.length));
   } catch {
