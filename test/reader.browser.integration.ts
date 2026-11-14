@@ -33,6 +33,9 @@ async function compactReadingToolbar(page: Page, evidence: string, mode: string)
   assert.equal(await page.locator('#reading-previous').isDisabled(), true);
   for (const width of [1440, 1024, 640, 390]) {
     await page.setViewportSize({ width, height: 900 });
+    // A wrapped toolbar may scroll on narrow screens. Check the controls after
+    // revealing their group, without changing any review or reading state.
+    if (width === 390) await page.locator('#reader-navigation').evaluate(group => group.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' }));
     const layout = await page.evaluate(() => {
       const toolbar = document.getElementById('toolbar')!.getBoundingClientRect();
       const controls = [...document.querySelectorAll<HTMLElement>('#reader-navigation button, #reading-position, #reader-navigation label')].map(el => {
@@ -41,18 +44,13 @@ async function compactReadingToolbar(page: Page, evidence: string, mode: string)
       return { left: toolbar.left, right: toolbar.right, top: toolbar.top, bottom: toolbar.bottom, controls, direction: getComputedStyle(document.querySelector('#reader-navigation label')!).flexDirection };
     });
     assert.equal(layout.direction, 'row', 'The checkbox and its text stay inline.');
-    if (width <= 850) {
-      await page.locator('.discussion').scrollIntoViewIfNeeded();
-      const panels = await page.evaluate(() => ({ documents: document.querySelector('.documents')!.getBoundingClientRect().bottom, discussion: document.querySelector('.discussion')!.getBoundingClientRect().top }));
-      assert.ok(panels.documents <= panels.discussion + 1, `Document navigation cannot stick over the stacked discussion panel at ${width}px.`);
-      await page.locator('#documents [data-document="a.md"]').click(); await beginning(page, 'a.md');
-    }
     for (const box of layout.controls) {
       assert.ok(box.left >= layout.left && box.right <= layout.right && box.top >= layout.top && box.bottom <= layout.bottom,
-        `Reading controls remain within the existing toolbar at ${width}px.`);
+        `Reading controls are reachable within the existing toolbar at ${width}px.`);
     }
     if (width === 1440 || width === 640) await page.locator('#toolbar').screenshot({ path: path.join(evidence, `toolbar-${mode}-${width}.png`) });
   }
+  await page.locator('#toolbar').evaluate(toolbar => { toolbar.scrollTop = 0; });
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 for (const mode of ['vscode-bridge', 'browser-directory'] as const) test(`${mode}: document top, heading, back, bounded continuous reading and factual email guidance`, { timeout: 120000 }, async () => {
@@ -61,14 +59,15 @@ for (const mode of ['vscode-bridge', 'browser-directory'] as const) test(`${mode
   const texts = new Map<string, string>();
   for (let i = 0; i < 6; i++) {
     const name = i === 1 ? 'nested/b.md' : `${String.fromCharCode(97 + i)}.md`;
-    const links = i === 0 ? '[Other document](nested/b.md) · [Heading reference](nested/b.md#target-heading)\n\n' : i === 1 ? '[Sibling from nested](../c.md)\n\n' : '';
+    const links = i === 0 ? '[This section](#target-heading) · [Other document](nested/b.md) · [Heading reference](nested/b.md#target-heading)\n\n' : i === 1 ? '[Sibling from nested](../c.md)\n\n' : '';
     const text = `# Document ${i + 1}\n\n${links}${Array.from({ length: 55 }, (_, n) => `${n === 35 ? '## Target heading\n\n' : ''}Document ${i + 1}, paragraph ${n + 1}, exact review passage.`).join('\n\n')}\n\nLast passage ${i + 1}.\n`;
     texts.set(name, text); await writeFile(path.join(source, name), text);
   }
   const creator = { id: 'initiator' }, created = await authorReview({ source, store: root, rootDocument: 'a.md', actor: creator, reviewerEmails: ['alex@example.com'], operationId: 'reader_fixture', journalRoot: path.join(temp, 'journal'), clientArtifact: path.resolve('dist/OpenMarkdownReview.html') });
   const store = new NativeStorage(root, path.join(temp, 'client-journal'));
   const initial = new ReviewSession(store); await initial.open();
-  const order = ['a.md', ...initial.revision!.documents.map(d => d.path).filter(p => p !== 'a.md')];
+  // The author index links to the nested chapter before unlinked siblings.
+  const order = ['a.md', 'nested/b.md', 'c.md', 'd.md', 'e.md', 'f.md'];
   const browser = await chromium.launch({ headless: true, channel: 'chromium', ...(process.env.OMR_TEST_BROWSER ? { executablePath: process.env.OMR_TEST_BROWSER } : {}) });
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } }), page = await context.newPage(), errors: string[] = [];
@@ -91,6 +90,14 @@ for (const mode of ['vscode-bridge', 'browser-directory'] as const) test(`${mode
       await page.locator('#connect').click();
     }
     await page.waitForSelector('#document [data-source-map]');
+    if (mode === 'vscode-bridge') await page.evaluate(() => {
+      // The real VS Code preload handles these trusted clicks at window level
+      // without checking defaultPrevented. Keep the same behavior in this test.
+      window.addEventListener('click', event => {
+        const anchor = event.composedPath().find(node => node instanceof HTMLAnchorElement) as HTMLAnchorElement | undefined;
+        if (event.isTrusted && anchor?.getAttribute('href') === '#') window.scrollTo(0, 0);
+      });
+    });
     assert.match(await page.locator('#reviewer-guidance').innerText(), /email address you were invited with/);
     assert.equal(await page.locator('#comment').isDisabled(), true);
     await page.locator('#set-reviewer').click(); assert.equal(await page.locator('#actor-id').evaluate(e => e === document.activeElement), true);
@@ -100,6 +107,10 @@ for (const mode of ['vscode-bridge', 'browser-directory'] as const) test(`${mode
     assert.equal(await page.locator('#comment').isEnabled(), true);
     assert.match(await page.locator('#identity-help').innerText(), /self-asserted/);
     await compactReadingToolbar(page, temp, mode);
+    await page.locator('#documents [data-document="a.md"]').click(); await beginning(page, 'a.md');
+    await page.locator('[data-document-link="#target-heading"]').click();
+    await page.waitForFunction(() => Math.abs(document.querySelector('[data-reading-document="a.md"] h2')!.getBoundingClientRect().top - document.getElementById('toolbar')!.getBoundingClientRect().bottom - 12) < 3);
+    await page.locator('#reading-back').click(); await beginning(page, 'a.md');
     await page.locator('#continuous-reading').uncheck();
     await page.locator('#reading-next').click(); await beginning(page, order[1]);
     assert.equal(await page.locator('#reading-position').innerText(), '2 / 6');

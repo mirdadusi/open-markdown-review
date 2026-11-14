@@ -1,7 +1,7 @@
 import type { ActorRef, ReviewEvent, ReviewRevision, StoredContent, Sha256Digest } from "../protocol/types";
-import { SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE } from './html';
+import { SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE } from './htmlProfile';
 export type { ActorRef, MarkdownAnchor, StoredContent, Sha256Digest } from "../protocol/types";
-export { SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE } from './html';
+export { SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE } from './htmlProfile';
 
 export const VERSION = "0.6.0" as const;
 export const LEGACY_VERSION = "0.5.0" as const;
@@ -11,7 +11,8 @@ export const THREAD_ADDRESSING = 'thread-addressing-v1' as const;
 export const REVIEWER_ROSTER = 'reviewer-roster-v1' as const;
 export const REVIEWER_COMPLETION = 'reviewer-completion-v1' as const;
 export const REVIEWER_INVITATIONS = 'reviewer-invitations-v1' as const;
-export const OPTIONAL_CAPABILITIES = ['presentation-profiles-v1', CREATOR_THREAD_CONTROL, THREAD_ADDRESSING, REVIEWER_ROSTER, REVIEWER_COMPLETION, REVIEWER_INVITATIONS, SANITIZED_HTML_CAPABILITY] as const;
+export const COMMENT_EDITS = 'comment-edits-v1' as const;
+export const OPTIONAL_CAPABILITIES = ['presentation-profiles-v1', CREATOR_THREAD_CONTROL, THREAD_ADDRESSING, REVIEWER_ROSTER, REVIEWER_COMPLETION, REVIEWER_INVITATIONS, COMMENT_EDITS, SANITIZED_HTML_CAPABILITY] as const;
 export interface Reviewer { id: string; email: string }
 export const CAPABILITIES = ["quote-anchor-v1", "range-anchor-v1", "semantic-anchor-v1", "content-addressed-resources-v1", "revision-parents-v1", "thread-lifecycle-v2", "suggested-edit-v2", "review-stance-v1", "review-policy-v1", "audit-inventory-v1"] as const;
 export interface Manifest {
@@ -46,6 +47,7 @@ type Upgraded<E extends ReviewEvent> = E extends { type: "export.created" } ? ne
     E extends { type: "suggestion.applied" } ? { acceptanceIds: string[] } : object
   ) : never;
 export type Event = Upgraded<ReviewEvent> |
+  (Envelope & { type: "comment.edited"; threadId: string; commentId: string; body: { format: "markdown"; text: string }; editPredecessors: string[] }) |
   (Envelope & { type: "reviewer.invited"; reviewer: Reviewer }) |
   (Envelope & { type: "thread.reopened"; threadId: string; reason: string; statusPredecessors: string[] }) |
   (Envelope & { type: "thread.addressed"; threadId: string; toRevisionId: string; document: string; sourceDigestBefore: Sha256Digest; sourceDigestAfter: Sha256Digest; summary: string; decisionIds: string[]; addressingPredecessors: string[] }) |

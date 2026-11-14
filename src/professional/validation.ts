@@ -13,7 +13,7 @@ import verification06 from './generated/v0.6/verification';
 import inventory06 from './generated/v0.6/inventory';
 import folding from './case-folding-15.1.json';
 import { ascii, digest, encode, offsetAt, safePath, stableId } from './bytes';
-import { Event, Manifest, Revision, Policy, ProtocolError, CAPABILITIES, OPTIONAL_CAPABILITIES, LIMITS, StoredContent, Verification, AuditInventory, LEGACY_VERSION, THREAD_ADDRESSING, REVIEWER_ROSTER, REVIEWER_COMPLETION, VERSION } from './types';
+import { Event, Manifest, Revision, Policy, ProtocolError, CAPABILITIES, OPTIONAL_CAPABILITIES, LIMITS, StoredContent, Verification, AuditInventory, LEGACY_VERSION, THREAD_ADDRESSING, REVIEWER_ROSTER, REVIEWER_COMPLETION, COMMENT_EDITS, VERSION } from './types';
 import { reviewerEmail, reviewerRoster } from './reviewer';
 import { REVIEWER_INVITATIONS } from './types';
 import { attribute, isAllowedHtmlTag, isAuditedExternalReference, SANITIZED_HTML_PROFILE, scanHtml } from './html';
@@ -46,6 +46,7 @@ export function validate<K extends keyof Shapes>(kind: K, value: unknown): Shape
     const presentationCapability = 'presentation-profiles-v1';
     requireRule(CAPABILITIES.every(c => m.capabilities.includes(c) && m.requiredCapabilities.includes(c)), 'Missing core capability.');
     requireRule(m.protocolVersion !== LEGACY_VERSION || !m.capabilities.includes(THREAD_ADDRESSING), 'Protocol 0.5 cannot advertise 0.6 thread-addressing semantics.');
+    requireRule(m.protocolVersion !== LEGACY_VERSION || !m.capabilities.includes(COMMENT_EDITS), 'Comment editing requires protocol 0.6.');
     requireRule(m.protocolVersion !== VERSION || m.requiredCapabilities.includes(THREAD_ADDRESSING) && m.requiredCapabilities.includes('creator-thread-control-v1'), 'Protocol 0.6 requires creator-thread-control-v1 and thread-addressing-v1.');
     requireRule(m.protocolVersion !== LEGACY_VERSION || !m.capabilities.some(c => c === REVIEWER_ROSTER || c === REVIEWER_COMPLETION || c === REVIEWER_INVITATIONS), 'Reviewer rosters, invitations and completion require protocol 0.6.');
     requireRule(!m.requiredCapabilities.includes(REVIEWER_INVITATIONS) || !!m.reviewers && m.requiredCapabilities.includes(REVIEWER_ROSTER), 'Reviewer invitations require an email roster.');
@@ -63,6 +64,7 @@ export function validate<K extends keyof Shapes>(kind: K, value: unknown): Shape
   }
   if (kind === 'event') {
     const e = value as Event; actor(e.actor);
+    if (e.type === 'comment.edited') requireRule(e.body.text.trim(), 'An edited comment must not be blank.');
     if (e.type === 'reviewer.invited') requireRule(e.reviewer.email === reviewerEmail(e.reviewer.email) && e.reviewer.id === stableId('reviewer', e.reviewer.email), 'Invited reviewer email must be canonical and bound to its derived ID.');
     if ('verification' in e) checkStored(e.verification);
     if (e.type === 'suggestion.applied') requireRule(e.acceptanceIds.length, 'Application requires acceptance evidence.');

@@ -183,6 +183,7 @@ Each register is a directed acyclic graph. A transition lists the heads of that 
 | `revision.created` | `revisionPath`; descriptor includes parents | Revision graph, no mutable latest pointer |
 | `comment.created` | Existing `threadId`, `commentId`, `anchor`, `body` | Unique immutable root |
 | `comment.replied` | Existing `threadId`, `commentId`, optional `inReplyTo`, `body` | Immutable reply; parent is in the same thread/revision |
+| `comment.edited` | Existing `threadId` and target `commentId`, replacement `body`, `editPredecessors: string[]` | Author-only wording register; requires `comment-edits-v1`; original comment/reply is retained |
 | `thread.decided` | Existing decision/reason plus `decisionPredecessors: string[]` | Per thread decision: accepted/rejected/wont-fix/duplicate |
 | `thread.resolved` | `threadId`, optional `note`, `statusPredecessors: string[]` | Per thread status: resolved |
 | `thread.reopened` | `threadId`, required `reason`, nonempty `statusPredecessors: string[]` | Per thread status: open |
@@ -204,7 +205,91 @@ A thread starts open. Under `creator-thread-control-v1`, only the review initiat
 
 Finding processing has four independent axes: discussion lifecycle, creator disposition, implementation evidence, and verification. An accepted decision alone means implementation is planned, not completed. `thread.addressed` MUST name the unconflicted accepted decision heads observed by the creator, the original anchor document/digest, and a published descendant revision whose same-path document digest equals `sourceDigestAfter`. Its causal dependency set includes the target revision's `revision.created` event and that publication's ancestry; an audit receipt that omits them is not closed. The target revision is immutable review evidence; a live source file or local editor state is never sufficient. A new addressing event names all observed addressing heads and supersedes them without erasing history. Concurrent addressing heads are a visible implementation conflict until an explicit successor names all of them.
 
-Verification is scoped to one exact addressing event. `thread.verification.recorded.addressedEventId` is an explicit causal dependency on an addressing event for the same thread and root revision. Verification predecessors belong to that same addressed-event register. A challenged verdict requires a note. A later addressing event creates a new verification register and therefore returns the finding to awaiting verification; verification of an older implementation remains audit history. Verification does not silently close or reopen the discussion lifecycle. Creator and reviewer clients MAY guide users to reopen a challenged thread, but closure still requires an explicit lifecycle event.
+Recording a valid, unconflicted `thread.addressed` finishes implementation processing; clients MUST NOT require a subsequent verification event to treat that implementation as complete. This is the creator's assertion, not proof of independent review or approval. Discussion status and reviewer completion/approval remain independent.
+
+A descendant revision may include newly created Markdown documents and modified
+links in existing documents as one complete frozen inventory. The manifest's
+creation-time document list does not replace a revision's own inventory. No new
+event family, manifest mutation or duplicate live-document authority is needed.
+An implementation may live in an added document while the original anchor text
+is unchanged: addressing still names the original same-path document and exact
+target digest, and `toRevisionId` binds the complete descendant snapshot. If that
+original document is removed from the target inventory, this addressing shape
+cannot claim the finding implemented; preserve its history rather than inventing
+a replacement anchor. Scope-discovery prompts and local Markdown-link preflight
+are reference-client UX, not a retroactive admission rule for older packages.
+
+Verification is optional and scoped to one exact addressing event. `thread.verification.recorded.addressedEventId` is an explicit causal dependency on an addressing event for the same thread and root revision. Verification predecessors belong to that same addressed-event register. A challenged verdict requires a note and signals rework. An explicit initiator **Reopen finding** action writes that challenged verdict and, if needed, a separate `thread.reopened` lifecycle event with the same reason. These are independently durable actions; retry MUST retain their exact event/operation identities. Initiator rework is management, permitted after the initiator's own review completion without changing that completion register. Other participant feedback retains the existing completion lock. A later addressing event creates a new optional verification register and finishes implementation processing again; older verdicts remain audit history. No verdict silently closes or reopens the discussion lifecycle.
+
+A review-wide findings view MAY aggregate admitted findings from multiple revisions. Each action MUST retain the root revision/digest and original anchor; displaying a later snapshot MUST NOT retarget a reply, decision or implementation record. Approval and reviewer progress remain snapshot-specific. Friendly snapshot names/counts and private view preferences are presentation only, never identity or branch-selection authority.
+
+### Auditable comment wording (`comment-edits-v1`)
+
+New packages supporting editable wording declare `comment-edits-v1` in both
+`capabilities` and `requiredCapabilities`. An older client must reject that
+unknown required semantic rather than silently present an obsolete comment.
+Existing immutable manifests MUST NOT be rewritten to enable this feature.
+Packages without the declaration remain readable; a client MAY offer a clearly
+labelled ordinary correction reply instead of claiming to edit the original.
+
+`comment.edited.commentId` references one original `comment.created` or
+`comment.replied`, not a new comment identity. The original and edit MUST have
+the same review, revision, thread and actor ID. Initiator status gives no right
+to edit another participant's wording. Identity remains self-asserted under the
+declared identity profile, not authenticated email ownership.
+
+Each edit has its own unique event and operation IDs and independent immutable
+event file. The original event, anchor, replies, decisions, implementation and
+completion records are never overwritten or retargeted. The nonblank Markdown
+body remains subject to the existing 32 KiB text limit. Editing a reply does not
+change its `inReplyTo` relationship.
+
+Edits form a per-comment causal register. `editPredecessors` names all observed
+edit heads for that same comment and snapshot; the original comment event is an
+additional causal dependency, including when editing a reply. First edits have
+an empty predecessor list. Different concurrent bodies remain a visible conflict;
+clients MUST NOT choose a winner by timestamp. Equal bodies may agree while
+retaining every head. A new author edit naming all observed heads reconciles
+them. Comment-edit conflicts count as conflicts for finding queues and quorum
+policy evaluation. All versions remain available for audit.
+
+Before publication, conforming writers refresh and reject an edit if the author
+has finished their review, the discussion is closed, the implementation is
+finished without a rework challenge, or the observed edit heads changed. Drafts
+remain available on failure. The initiator may explicitly reopen the finding or
+discussion and the participant may reopen their own review; an edit never does
+this implicitly. An edit genuinely concurrent with a close can arrive later,
+like a concurrent reply; it remains history and does not reopen anything.
+
+The normal display uses the unconflicted current wording and exposes an edited
+indicator and history. An archive PDF uses that wording in its comment panel,
+retains original wording and edit records in the annotation history, and shows
+all unresolved alternatives rather than hiding a conflict. Exact original/edit
+bytes and dependencies remain in the machine-verifiable export inventory.
+
+### PDF snapshot selection (client UX)
+
+Interactive export MUST identify one concrete verified revision. Its default is
+the single verified revision head, irrespective of the document currently being
+read. With multiple heads there is no unique latest revision: require an explicit
+choice, never a timestamp-based branch winner. Older verified revisions remain
+selectable. The dialog states its document/comment/reply scope. Comments from
+other revisions are not relocated onto changed text. The chosen revision is an
+immutable action context; later publications and visible-view changes cannot
+silently retarget a pending export or its recovery plan. Export does not change
+the main document pin. Previous export choices must not replace the latest
+default on the next dialog opening. No additional protocol event is introduced
+by the selector; the existing PDF, inventory and export event retain exact
+revision/digest binding.
+
+The anchor identifies the original concern; it does not restrict implementation
+to that text range or file. The recorded descendant MAY rewrite a complete
+document or change several documents/resources. The root `document` and digest
+fields retain their exact existing meaning. If that document is unchanged and
+the concern is addressed elsewhere in the snapshot, the creator's required
+summary SHOULD explain the relationship. Publishing a revision MUST NOT
+automatically mark every finding in its changed files addressed. Each selected
+finding requires its own explicit `thread.addressed` event and verification scope.
 
 Suggested edits start open. Unambiguous acceptance makes them eligible for source application, not completed work. Application must name accepted leaves valid in its causal view, match the root document, and record persisted before/after bytes. Later competing rejection is a visible conflict and never undoes source automatically. Repeated application with different before/after digests is a conflict; identical evidence may be displayed as repeated assertions but never triggers a second edit. A rejected or validly applied suggestion is closed for completion policy; open, accepted-unapplied, and conflicted suggestions are not.
 

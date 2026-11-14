@@ -5,7 +5,7 @@ import { getDocument, OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 export async function inspectPdf(bytes, margin = 40) {
   const loading = getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, useSystemFonts: false, verbosity: 0 });
-  const pdf = await loading.promise, pages = [], violations = [], links = [], images = [], annotations = [];
+  const pdf = await loading.promise, pages = [], violations = [], links = [], images = [], annotations = [], commentStates = [];
   try {
     for (let number = 1; number <= pdf.numPages; number++) {
       const page = await pdf.getPage(number), viewport = page.getViewport({ scale: 1 }), text = await page.getTextContent({ disableNormalization: true });
@@ -18,10 +18,10 @@ export async function inspectPdf(bytes, margin = 40) {
         if (x < margin - 1 || x + item.width > viewport.width - margin + 1 || bottom < 14 || top > viewport.height - 30) violations.push({ page: number, kind: 'text-outside-page', text: item.str.slice(0, 120), x, right: x + item.width, bottom, top });
         if (/[\u0000\ufffd]/u.test(item.str)) violations.push({ page: number, kind: 'missing-glyph', text: item.str.slice(0, 120) });
       }
-      for (const annotation of await page.getAnnotations()) {
+      for (const annotation of await page.getAnnotations({ intent: 'any' })) {
         const box = annotation.rect;
         if (!['Link', 'Popup'].includes(annotation.subtype) && (!Array.isArray(box) || box.length !== 4 || box.some(v => !Number.isFinite(v)) || box[0] < 0 || box[1] < 0 || box[2] > viewport.width || box[3] > viewport.height || box[2] <= box[0] || box[3] <= box[1])) violations.push({ page: number, kind: 'comment-outside-page', id: annotation.id, rect: box });
-        if (!['Link', 'Popup'].includes(annotation.subtype)) annotations.push({ page: number, id: annotation.id, subtype: annotation.subtype,
+        if (!['Link', 'Popup'].includes(annotation.subtype)) (annotation.stateModel === 'Review' && annotation.inReplyTo ? commentStates : annotations).push({ page: number, id: annotation.id, subtype: annotation.subtype,
           contents: annotation.contentsObj?.str ?? annotation.contents ?? '', author: annotation.titleObj?.str ?? annotation.title ?? '',
           inReplyTo: annotation.inReplyTo, replyType: annotation.replyType, state: annotation.state, stateModel: annotation.stateModel, rect: annotation.rect, quadPoints: annotation.quadPoints, hasPopup: !!annotation.popupRef });
         if (annotation.subtype !== 'Link') continue;
@@ -52,17 +52,17 @@ export async function inspectPdf(bytes, margin = 40) {
     const inspectOutline = async entries => { for (const entry of entries) { bookmarks++; if (typeof entry.dest === 'string' && !await pdf.getDestination(entry.dest)) violations.push({ kind: 'broken-bookmark', title: entry.title }); await inspectOutline(entry.items ?? []); } };
     await inspectOutline(await pdf.getOutline() ?? []);
     const metadata = await pdf.getMetadata(), attachments = await pdf.getAttachments();
-    const annotationIds = new Set(annotations.map(a => a.id));
-    for (const annotation of annotations) if (annotation.inReplyTo) {
-      if (!annotationIds.has(annotation.inReplyTo)) violations.push({ page: annotation.page, kind: 'orphan-pdf-reply', id: annotation.id });
-      else if (annotations.find(a => a.id === annotation.inReplyTo).page !== annotation.page) violations.push({ page: annotation.page, kind: 'cross-page-pdf-reply', id: annotation.id });
+    const annotationPages = new Map(annotations.map(a => [a.id, a.page]));
+    for (const annotation of [...annotations, ...commentStates]) if (annotation.inReplyTo) {
+      if (!annotationPages.has(annotation.inReplyTo)) violations.push({ page: annotation.page, kind: 'orphan-pdf-reply', id: annotation.id });
+      else if (annotationPages.get(annotation.inReplyTo) !== annotation.page) violations.push({ page: annotation.page, kind: 'cross-page-pdf-reply', id: annotation.id });
     }
-    return { pageCount: pages.length, landscapePages: pages.filter(page => page.width > page.height).length, pages, links, images, annotations, metadata: metadata.info, attachments, bookmarks, violations };
+    return { pageCount: pages.length, landscapePages: pages.filter(page => page.width > page.height).length, pages, links, images, annotations, commentStates, metadata: metadata.info, attachments, bookmarks, violations };
   } finally { await loading.destroy(); }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const result = await inspectPdf(await readFile(process.argv[2]));
-  const { pages, links, images, annotations, metadata, attachments, ...summary } = result;
-  console.log(JSON.stringify({ ...summary, images: images.length, links: links.length, comments: annotations.length, participantsPage: pages.find(page => page.text.includes('Reviewer completion and participation'))?.number }, null, 2));
+  const { pages, links, images, annotations, commentStates, metadata, attachments, ...summary } = result;
+  console.log(JSON.stringify({ ...summary, images: images.length, links: links.length, comments: annotations.length, commentStates: commentStates.length, participantsPage: pages.find(page => page.text.includes('Reviewer completion and participation'))?.number }, null, 2));
   if (summary.violations.length) process.exitCode = 1;
 }

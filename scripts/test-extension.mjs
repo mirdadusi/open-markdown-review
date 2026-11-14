@@ -13,9 +13,9 @@ await writeFile(path.join(isolated, 'profile', 'User', 'settings.json'), JSON.st
   'telemetry.telemetryLevel': 'off', 'update.mode': 'none',
 }));
 const suite = process.argv[2] ?? 'full';
-if (!['full', 'creation', 'interoperability'].includes(suite) || process.argv.length > 3) throw new Error('Use full, creation or interoperability.');
+if (!['full', 'creation', 'interoperability', 'reading', 'pdf-templates', 'finding-workflow', 'source-workspace', 'comments-export'].includes(suite) || process.argv.length > 3) throw new Error('Use full, creation, interoperability, reading, pdf-templates, finding-workflow, source-workspace or comments-export.');
 let debugPort;
-if (suite === 'interoperability') {
+if (suite === 'interoperability' || suite === 'reading' || suite === 'pdf-templates' || suite === 'finding-workflow' || suite === 'source-workspace' || suite === 'comments-export') {
   const server=createServer(); await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
   debugPort=server.address().port; await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
 }
@@ -24,9 +24,9 @@ const interoperabilityOutput=path.resolve('output/interoperability',`${process.p
 // container. Never add it on the runner host or for an ordinary local launch.
 const isolatedContainer = process.env.CI === 'true' && process.env.OMR_CI_CONTAINER === 'true' && process.platform === 'linux' && process.getuid?.() === 0;
 await runTests({
-  ...(process.env.OMR_TEST_VSCODE ? { vscodeExecutablePath: process.env.OMR_TEST_VSCODE } : { version: suite==='interoperability'?'1.142.0':'stable' }),
+  ...(process.env.OMR_TEST_VSCODE ? { vscodeExecutablePath: process.env.OMR_TEST_VSCODE } : { version: ['interoperability','reading'].includes(suite)?'1.142.0':'stable' }),
   extensionDevelopmentPath: process.env.OMR_TEST_EXTENSION_ROOT ?? process.cwd(),
-  extensionTestsPath: path.resolve(suite === 'creation' ? 'out/test/creation.host.integration.js' : suite === 'interoperability' ? 'out/test/interoperability.extension.integration.js' : 'out/test/extension.integration.js'),
+  extensionTestsPath: path.resolve(suite === 'creation' ? 'out/test/creation.host.integration.js' : suite === 'interoperability' ? 'out/test/interoperability.extension.integration.js' : suite === 'reading' ? 'out/test/reading.extension.integration.js' : suite === 'pdf-templates' ? 'out/test/pdfTemplate.extension.integration.js' : suite === 'finding-workflow' ? 'out/test/findingPublication.extension.integration.js' : suite === 'source-workspace' ? 'out/test/workspaceSource.extension.integration.js' : suite === 'comments-export' ? 'out/test/commentsExport.extension.integration.js' : 'out/test/extension.integration.js'),
   extensionTestsEnv: { ...process.env, OMR_TEST_NODE:process.execPath, ...(debugPort?{ OMR_TEST_CDP_PORT:String(debugPort), OMR_INTEROP_OUTPUT:interoperabilityOutput, OMR_NODE_COMPANION:process.env.OMR_NODE_COMPANION??path.resolve('dist/legacy-node',`${process.platform}-${process.arch}`,process.platform==='win32'?'StartReview.exe':'StartReview') }:{}) },
   reuseMachineInstall: false,
   launchArgs: ['--user-data-dir', path.join(isolated, 'profile'), '--extensions-dir', path.join(isolated, 'extensions'), '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust', '--disable-gpu', ...(debugPort?[`--remote-debugging-port=${debugPort}`,'--remote-debugging-address=127.0.0.1']:[]), ...(isolatedContainer ? ['--no-sandbox','--enable-logging=stderr','--vmodule=*service_worker*=2,*quota*=2,*leveldb*=2'] : []), workspace],

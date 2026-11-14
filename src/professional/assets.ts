@@ -3,16 +3,31 @@ import { digest, toBase64 } from './bytes';
 import { LIMITS, ProtocolError, Revision, StoredContent } from './types';
 import { rasterDimensions } from './imageLimits';
 import { OperationControl, checkpoint } from './operation';
-import { svgWithoutLegacyDoctype } from './svg';
+import { svgWithoutLegacyDoctype, svgEmbeddedRaster, validateSvgCss } from './svg';
 export function sanitizeSvg(svg: string): string {
+  if (svg.length > LIMITS.resource) throw new Error('SVG exceeds the supported input limit.');
   const doc = new DOMParser().parseFromString(svgWithoutLegacyDoctype(svg), 'image/svg+xml');
   if (doc.querySelector('parsererror') || doc.documentElement.localName !== 'svg') throw new Error('Invalid SVG.');
+  const rasters = new Map<string, ReturnType<typeof svgEmbeddedRaster>>();
+  let embeddedBytes = 0, embeddedPixels = 0, embeddedCount = 0;
   for (const element of doc.querySelectorAll('*')) {
     if (['script', 'foreignObject', 'iframe', 'object', 'embed', 'animate', 'animateMotion', 'animateTransform', 'set'].includes(element.localName)) throw new Error(`Active SVG element is not permitted: ${element.localName}`);
     for (const attribute of [...element.attributes]) {
-      if (/^on/i.test(attribute.name) || /(?:href|src)$/i.test(attribute.name) && !attribute.value.startsWith('#') || /(?:@import|expression\s*\(|url\(\s*['"]?(?!#))/i.test(attribute.value)) throw new Error('Active or externally referenced SVG is not permitted.');
+      try {
+        if (/^on/i.test(attribute.name) || attribute.namespaceURI === 'http://www.w3.org/XML/1998/namespace' && attribute.localName === 'base') throw new Error('SVG event handlers and base-URL overrides are not permitted.');
+        if (/(?:href|src)$/i.test(attribute.name)) {
+          if (/^#[^\s]+$/.test(attribute.value)) continue;
+          const imageHref = element.namespaceURI === 'http://www.w3.org/2000/svg' && element.localName === 'image' && attribute.localName === 'href' && (attribute.namespaceURI === null || attribute.namespaceURI === 'http://www.w3.org/1999/xlink');
+          if (!imageHref) throw new Error('External SVG references are not permitted.');
+          const raster = rasters.get(attribute.value) ?? svgEmbeddedRaster(attribute.value);
+          rasters.set(attribute.value, raster);
+          embeddedBytes += raster.byteLength; embeddedPixels += raster.pixels; embeddedCount++;
+          if (embeddedBytes > LIMITS.resource || embeddedPixels > 25000000 || embeddedCount > LIMITS.resources) throw new Error('SVG embedded images exceed the aggregate byte, pixel or count limit.');
+          attribute.value = raster.uri;
+        } else if (/^(?:style|fill|stroke|filter|clip-path|mask|marker(?:-start|-mid|-end)?|cursor|color-profile)$/i.test(attribute.localName) || /(?:url\s*\(|@import|expression\s*\()/i.test(attribute.value)) validateSvgCss(attribute.value);
+      } catch (error) { throw new Error(`Cannot render SVG <${element.localName}> attribute ${attribute.name}: ${error instanceof Error ? error.message : String(error)}`); }
     }
-    if (element.localName === 'style' && /\\|@import|url\(\s*['"]?(?!#)/i.test(element.textContent ?? '')) throw new Error('External or escaped SVG stylesheet is not permitted.');
+    if (element.localName === 'style') validateSvgCss(element.textContent ?? '');
   }
   return new XMLSerializer().serializeToString(doc.documentElement);
 }
@@ -32,6 +47,22 @@ function bounded<T>(work: Promise<T>, control?: RenderControl): Promise<T> {
     work.then(value => finish(() => resolve(value)), error => finish(() => reject(error)));
   });
 }
+async function preparedSvg(svg: string, control?: RenderControl): Promise<string> {
+  const safe = sanitizeSvg(svg), doc = new DOMParser().parseFromString(safe, 'image/svg+xml'), checked = new Set<string>();
+  for (const element of doc.querySelectorAll('image')) for (const attribute of [...element.attributes]) {
+    if (attribute.localName !== 'href' || !attribute.value.startsWith('data:') || checked.has(attribute.value)) continue;
+    checkpoint(control, 'Validating embedded SVG image…');
+    const image = new Image(); image.src = attribute.value;
+    try { await bounded(image.decode(), control); }
+    catch (error) {
+      if (error instanceof ProtocolError && error.code === 'cancelled') throw error;
+      throw new Error('Cannot decode SVG embedded raster image. The image may be damaged or unsupported.');
+    }
+    if (!image.naturalWidth || !image.naturalHeight || image.naturalWidth * image.naturalHeight > 25000000) throw new Error('Decoded SVG embedded image exceeds the supported dimensions.');
+    checked.add(attribute.value);
+  }
+  return safe;
+}
 export function renderDiagram(source: string, control?: RenderControl): Promise<string> {
   if (/%%\s*\{|^\s*---/m.test(source)) return Promise.reject(new Error('Mermaid configuration directives/front matter are not supported in the strict review profile. Keep configuration in the trusted renderer.'));
   const key = digest(source), cached = diagrams.get(key); if (cached) return Promise.resolve(cached);
@@ -40,7 +71,7 @@ export function renderDiagram(source: string, control?: RenderControl): Promise<
     mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'neutral', htmlLabels: false, flowchart: { htmlLabels: false }, maxTextSize: LIMITS.diagram });
     const rendered = await mermaid.render(`omr_${key.slice(7, 31)}`, source);
     checkpoint(control);
-    const svg = sanitizeSvg(rendered.svg); diagrams.set(key, svg);
+    const svg = await preparedSvg(rendered.svg, control); diagrams.set(key, svg);
     while (diagrams.size > 100) diagrams.delete(diagrams.keys().next().value!);
     return svg;
   });
@@ -59,7 +90,7 @@ export async function populateAssets(host: HTMLElement, revision: Revision, read
     try {
       let bytes = await read(resource);
       if (resource.mediaType === 'image/svg+xml') {
-        const safe = sanitizeSvg(new TextDecoder('utf-8', { fatal: true }).decode(bytes)), root = new DOMParser().parseFromString(safe, 'image/svg+xml').documentElement;
+        const safe = await preparedSvg(new TextDecoder('utf-8', { fatal: true }).decode(bytes), control), root = new DOMParser().parseFromString(safe, 'image/svg+xml').documentElement;
         const width = Number.parseFloat(root.getAttribute('width') ?? '300'), height = Number.parseFloat(root.getAttribute('height') ?? '150');
         if (!Number.isFinite(width * height) || width <= 0 || height <= 0 || width * height > 25000000) throw new Error('SVG intrinsic dimensions exceed the supported limit.');
         bytes = new TextEncoder().encode(safe);
@@ -80,7 +111,8 @@ export async function populateAssets(host: HTMLElement, revision: Revision, read
 }
 export async function rasterizeSvg(svg: string, maxWidth = 1900, control?: RenderControl): Promise<string> {
   checkpoint(control);
-  const image = new Image(); image.src = dataUrl(new TextEncoder().encode(sanitizeSvg(svg)), 'image/svg+xml'); await bounded(image.decode(), control);
+  const safe = await preparedSvg(svg, control);
+  const image = new Image(); image.src = dataUrl(new TextEncoder().encode(safe), 'image/svg+xml'); await bounded(image.decode(), control);
   checkpoint(control);
   const ratio = maxWidth / image.naturalWidth, width = Math.max(1, Math.round(image.naturalWidth * ratio)), height = Math.max(1, Math.round(image.naturalHeight * ratio));
   if (!Number.isFinite(width * height) || width * height > 25000000) throw new Error('Diagram raster dimensions exceed the supported limit.');

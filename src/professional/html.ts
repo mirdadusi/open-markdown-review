@@ -1,9 +1,7 @@
 import { stableId } from './bytes';
 import type { Revision } from './types';
 
-export const SANITIZED_HTML_CAPABILITY = 'sanitized-html-v1' as const;
-export const SANITIZED_HTML_PROFILE = 'commonmark-gfm+sanitized-html-v1' as const;
-export const SANITIZED_HTML_VERSION = 'omr-sanitized-html-v1' as const;
+export { SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE, SANITIZED_HTML_VERSION } from './htmlProfile';
 
 export interface HtmlAttribute { name: string; value?: string }
 export type HtmlPart =
@@ -112,6 +110,18 @@ export function attribute(part: Extract<HtmlPart, { kind: 'tag' }>, name: string
 export function isAllowedHtmlTag(name: string): boolean { return allowed.has(name); }
 export function isAuditedExternalReference(reference: string): boolean { return auditedSchemes.test(reference); }
 
+/** A Windows UNC destination is display text, never an active URL or a review-relative path. */
+export function uncReferencePath(reference: string, markdownNormalized = false): string | undefined {
+  let value = reference;
+  if (markdownNormalized || /^(?:%5c){2}/i.test(value)) {
+    if (!/^(?:%5c|\\){2}/i.test(value)) return;
+    try { value = decodeURIComponent(value); } catch { return; }
+  }
+  // Require a server and share; exclude device namespaces and control/bidi characters.
+  if (/^\\\\(?!\.{1,2}\\)[^\\/:*?"<>|\s]+\\[^\\/:*?"<>|]+(?:\\[^\\/:*?"<>|]*)*$/u.test(value)
+    && !/[\p{Cc}\p{Cf}]/u.test(value)) return value;
+}
+
 function boundedInteger(value: string | undefined, maximum: number): number | undefined {
   if (!value || !/^\d{1,5}$/.test(value)) return undefined;
   const number = Number(value); return number >= 1 && number <= maximum ? number : undefined;
@@ -191,7 +201,12 @@ export function renderSanitizedHtml(fragment: string, options: HtmlRenderOptions
     if (part.name === 'a') {
       const hrefValue = attribute(part, 'href'), href = hrefValue === undefined ? undefined : options.decodeText(hrefValue);
       const titleValue = attribute(part, 'title'), title = titleValue === undefined ? undefined : options.decodeText(titleValue);
+      const unc = hrefValue && uncReferencePath(hrefValue);
       if (href && title?.trim().toLowerCase() === 'review:attach') attrs.push('href="#"', `data-attachment="${stableId('resource', `${options.document}\0${href}`)}"`);
+      else if (unc) {
+        const networkPath = escapeHtml(unc);
+        attrs.push('class="blocked-reference"', `data-network-path="${networkPath}"`, `title="External network path: ${networkPath}"`);
+      }
       else if (href && externalSchemes.test(href)) attrs.push(`href="${escapeHtml(href)}"`, 'rel="noopener noreferrer"', 'target="_blank"');
       else if (href && relativeReference.test(href)) attrs.push('href="#"', `data-document-link="${escapeHtml(href)}"`);
       else if (href) attrs.push('class="blocked-reference"', 'title="This external reference is retained in the audit record but is not opened by the review client."');

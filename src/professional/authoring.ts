@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { ActorRef, CAPABILITIES, CREATOR_THREAD_CONTROL, Event, LIMITS, Manifest, Policy, ProtocolError, REVIEWER_COMPLETION, REVIEWER_ROSTER, Revision, SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE, THREAD_ADDRESSING, VERSION } from './types';
+import { ActorRef, CAPABILITIES, COMMENT_EDITS, CREATOR_THREAD_CONTROL, Event, LIMITS, Manifest, Policy, ProtocolError, REVIEWER_COMPLETION, REVIEWER_ROSTER, Revision, SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE, THREAD_ADDRESSING, VERSION } from './types';
 import { parseReviewerEmails, reviewerRoster } from './reviewer';
 import { REVIEWER_INVITATIONS } from './types';
 import { decode, digest, encode, jsonBytes, newId, parseJson, safePath, stableId } from './bytes';
@@ -31,6 +31,12 @@ export interface AuthorRequest extends OperationControl {
   /** Ephemeral credential provider; never serialized into review evidence. */
   companionToken?: () => Promise<string | undefined>;
   slidev?: SlidevOptions;
+  /** Stage immutable evidence privately for a confirmation, without publishing. */
+  prepareOnly?: boolean;
+  /** Document revisions need not install or replace executable clients. */
+  preserveClient?: boolean;
+  /** Native orchestration revalidates its confirmed context at the publication boundary. */
+  beforePublish?: () => Promise<void>;
 }
 export interface AuthorResult { reviewId: string; revisionId?: string; store: string; browserClientPath: string; documentPaths: string[]; companionPaths?: string[]; outcome: 'planned' | 'completed' | 'already-completed' | 'review-created-client-failed'; error?: string }
 interface Plan {
@@ -136,6 +142,7 @@ async function capture(reference: string, document: string, request: AuthorReque
 /** The only source-to-review authoring service; GUI and CLI call this same contract. */
 export async function authorReview(request: AuthorRequest): Promise<AuthorResult> {
   checkpoint(request, 'Planning the selected Markdown scope');
+  if (request.preserveClient && request.parents === undefined) throw new ProtocolError('invalid', 'Preserving existing clients is only valid for an explicit document revision.');
   const selectedCompanions = companionTargets(request.companionTargets);
   if (selectedCompanions.length && request.parents !== undefined) throw new ProtocolError('invalid', 'Companion delivery is selected when creating a review, not when publishing a document revision.');
   const transient = transientReviewLocation(request.store);
@@ -157,7 +164,7 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
   const reviewers = request.reviewerEmails ? reviewerRoster(parseReviewerEmails(request.reviewerEmails)) : undefined;
   // Resolve every selected runtime before the first shared publication.
   const companions = request.dryRun ? undefined : await prepareCompanions({ targets: selectedCompanions, artifact: request.clientArtifact, journalRoot: request.journalRoot, catalogFile: request.companionCatalog, companionToken: request.companionToken, signal: request.signal, progress: request.progress });
-  const fingerprint = digest(jsonBytes({ source: path.resolve(request.source), store: path.resolve(request.store), title: request.title, documentPaths, include: request.include, includeDir: request.includeDir, exclude: request.exclude, rootDocument: request.rootDocument, actor: request.actor, parents: request.parents, policy: request.policy, resourceRoots: request.resourceRoots, slidev: request.slidev, reviewers, ...(companions ? { companionDelivery: { targets: companions.targets, catalogDigest: companions.catalogDigest } } : {}) }));
+  const fingerprint = digest(jsonBytes({ source: path.resolve(request.source), store: path.resolve(request.store), title: request.title, documentPaths, include: request.include, includeDir: request.includeDir, exclude: request.exclude, rootDocument: request.rootDocument, actor: request.actor, parents: request.parents, policy: request.policy, resourceRoots: request.resourceRoots, slidev: request.slidev, reviewers, ...(request.preserveClient ? { preserveClient: true } : {}), ...(companions ? { companionDelivery: { targets: companions.targets, catalogDigest: companions.catalogDigest } } : {}) }));
   if (request.dryRun) {
     validate('policy', request.policy ?? { schemaVersion: VERSION, kind: 'review-policy', mode: 'assertions-only' });
     // Reads local Markdown only. No capture, output directory, journal or network access.
@@ -185,7 +192,7 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
       let contents: string[] = []; try { contents = await readdir(request.store); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
       if (contents.length) throw new ProtocolError('invalid', 'A new review requires an empty or nonexistent target directory.');
       if (parents.length) throw new ProtocolError('invalid', 'A new review cannot have parents.');
-      const capabilities = [...CAPABILITIES, CREATOR_THREAD_CONTROL, THREAD_ADDRESSING, REVIEWER_COMPLETION, ...(reviewers?.length ? [REVIEWER_ROSTER, REVIEWER_INVITATIONS] : []), SANITIZED_HTML_CAPABILITY, ...(request.slidev ? [PRESENTATION_CAPABILITY] : [])];
+      const capabilities = [...CAPABILITIES, CREATOR_THREAD_CONTROL, THREAD_ADDRESSING, REVIEWER_COMPLETION, COMMENT_EDITS, ...(reviewers?.length ? [REVIEWER_ROSTER, REVIEWER_INVITATIONS] : []), SANITIZED_HTML_CAPABILITY, ...(request.slidev ? [PRESENTATION_CAPABILITY] : [])];
       manifest = started?.manifest ?? validate('manifest', { protocol: 'open-markdown-review', protocolVersion: VERSION, reviewId: newId('review'), title: request.title?.trim() || path.basename(request.source), createdAt: new Date().toISOString(), createdBy: request.actor, documents: documentPaths, eventDirectory: 'events', revisionDirectory: 'revisions', blobDirectory: 'blobs/sha256', exportDirectory: 'exports', eventLayout: 'sha256-flat-v1', identityProfile: 'self-asserted-v1', limitsProfile: 'pilot-v1', creationOperationId: request.operationId, capabilities, requiredCapabilities: capabilities, ...(reviewers?.length ? { reviewers } : {}), ...(request.slidev ? { extensions: [slidevDeclaration()] } : {}) });
     }
     checkpoint(request);
@@ -270,6 +277,8 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
     await staged.write('plan.json', jsonBytes(plan), false);
   }
   if (plan.publicationJournalVersion !== undefined && plan.publicationJournalVersion !== 'review-v1') throw new ProtocolError('unsupported', 'Unsupported authoring publication journal version. No shared files were published.');
+  if (request.prepareOnly) return { ...result, reviewId: plan.manifest.reviewId, revisionId: plan.revision.id };
+  await request.beforePublish?.();
   checkpoint(request, 'Publishing captured content; the revision is not yet visible');
   const publishedBlobs = new Set<string>();
   if (request.parents?.length) {
@@ -282,6 +291,8 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
   if (old && digest(old) !== digest(jsonBytes(plan.manifest))) throw new ProtocolError('integrity', 'Target contains another manifest.');
   if (!old) await publish(store, `${plan.manifest.creationOperationId}_manifest`, evidence('manifest.json', jsonBytes(plan.manifest), 'application/json'), jsonBytes(plan.manifest));
   for (const dir of ['events', 'revisions', 'exports']) await mkdir(path.join(request.store, dir), { recursive: true });
+  let publishedContent = 0;
+  checkpoint(request, `Verifying and publishing captured files (0/${plan.blobs.length})…`);
   await mapWithConcurrency(plan.blobs, 4, async blob => {
     checkpoint(request); const bytes = await staged.read(blob.path, LIMITS.content); checkpoint(request);
     // A reused folder is not the same review. Keep content acknowledgements shared
@@ -292,6 +303,7 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
     // Referenced evidence also stays protected when an older review first uses
     // scoped keys, or when this client has no acknowledgement for a received copy.
     await publish(store, operation, evidence(blob.path, bytes, blob.mediaType), bytes, publishedBlobs.has(blob.path));
+    checkpoint(request, `Verifying and publishing captured files (${++publishedContent}/${plan.blobs.length})…`);
   });
   checkpoint(request);
   const revisionBytes = jsonBytes(plan.revision); await publish(store, `${request.operationId}_descriptor`, evidence(`revisions/${plan.revision.id}.json`, revisionBytes, 'application/json'), revisionBytes);
@@ -304,11 +316,34 @@ export async function authorReview(request: AuthorRequest): Promise<AuthorResult
   Object.assign(result, { reviewId: plan.manifest.reviewId, revisionId: plan.revision.id, outcome: 'completed' });
   result.browserClientPath = path.join(store.root, clientFilename(plan.manifest.title, plan.manifest.reviewId));
   try {
-    result.browserClientPath = await installClient(store, request.clientArtifact);
+    if (!request.preserveClient) result.browserClientPath = await installClient(store, request.clientArtifact);
     if (companions) result.companionPaths = await installCompanions(store, companions, request.progress);
   }
   catch (error) { result.outcome = 'review-created-client-failed'; result.error = String(error); }
   return result;
+}
+/** Read only a native author's private capture; never expose this through participant RPC. */
+export async function preparedAuthoring(request: AuthorRequest): Promise<{ revision: Revision; content(item: { blobPath: string; byteLength: number; digest: string }): Promise<Uint8Array> }> {
+  const store = new NativeStorage(request.store, request.journalRoot);
+  const staged = new NativeStorage(path.join(request.journalRoot, 'authoring', digest(`${store.identity}\0${request.operationId}`).slice(7)), request.journalRoot);
+  const plan = parseJson<Plan>(await staged.read('plan.json', LIMITS.revision * 2), LIMITS.revision * 2);
+  const revision = validate('revision', plan.revision);
+  return { revision, content: async item => {
+    const bytes = await staged.read(item.blobPath, item.byteLength);
+    if (digest(bytes) !== item.digest) throw new ProtocolError('integrity', 'Private capture changed after preparation.');
+    return bytes;
+  } };
+}
+/** Local resources are checked again; remote/data evidence stays exactly as previewed. */
+export async function checkPreparedResources(request: AuthorRequest): Promise<void> {
+  const prepared = await preparedAuthoring(request);
+  const resources = prepared.revision.resources.filter(resource => resource.sourceKind === 'workspace' || resource.sourceKind === 'granted-root');
+  let checked = 0; checkpoint(request, `Rechecking local images and attachments (0/${resources.length})…`);
+  await mapWithConcurrency(resources, 4, async resource => {
+    checkpoint(request);
+    if (digest((await capture(resource.originalReference, resource.document, request)).bytes) !== resource.digest) throw new ProtocolError('changed', 'A local resource changed after preparation. Cancel and prepare a fresh diff.');
+    checkpoint(request, `Rechecking local images and attachments (${++checked}/${resources.length})…`);
+  });
 }
 export async function installClient(store: NativeStorage, artifact: string): Promise<string> {
   const descriptor = await manifestForClient(store), bytes = bindClient(await readFile(artifact), descriptor.manifest, descriptor.bytes);

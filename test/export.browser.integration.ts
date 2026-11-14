@@ -12,6 +12,7 @@ import { storageResponse } from '../src/professional/bridge';
 import { ReviewSession } from '../src/professional/session';
 import { pointAt, jsonBytes } from '../src/professional/bytes';
 import { publishBlob } from '../src/professional/storage';
+import { embeddedPng, staticRasterSvg } from './svg.fixture';
 
 test('real browser SVG sanitizer permits legacy declarations but rejects active markup and external/entity payloads', { timeout: 45000 }, async () => {
   const bundle = await build({ entryPoints: ['src/professional/assets.ts'], bundle: true, platform: 'browser', format: 'iife', globalName: 'SvgTest', write: false });
@@ -20,8 +21,9 @@ test('real browser SVG sanitizer permits legacy declarations but rejects active 
     const page = await browser.newPage(), requests: string[] = [];
     await page.route(/^https?:\/\//, route => { requests.push(route.request().url()); return route.abort(); });
     await page.setContent('<html><body></body></html>'); await page.addScriptTag({ content: bundle.outputFiles[0].text });
-    const result = await page.evaluate(() => {
-      const sanitize = (window as unknown as { SvgTest: { sanitizeSvg(s: string): string } }).SvgTest.sanitizeSvg;
+    const result = await page.evaluate(async ({ embeddedPng, fixture }) => {
+      const api = (window as unknown as { SvgTest: { sanitizeSvg(s: string): string; rasterizeSvg(s: string, maxWidth?: number): Promise<string> } }).SvgTest;
+      const sanitize = api.sanitizeSvg;
       const legacy = '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">';
       const safe = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="#2458a6"/></svg>';
       const bad = [
@@ -30,11 +32,40 @@ test('real browser SVG sanitizer permits legacy declarations but rejects active 
         safe.replace('<rect', '<style>rect{fill:url(https://attacker.invalid/fill)}</style><rect'),
         '<!DOCTYPE svg [<!ENTITY x SYSTEM "file:///private/secret">]>' + safe,
         legacy.replace('www.w3.org', 'attacker.invalid') + safe,
+        safe.replace('<rect', '<image href="data:image/svg+xml;base64,PHN2Zy8+"/><rect'),
+        safe.replace('<rect', '<a href="data:image/png;base64,' + embeddedPng + '"/><rect'),
+        safe.replace('<rect', '<image href="data:image/jpeg;base64,' + embeddedPng + '"/><rect'),
+        safe.replace('<rect', '<image href="data:image/png;base64,AAAA!"/><rect'),
+        safe.replace('<rect', '<image href="assets/other.png"/><rect'),
+        safe.replace('<rect', '<rect style="fill:u\\72l(https://attacker.invalid/fill)"/><rect'),
+        safe.replace('<rect', '<g xml:base="https://attacker.invalid/"><use href="#local"/></g><rect'),
       ];
-      return { normalized: sanitize(legacy + safe), rejected: bad.map(value => { try { sanitize(legacy + value); return false; } catch { return true; } }) };
-    });
+      const normalized = sanitize(fixture), decoded = new Image();
+      decoded.src = 'data:image/svg+xml;base64,' + btoa(normalized); await decoded.decode();
+      const fragments = ["url('#local')", 'url(&quot;#local&quot;)', 'url( #local )'].map(value => { try { sanitize(safe.replace('fill="#2458a6"', `fill="${value}"`)); return true; } catch { return false; } });
+      const huge = Uint8Array.from(atob(embeddedPng), c => c.charCodeAt(0)); const header = new DataView(huge.buffer); header.setUint32(16, 4000); header.setUint32(20, 3200);
+      const hugeUri = 'data:image/png;base64,' + btoa(String.fromCharCode(...huge));
+      const aggregate = safe.replace('<rect', `<image href="${hugeUri}"/><image href="${hugeUri}"/><rect`);
+      let aggregateRejected = false; try { sanitize(aggregate); } catch (error) { aggregateRejected = /aggregate/.test(String(error)); }
+      let diagnostic = ''; try { sanitize(safe.replace('<rect', '<image href="assets/other.png"/><rect')); } catch (error) { diagnostic = String(error); }
+      const truncatedUri = 'data:image/png;base64,' + btoa(atob(embeddedPng).slice(0, 24));
+      let corruptRejected = false; try { await api.rasterizeSvg(safe.replace('<rect', `<image href="${truncatedUri}"/><rect`)); } catch (error) { corruptRejected = /Cannot decode SVG embedded raster/.test(String(error)); }
+      const rasterized = await api.rasterizeSvg(fixture, 240);
+      const canvas = document.createElement('canvas'); canvas.width = 2; canvas.height = 2;
+      canvas.getContext('2d')!.fillRect(0, 0, 2, 2);
+      const rasterFormats: string[] = [];
+      for (const uri of [canvas.toDataURL('image/jpeg'), canvas.toDataURL('image/webp'), 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7']) {
+        const output = await api.rasterizeSvg(safe.replace('<rect', `<image href="${uri}"/><rect`), 20);
+        if (output.startsWith('data:image/png;base64,')) rasterFormats.push(uri.slice(5, uri.indexOf(';')));
+      }
+      return { normalized: sanitize(legacy + safe), rejected: bad.map(value => { try { sanitize(value); return false; } catch { return true; } }), embeddedSize: [decoded.naturalWidth, decoded.naturalHeight], fragments, aggregateRejected, diagnostic, corruptRejected, rasterized: rasterized.startsWith('data:image/png;base64,'), rasterFormats };
+    }, { embeddedPng, fixture: staticRasterSvg() });
     assert.ok(!result.normalized.includes('DOCTYPE')); assert.ok(result.normalized.includes('<rect'));
     assert.ok(result.rejected.every(Boolean)); assert.deepEqual(requests, []);
+    assert.deepEqual(result.embeddedSize, [240, 80]); assert.ok(result.fragments.every(Boolean)); assert.equal(result.aggregateRejected, true);
+    assert.match(result.diagnostic, /<image> attribute href/);
+    assert.equal(result.corruptRejected, true); assert.equal(result.rasterized, true);
+    assert.deepEqual(result.rasterFormats, ['image/jpeg', 'image/webp', 'image/gif']);
   } finally { await browser.close(); }
 });
 
@@ -70,7 +101,7 @@ test('archival PDF: printable wide/nested tables, natural-size images, Unicode, 
   const richMarkdown = markdown + '\n<table><thead><tr><th rowspan="2">Merged proof</th><th colspan="2">Group header</th></tr><tr><th>First</th><th>Second</th></tr></thead><tbody><tr><td>Row label</td><td>Span value A</td><td>Span value B</td></tr></tbody></table>\n\n```mermaid\nflowchart LR\n  A[Žaneta] --> B[Review]\n```\n';
   await writeFile(path.join(source, 'index.md'), richMarkdown);
   await writeFile(path.join(source, 'second.md'), `# Second document\n\n## Risky table\n\n| Parameter | MF | PN | Type | Default | Short meaning |\n| --- | --- | --- | --- | --- | --- |\n${Array.from({ length: 70 }, (_, i) => `| Parameter_${i}_${identifier} | 32768 | true | UInt32 | 2880 | This column contains a substantial human-readable explanation, ${unicode}. |`).join('\n')}\n\n<a id="details"></a>\n\n${unicode}\n`);
-  await writeFile(path.join(source, 'small.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16"><rect width="24" height="16" fill="#2458a6"/></svg>');
+  await writeFile(path.join(source, 'small.svg'), staticRasterSvg(24, 16));
   await writeFile(path.join(source, 'large.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="800"><rect width="1600" height="800" fill="#3d8260"/><text x="30" y="100" font-size="60">Frozen diagram</text></svg>');
   const author = { id: 'author@example.com', displayName: 'Žaneta - initiator' };
   const created = await authorReview({ source, store: root, rootDocument: 'index.md', title: 'PDF quality - Příliš žluťoučký', actor: author, reviewerEmails: ['finished@example.com', 'ongoing@example.com', 'reopened@example.com', 'waiting@example.com'], operationId: 'pdf_layout_fixture', clientArtifact: path.resolve('dist/OpenMarkdownReview.html'), journalRoot });
@@ -81,13 +112,14 @@ test('archival PDF: printable wide/nested tables, natural-size images, Unicode, 
   const rootComment = session.makeEvent(ongoing, { type: 'comment.created', threadId, commentId: 'comment_pdf_layout', anchor: { document: 'index.md', documentDigest: session.revision!.documents.find(d => d.path === 'index.md')!.digest, range: { start: pointAt(markdown, start), end: pointAt(markdown, end) }, quote: { exact: unicode, prefix: '', suffix: '' }, target: { kind: 'text' } }, body: { format: 'markdown', text: `CHALLENGE_VISIBLE_AT_FRONT: Check the symbols ${unicode}` } });
   await session.save(ongoing, rootComment);
   await session.save(finished, session.makeEvent(finished, { type: 'comment.replied', threadId, commentId: 'reply_pdf_layout', inReplyTo: 'comment_pdf_layout', body: { format: 'markdown', text: 'RESPONSE_VISIBLE_AT_FRONT: Příliš → response ␣ ✓' } }));
-  await session.save(ongoing, session.makeEvent(ongoing, { type: 'comment.replied', threadId, commentId: 'nested_pdf_layout', inReplyTo: 'reply_pdf_layout', body: { format: 'markdown', text: 'NESTED_RESPONSE: Reply to the response.' } }));
+  await session.save(ongoing, session.makeEvent(ongoing, { type: 'comment.replied', threadId, commentId: 'nested_pdf_layout', inReplyTo: 'reply_pdf_layout', body: { format: 'markdown', text: 'NESTED_RESPONSE: Keep the literal <element/> example.' } }));
   if (rootComment.type !== 'comment.created') assert.fail();
   await session.save(ongoing, session.makeEvent(ongoing, { type: 'suggestion.created', suggestionId: 'strike_pdf_layout', anchor: rootComment.anchor, rationale: { format: 'markdown', text: 'SUGGESTED_STRIKEOUT: Remove this passage.' }, operation: { kind: 'delete' } }));
   const image = session.revision!.resources.find(r => r.originalReference === 'small.svg') ?? session.revision!.resources[0];
   const imageStart = richMarkdown.indexOf('![Small icon]'), imageQuote = '![Small icon](small.svg)';
   await session.save(ongoing, session.makeEvent(ongoing, { type: 'comment.created', threadId: 'image_pdf_thread', commentId: 'image_pdf_comment', anchor: { document: 'index.md', documentDigest: rootComment.anchor.documentDigest, range: { start: pointAt(richMarkdown, imageStart), end: pointAt(richMarkdown, imageStart + imageQuote.length) }, quote: { exact: imageQuote }, target: { kind: 'image', resourceId: image.id } }, body: { format: 'markdown', text: 'IMAGE_COMMENT: Check the icon.' } }));
-  await session.save(session.context(author), session.makeEvent(session.context(author), { type: 'thread.resolved', threadId, statusPredecessors: [], note: 'STATE_COMPLETED: Checked by the initiator.' }));
+  const resolution = session.makeEvent(session.context(author), { type: 'thread.resolved', threadId, statusPredecessors: [], note: 'STATE_COMPLETED: Checked by the initiator.' });
+  await session.save(session.context(author), resolution);
   const finishedVerification = await publishBlob(store, 'verify_pdf_finished', jsonBytes((await session.audit(finished)).inventory), 'application/json');
   await session.save(finished, session.makeEvent(finished, { type: 'review.completed', completionPredecessors: [], verification: finishedVerification }));
   const reopenedVerification = await publishBlob(store, 'verify_pdf_reopened', jsonBytes((await session.audit(reopened)).inventory), 'application/json');
@@ -101,8 +133,14 @@ test('archival PDF: printable wide/nested tables, natural-size images, Unicode, 
     await page.goto(pathToFileURL(created.browserClientPath).href); await page.waitForSelector('#document .diagram svg');
     const previewDiagramRatio = await page.locator('#document .diagram svg').evaluate((svg: SVGSVGElement) => svg.viewBox.baseVal.width / svg.viewBox.baseVal.height);
     const result = await page.evaluate(async revision => window.omrAutomation!.export({ id: 'author@example.com' }, revision!, 'pdf_layout_export'), created.revisionId) as { pdfPath: string };
-    const inspect = await (new Function('specifier', 'return import(specifier)')(pathToFileURL(path.resolve('scripts/inspect-pdf.mjs')).href) as Promise<{ inspectPdf(bytes: Uint8Array): Promise<{ pages: Array<{ number: number; text: string; width: number; height: number }>; annotations: Array<{ subtype: string; contents: string; author: string; inReplyTo?: string; hasPopup?: boolean }>; metadata: object; attachments: object | null; violations: unknown[]; links: Array<{ destination?: string; targetPage?: number; url?: string }>; images: Array<{ left: number; right: number; top: number; bottom: number }> }> }>);
+    const inspect = await (new Function('specifier', 'return import(specifier)')(pathToFileURL(path.resolve('scripts/inspect-pdf.mjs')).href) as Promise<{ inspectPdf(bytes: Uint8Array): Promise<{ pages: Array<{ number: number; text: string; width: number; height: number }>; annotations: Array<{ id: string; page: number; subtype: string; contents: string; author: string; inReplyTo?: string; hasPopup?: boolean }>; commentStates: Array<{ page: number; state: string; stateModel: string; contents: string; author: string; inReplyTo: string }>; metadata: object; attachments: object | null; violations: unknown[]; links: Array<{ destination?: string; targetPage?: number; url?: string }>; images: Array<{ left: number; right: number; top: number; bottom: number }> }> }>);
     const inspected = await inspect.inspectPdf(await readFile(path.join(root, result.pdfPath)));
+    const exportInventory = JSON.parse(await readFile(path.join(root, (result as unknown as { inventoryPath: string }).inventoryPath), 'utf8'));
+    assert.match(exportInventory.renderer.sanitizerVersion, /omr-svg-static-3/);
+    assert.match(exportInventory.renderer.pdfEngine, /omr-review-annotations-v3/);
+    assert.ok(exportInventory.representedEventIds.includes(resolution.id), 'Removing workflow records from comments does not remove audit evidence.');
+    const frozenSvg = session.revision!.resources.find(resource => resource.originalReference === 'small.svg')!;
+    assert.equal(await readFile(path.join(root, frozenSvg.blobPath), 'utf8'), staticRasterSvg(24, 16), 'Rendering/export never normalizes the authoritative SVG bytes.');
     assert.equal((await readFile(path.join(root, result.pdfPath))).subarray(0, 8).toString(), '%PDF-1.7', 'The declared PDF version supports native reply/state fields.');
     assert.deepEqual(inspected.violations, [], 'Every page, not selected screenshots, must fit the printable area with valid links and glyphs.');
     const participants = inspected.pages.find(p => p.text.includes('Reviewer completion and participation'))!;
@@ -111,11 +149,15 @@ test('archival PDF: printable wide/nested tables, natural-size images, Unicode, 
     const reply = inspected.annotations.find(a => a.contents.includes('RESPONSE_VISIBLE_AT_FRONT'))!;
     assert.ok(comment && reply, 'Comments and responses exist as native PDF annotations.');
     assert.equal(comment.subtype, 'Highlight'); assert.equal(reply.subtype, 'Text');
+    assert.equal(comment.contents, rootComment.body.text);
+    assert.equal(reply.contents, 'RESPONSE_VISIBLE_AT_FRONT: Příliš → response ␣ ✓');
+    assert.deepEqual(inspected.commentStates.map(s => [s.page, s.inReplyTo, s.stateModel, s.state, s.author, s.contents]),
+      [[comment.page, comment.id, 'Review', 'Completed', author.displayName, '']]);
     assert.ok(inspected.annotations.some(a => a.subtype === 'StrikeOut' && a.contents.includes('SUGGESTED_STRIKEOUT')));
     assert.ok(inspected.annotations.some(a => a.subtype === 'Square' && a.contents.includes('IMAGE_COMMENT')));
-    const resolvedState = inspected.annotations.find(a => a.contents.includes('STATE_COMPLETED')) as unknown as { state: string; stateModel: string };
-    assert.equal(resolvedState?.state, 'Completed'); assert.equal(resolvedState.stateModel, 'Review');
+    assert.ok(!inspected.annotations.some(a => /STATE_COMPLETED|Challenged text:|Root event:|In reply to:|Proposed change:/.test(a.contents)));
     const nested = inspected.annotations.find(a => a.contents.includes('NESTED_RESPONSE'))!;
+    assert.equal(nested.contents, 'NESTED_RESPONSE: Keep the literal <element/> example.', 'User-authored markup remains literal text.');
     assert.ok(nested?.inReplyTo && nested.inReplyTo !== reply.inReplyTo, 'Nested PDF replies preserve their actual parent.');
     assert.ok(reply.inReplyTo); assert.equal(comment.hasPopup, true);
     assert.ok(!inspected.pages.some(p => p.text.includes('CHALLENGE_VISIBLE_AT_FRONT') || p.text.includes('RESPONSE_VISIBLE_AT_FRONT')), 'Comments are not separate printable pages.');
@@ -134,7 +176,7 @@ test('archival PDF: printable wide/nested tables, natural-size images, Unicode, 
     const clean = await page.evaluate(async revision => window.omrAutomation!.export({ id: 'author@example.com' }, revision!, 'pdf_clean_export', 'clean'), created.revisionId) as { pdfPath: string; event?: unknown; inventoryPath?: unknown };
     assert.equal(clean.event, undefined); assert.equal(clean.inventoryPath, undefined);
     const cleanPdf = await inspect.inspectPdf(await readFile(path.join(root, clean.pdfPath)));
-    assert.deepEqual(cleanPdf.violations, []); assert.equal(cleanPdf.annotations.length, 0); assert.equal(cleanPdf.attachments, null);
+    assert.deepEqual(cleanPdf.violations, []); assert.equal(cleanPdf.annotations.length, 0); assert.equal(cleanPdf.commentStates.length, 0); assert.equal(cleanPdf.attachments, null);
     assert.equal(cleanPdf.images.length, inspected.images.length);
     const cleanText = cleanPdf.pages.map(p => p.text).join('\n') + JSON.stringify(cleanPdf.metadata);
     for (const hidden of ['author@example.com', 'finished@example.com', 'ongoing@example.com', 'CHALLENGE_VISIBLE_AT_FRONT', 'RESPONSE_VISIBLE_AT_FRONT', 'Offline review archive', 'Reviewer completion', created.reviewId, created.revisionId!]) assert.ok(!cleanText.includes(hidden), `Clean PDF leaks review information: ${hidden}`);

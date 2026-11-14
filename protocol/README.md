@@ -4,6 +4,13 @@ This document defines the portable, serverless protocol. The key words MUST, MUS
 
 This remains the normative contract for existing 0.4 packages. Protocol 0.5 is preserved in the [0.5 contract](../spec/PROTOCOL-0.5.md). The current [core 0.6 contract](../spec/PROTOCOL-0.6.md) and [portable product profile](../spec/PORTABLE-REVIEW-PROFILE-0.6.md) are distinct layers; the [professional client specification](../spec/PROFESSIONAL-V1.md) defines additional acceptance requirements. Later versions do not retroactively change this protocol.
 
+The 0.6 development contract also defines optional required semantics
+`comment-edits-v1`: author-only immutable wording corrections, causal edit
+conflicts and retained history. It is declared by new packages, not retrofitted
+into an existing manifest. The shared client additionally supports an explicit
+PDF snapshot selector; this is presentation over the existing revision-bound
+export protocol. See [the usage and compatibility guide](../docs/COMMENTS-AND-EXPORT-SNAPSHOTS.md).
+
 ## Package layout
 
 The review package is a directory, not a required directory name. `.review` is the conventional default, but `.architecture-review`, `safety-approval`, or any other filesystem-safe name is equivalent. It MAY be inside the Markdown source workspace or at a separate local/mounted location.
@@ -269,6 +276,15 @@ A live client SHOULD combine filesystem notifications with a bounded polling fal
 Plain local filesystems and mounted network shares require no provider-specific integration. For Git storage, clients SHOULD ensure that line-ending or clean/smudge filters do not alter package bytes. The reference client creates a package-local `.gitattributes` rule that marks review contents `-text`; repositories SHOULD commit it with the complete review package.
 
 ## Audit export
+
+The optional [frozen document-order profile](profiles/document-order-v1.md)
+aligns chapter-aware reading, navigation and PDF presentation without changing
+the canonical inventory or any existing review evidence.
+
+The optional [PDF presentation profile](profiles/pdf-templates-v1.md) binds
+non-default template/metadata inputs to an export without changing reviewed
+content or the core event vocabulary. Default layout and the clean-document
+projection remain separate from presentation branding.
 
 A conforming audit PDF SHOULD contain the frozen documents, captured images, rendered Mermaid, tables, comments, replies, comment decisions and conflicts, suggested edits and their lifecycle, approvals, rejections, document/resource digests, external references, renderer versions, and included-event digests.
 

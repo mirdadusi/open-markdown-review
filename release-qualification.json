@@ -1,14 +1,14 @@
 {
   "schemaVersion": "omr-release-qualification/1",
-  "version": "0.6.5",
+  "version": "0.7.0",
   "professionalPilotApproved": false,
   "statusReport": "spec/IMPLEMENTATION-STATUS.md",
   "publication": {
     "channel": "standard",
     "approved": true,
     "approvedBy": "user",
-    "approvedOn": "2026-10-26",
-    "note": "The user authorized public upstream 0.6.5, its GitHub release, repository documentation and Marketplace publication on 26 October 2026. Publish complete portable and Windows x64 VSIX packages and their checksums, with all three Go companions inside each extension update and no standalone companion assets. Preserve MIT-only licensing, existing public history and earlier releases, and exclude private endpoints, organization CI configuration and real review data. Record exact-source/artifact qualification separately; publication is not professional-pilot approval. The website receives a new article, not an edit to the earlier article."
+    "approvedOn": "2026-11-14",
+    "note": "The maintainer authorized public GitHub and Marketplace publication of 0.7.0 with the generic PDF template only. Keep MIT licensing, the current public extension identity and all three offline Go companions in each of the two VSIX variants. Exclude private presets, configurations and review data. Publication is not professional-pilot approval."
   },
   "blockingGates": [
     "Managed-browser/endpoint qualification and production signing; Go promotion requires fresh exact-artifact Windows/Linux native CI, not historical Node qualification",

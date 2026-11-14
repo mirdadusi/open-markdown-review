@@ -7,13 +7,14 @@ import { NativeStorage } from '../src/professional/nativeStorage';
 import { ReviewSession } from '../src/professional/session';
 import { decode, pointAt } from '../src/professional/bytes';
 import { CompanionTarget } from '../src/professional/companionTargets';
+import { staticRasterSvg } from './svg.fixture';
 
 export async function companionFixture(options: { companionTargets?: CompanionTarget[] } = {}) {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'omr-companion-')), source = path.join(temporary, 'source'), root = path.join(temporary, 'review');
   await mkdir(source);
   await writeFile(path.join(source, 'index.md'), '# Companion review\n\nFrozen paragraph for collaborative review.\n\n[Second document](second.md)\n\n| Requirement | State |\n|---|---|\n| Offline review | Required |\n\n![Frozen diagram](image.svg)\n\n```mermaid\nflowchart LR\n A[Read] --> B[Review]\n```\n');
   await writeFile(path.join(source, 'second.md'), '# Second document\n\nReferences are frozen.\n');
-  await writeFile(path.join(source, 'image.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><rect width="80" height="40" fill="#2458a6"/></svg>');
+  await writeFile(path.join(source, 'image.svg'), staticRasterSvg(80, 40));
   const artifact = process.env.OMR_TEST_CLIENT_ARTIFACT ?? path.resolve('dist/OpenMarkdownReview.html'), creator = { id: 'creator@example.com', displayName: 'Review Creator' };
   const created = await authorReview({ source, store: root, rootDocument: 'index.md', title: 'Companion fixture', actor: creator, reviewerEmails: ['alex@example.com', 'sam@example.com'], operationId: 'companion_fixture', journalRoot: path.join(temporary, 'author-journal'), clientArtifact: artifact, companionTargets: options.companionTargets });
   if (created.outcome !== 'completed') throw new Error(created.error ?? 'Companion fixture creation failed.');

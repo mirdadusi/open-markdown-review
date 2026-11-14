@@ -3,11 +3,11 @@ import { constants } from 'node:fs';
 import { lstat, mkdir, open, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { mapWithConcurrency } from '../protocol/concurrency';
-import { digest } from './bytes';
 import { contained, NativeStorage } from './nativeStorage';
 import { ReviewSession } from './session';
-import { LIMITS, ProtocolError } from './types';
+import { ProtocolError } from './types';
 import { COMPANION_ARTIFACTS } from './clientArtifacts';
+export { inspectSourceBinding, SourceBindingReport } from './sourceBinding';
 
 const PACKAGE_DIRECTORIES = new Set(['events', 'revisions', 'blobs', 'exports', 'client-backups']);
 const PACKAGE_FILES = new Set(['manifest.json', '.gitattributes', 'OpenMarkdownReview.html', '.DS_Store', 'desktop.ini', 'Thumbs.db', ...COMPANION_ARTIFACTS]);
@@ -30,14 +30,6 @@ export interface PackageInventory {
   files: PackageFile[];
   byteLength: number;
   fingerprint: string;
-}
-
-export interface SourceBindingReport {
-  sourceRoot: string;
-  documents: number;
-  exact: string[];
-  changed: string[];
-  missing: string[];
 }
 
 export interface RelocationResult {
@@ -172,28 +164,4 @@ export async function relocateReviewPackage(sourceInput: string, destinationInpu
   if (sourceAfter.reviewId !== before.reviewId || sourceAfter.fingerprint !== before.fingerprint || serial(sourceAfter) !== serial(before)) throw new ProtocolError('changed', 'The source review changed during publication. The destination was not activated; stop all writers and publish again to a new empty folder.');
   if (destinationAfter.reviewId !== before.reviewId || destinationAfter.fingerprint !== before.fingerprint || serial(destinationAfter) !== serial(before)) throw new ProtocolError('integrity', 'The destination differs from the source package and was not activated.');
   return { sourceRoot: before.root, destinationRoot: destinationAfter.root, reviewId: before.reviewId, files: before.files.length, directories: before.directories.length, byteLength: before.byteLength, fingerprint: before.fingerprint };
-}
-
-/** Inspect a private source binding without writing native paths into review evidence. */
-export async function inspectSourceBinding(reviewRoot: string, sourceInput: string, journalRoot: string): Promise<SourceBindingReport> {
-  const sourceRoot = await realpath(sourceInput), session = new ReviewSession(new NativeStorage(reviewRoot, journalRoot));
-  await session.open(); await session.refresh(true);
-  const heads = session.heads;
-  if (!heads.length) throw new ProtocolError('missing', 'The review package is incomplete: it has no verified revision publication to bind. Preserve it for inspection or create a new review in a different empty folder.');
-  const expected = new Map<string, Set<string>>();
-  for (const revision of heads) for (const document of revision.documents) {
-    const digests = expected.get(document.path) ?? new Set<string>(); digests.add(document.digest); expected.set(document.path, digests);
-  }
-  const storage = new NativeStorage(sourceRoot, journalRoot), exact: string[] = [], changed: string[] = [], missing: string[] = [];
-  await mapWithConcurrency([...expected.entries()], 4, async ([document, digests]) => {
-    try {
-      const bytes = await storage.read(document, LIMITS.markdown);
-      (digests.has(digest(bytes)) ? exact : changed).push(document);
-    } catch (error) {
-      if (error instanceof ProtocolError && error.code === 'missing') missing.push(document);
-      else throw error;
-    }
-  });
-  exact.sort(); changed.sort(); missing.sort();
-  return { sourceRoot, documents: expected.size, exact, changed, missing };
 }

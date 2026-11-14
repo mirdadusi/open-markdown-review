@@ -51,6 +51,7 @@ function schemaSet(version, addressing) {
     reviewWithdrawn: variant('review.withdrawn', { reason: str, stancePredecessors: { ...ids, minItems: 1 }, verification: { $ref: '#/$defs/stored' } }, ['reason', 'stancePredecessors', 'verification'])
   };
   if (addressing) Object.assign(added, {
+    commentEdited: variant('comment.edited', { threadId: id, commentId: id, body: { $ref: '#/$defs/body' }, editPredecessors: ids }, ['threadId', 'commentId', 'body', 'editPredecessors']),
     reviewerInvited: variant('reviewer.invited', { reviewer: obj({ id, email: { type: 'string', format: 'email', maxLength: 254 } }) }, ['reviewer']),
     reviewCompleted: variant('review.completed', { completionPredecessors: ids, verification: { $ref: '#/$defs/stored' }, note: str }, ['completionPredecessors', 'verification']),
     reviewReopened: variant('review.reopened', { completionPredecessors: { ...ids, minItems: 1 }, note: str }, ['completionPredecessors']),
@@ -61,7 +62,7 @@ function schemaSet(version, addressing) {
     event.$defs[name] = schema;
     event.oneOf.push({ $ref: `#/$defs/${name}` });
   }
-  event.$defs.base.properties.type.enum.push('thread.reopened', ...(addressing ? ['thread.addressed', 'thread.verification.recorded', 'review.completed', 'review.reopened', 'reviewer.invited'] : []), 'review.withdrawn');
+  event.$defs.base.properties.type.enum.push('thread.reopened', ...(addressing ? ['comment.edited', 'thread.addressed', 'thread.verification.recorded', 'review.completed', 'review.reopened', 'reviewer.invited'] : []), 'review.withdrawn');
   event.$defs.exportCreated = variant('export.created', { exportId: id, format: { const: 'application/pdf' }, pdf: file, inventory: file, renderer }, ['exportId', 'format', 'pdf', 'inventory', 'renderer']);
   Object.assign(manifest.properties, {
     protocolVersion: { const: version }, eventDirectory: { const: 'events' }, revisionDirectory: { const: 'revisions' }, blobDirectory: { const: 'blobs/sha256' }, exportDirectory: { const: 'exports' },

@@ -16,7 +16,7 @@ if (mode === 'generate') {
   await mkdir(path.join(root, 'dist/companion-release'), { recursive: true });
   for (const [target, filename] of targets) {
     const base = path.join(root, 'dist/companion-go', target), executable=target==='win32-x64'?'StartReview.exe':'StartReview', build = JSON.parse(await readFile(path.join(base, executable+'.build.json'), 'utf8'));
-    if (build.runtime!=='go'||build.testFaults!==false||build.toolchain!=='go1.27.3'||build.version !== pkg.version || build.inputs.toolbox !== catalog.toolboxDigest || build.inputs.core !== catalog.companionDigest || build.target !== target) throw new Error(`Rebuild ${target}: its Go production receipt is stale for this client.`);
+    if (build.runtime!=='go'||build.testFaults!==false||build.toolchain!=='go1.27.4'||build.version !== pkg.version || build.inputs.toolbox !== catalog.toolboxDigest || build.inputs.core !== catalog.companionDigest || build.target !== target) throw new Error(`Rebuild ${target}: its Go production receipt is stale for this client.`);
     const item = { target, build };
     for (const [kind, source, name] of [['executable', path.join(base, executable), filename], ['notices', path.join(root,'clients/companion-go/assets/THIRD-PARTY-NOTICES.txt'), `${filename}.NOTICES.txt`]]) {
       const from = source, bytes = await readFile(from), digest = hash(bytes);

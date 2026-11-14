@@ -46,6 +46,9 @@
       "$ref": "#/$defs/reviewWithdrawn"
     },
     {
+      "$ref": "#/$defs/commentEdited"
+    },
+    {
       "$ref": "#/$defs/reviewerInvited"
     },
     {
@@ -124,6 +127,7 @@
             "suggestion.applied",
             "export.created",
             "thread.reopened",
+            "comment.edited",
             "thread.addressed",
             "thread.verification.recorded",
             "review.completed",
@@ -1080,6 +1084,51 @@
             "reason",
             "stancePredecessors",
             "verification"
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "commentEdited": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "comment.edited"
+            },
+            "threadId": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            },
+            "commentId": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            },
+            "body": {
+              "$ref": "#/$defs/body"
+            },
+            "editPredecessors": {
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 10000,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_-]{1,128}$"
+              }
+            }
+          },
+          "required": [
+            "threadId",
+            "commentId",
+            "body",
+            "editPredecessors"
           ]
         }
       ],

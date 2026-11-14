@@ -1,9 +1,12 @@
+import { confirmPdfOptions } from './pdfExport.helpers';
 import test from 'node:test';
 import './slidev.integration';
 import './reviewer.browser.integration';
 import './reader.browser.integration';
 import './participation.browser.integration';
 import './export.browser.integration';
+import './pdfTemplate.browser.integration';
+import './pdfSummary.browser.integration';
 import './companion.browser.integration';
 import './companion.launcher.integration';
 import assert from 'node:assert/strict';
@@ -91,7 +94,7 @@ test('real Chromium bundle: create, images/Mermaid/tables, repeated selection, r
     });
     await page.locator('#comment').click(); await page.locator('#body').fill('Second document concern.'); await page.locator('#save').click(); await submitted();
     assert.equal(await page.locator('.thread:visible').count(), 2, 'All-document scope is the default for a multi-document review.');
-    assert.match(await page.locator('#discussion-count').innerText(), /2 comments.*across all 2 review document/);
+    assert.match(await page.locator('#discussion-count').innerText(), /2 comments.*across all review documents/);
     await page.locator('#discussion-scope').selectOption('document');
     assert.equal(await page.locator('.thread:visible').count(), 1, 'Selected-document scope narrows the side panel.');
     assert.match(await page.locator('#discussion-count').innerText(), /1 comments.*on b\.md/);
@@ -121,9 +124,9 @@ test('real Chromium bundle: create, images/Mermaid/tables, repeated selection, r
     await page.waitForFunction(() => document.getElementById('composer-error')!.textContent?.includes('Press Save event again'));
     await page.locator('#save').click(); await submitted(); assert.match(await page.locator('#stance-status').innerText(), /approved/);
     // Filters and selected document must never reduce audit scope.
-    await page.locator('#documents [data-document="b.md"]').click(); await page.locator('#open-only').check();
+    await page.locator('#documents [data-document="b.md"]').click(); await page.locator('#discussion-status').selectOption('open');
     const exportEventsBeforeCancel = await page.evaluate(() => window.omrAutomation!.session()!.events.filter(event => event.type === 'export.created').length);
-    await page.locator('#export').click(); await page.locator('#cancel-operation').waitFor({ state: 'visible' }); await page.locator('#cancel-operation').click();
+    await confirmPdfOptions(page); await page.locator('#cancel-operation').waitFor({ state: 'visible' }); await page.locator('#cancel-operation').click();
     await page.waitForFunction(() => document.getElementById('toast')!.textContent!.includes('Export cancelled'), undefined, { timeout: 45000 });
     assert.equal(await page.evaluate(() => window.omrAutomation!.session()!.events.filter(event => event.type === 'export.created').length), exportEventsBeforeCancel, 'Cancelling export before publication never creates shared evidence.');
     assert.equal(await page.locator('#cancel-operation').isVisible(), false);
@@ -134,7 +137,7 @@ test('real Chromium bundle: create, images/Mermaid/tables, repeated selection, r
     assert.deepEqual(revision.externalReferences.map(reference => reference.uri).sort(), ['file:///private/evidence.pdf', 'http://example.com/plain', 'https://example.com/evidence', 'mailto:owner@example.com']);
     for (const file of inventory.events) assert.equal(digest(await readFile(path.join(root, file.path))), file.digest);
     // The normal button, not just an automation operation ID, survives close/retry.
-    failNextPdf = true; await page.locator('#export').click();
+    failNextPdf = true; await confirmPdfOptions(page);
     await page.waitForFunction(() => document.getElementById('status')!.textContent!.includes('Export did not finish'));
     assert.equal(await page.locator('#export-result').getAttribute('data-kind'), 'error');
     await page.waitForTimeout(6500); // Two automatic refreshes must not erase the error.
@@ -144,7 +147,7 @@ test('real Chromium bundle: create, images/Mermaid/tables, repeated selection, r
     const pending = (await store.journalGet(pointerKey))!; assert.equal(pending.acknowledged, false);
     const pendingOperation = parseJson<{ operationId: string }>(new Uint8Array(pending.bytes)).operationId;
     await page.reload(); await page.waitForSelector('#document .diagram svg', { timeout: 45000 });
-    await page.locator('#actor-id').fill('reviewer'); await page.locator('#export').click();
+    await page.locator('#actor-id').fill('reviewer'); await confirmPdfOptions(page);
     await page.waitForFunction(() => document.getElementById('toast')!.textContent!.includes('Saved exports/'), { timeout: 45000 });
     assert.equal(await page.locator('#export-result').getAttribute('data-kind'), 'success');
     assert.match(await page.locator('#export-result-path').innerText(), /Review folder: exports\/[a-f0-9]{64}\.pdf/);
@@ -159,14 +162,13 @@ test('real Chromium bundle: create, images/Mermaid/tables, repeated selection, r
     assert.equal(parseJson<{ operationId: string }>(new Uint8Array(resumed.bytes)).operationId, pendingOperation);
     const exportsAfterRetry = await page.evaluate(() => window.omrAutomation!.session()!.events.filter(e => e.type === 'export.created').length);
     assert.equal(exportsAfterRetry, 2, 'One automation export plus exactly one recovered UI export.');
-    await page.locator('#export-mode').selectOption('clean');
-    failNextPdf = true; await page.locator('#export').click();
+    failNextPdf = true; await confirmPdfOptions(page, 'clean');
     await page.locator('#export-result[data-kind="error"]').waitFor({ timeout: 45000 });
     const cleanPointerKey = `export-ui:clean:${digest(`${created.revisionId}\0reviewer`).slice(7)}`;
     const cleanPointer = (await store.journalGet(cleanPointerKey))!, cleanOperation = parseJson<{ operationId: string }>(new Uint8Array(cleanPointer.bytes)).operationId;
     assert.equal(cleanPointer.acknowledged, false); assert.notEqual(cleanOperation, pendingOperation);
     await page.reload(); await page.waitForSelector('#document .diagram svg', { timeout: 45000 });
-    await page.locator('#actor-id').fill('reviewer'); await page.locator('#export-mode').selectOption('clean'); await page.locator('#export').click();
+    await page.locator('#actor-id').fill('reviewer'); await confirmPdfOptions(page, 'clean');
     await page.locator('#export-result[data-kind="success"]').waitFor({ timeout: 45000 });
     await page.locator('#open-export').click(); await page.locator('#reveal-export').click();
     for (let attempt = 0; attempt < 100 && exportActions.length < 4; attempt++) await new Promise(resolve => setTimeout(resolve, 50));

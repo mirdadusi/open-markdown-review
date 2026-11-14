@@ -21,7 +21,7 @@ env.GOOS = process.platform === 'win32' ? 'windows' : process.platform;
 env.GOARCH = process.arch === 'x64' ? 'amd64' : process.arch;
 const version = spawnSync(executable, ['version'], { cwd: directory, env, encoding: 'utf8' });
 assert.equal(version.status, 0, version.stderr);
-assert.ok(version.stdout.startsWith('go version go1.27.3 '), 'Use the exact production Go toolchain.');
+assert.ok(version.stdout.startsWith('go version go1.27.4 '), 'Use the exact production Go toolchain.');
 
 const binary = path.join(root, 'dist/companion-go', target, process.platform === 'win32' ? 'StartReview.exe' : 'StartReview');
 const receipt = JSON.parse(await readFile(binary + '.build.json', 'utf8'));

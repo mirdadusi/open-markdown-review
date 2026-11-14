@@ -85,6 +85,23 @@ export async function reviewerAndSidebar(extensionPath: string, temporary: strin
     const forgedBytes = jsonBytes(forgedResolve);
     const deniedResolve = await fixture.request('write', [`events/${digest(forgedBytes).slice(7)}.json`, Array.from(forgedBytes), false]);
     assert.match(deniedResolve.error, /initiator/, 'The VS Code native bridge independently rejects forged participant closure.');
+    assert.equal((await fixture.request('info')).value.canAuthorFindings, true);
+    const beforeDenied = (await readdir(path.join(root, 'events'))).sort();
+    // Use each method's real argument shape so request validation does not
+    // short-circuit before the independent native permission check.
+    const attempts = [
+      ['prepareFindingPublication', 'prepare_forged'],
+      ['finishFindingPublication', { operationId: 'finding_forged', requestId: 'publish_forged', selections: [] }],
+      ['discardFindingPublication', 'finding_forged'],
+      ['retireFindingPublication', 'finding_forged'],
+      ['linkFindingSource'],
+      ['configureFindingRevision'],
+    ] as const;
+    for (const [method, ...parameters] of attempts) {
+      const denied = await fixture.request(method, [sourceContext.revision.id, { id: 'ordinary-reviewer' }, ...parameters]);
+      assert.match(denied.error, /initiator/, `${method} is role-checked at the native host.`);
+    }
+    assert.deepEqual((await readdir(path.join(root, 'events'))).sort(), beforeDenied, 'Denied requests write no review events.');
     const badPublication = await fixture.request('write', [`blobs/sha256/${'a'.repeat(2)}/${'a'.repeat(64)}`, [1, 2, 3], false]);
     assert.match(badPublication.error, /content-addressed/, 'The VS Code bridge verifies bytes before publishing.');
     const navigation = await fixture.request('revealSource', [sourceContext.revision.id, sourceThreadId]);

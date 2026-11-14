@@ -6,7 +6,7 @@ export type PdfNode = Record<string, unknown>;
 type Style = { font?: string; fontSize?: number; bold?: boolean; italics?: boolean };
 const metrics = data.metrics as Record<string, Record<string, number>>;
 export const pdfFontSources = data.sources;
-export const PDF_LAYOUT_VERSION = 'omr-archive-layout-3';
+export const PDF_LAYOUT_VERSION = 'omr-archive-layout-4';
 export const pdfFonts = {
   Symbols: { normal: 'NotoSansSymbols2-Regular.ttf', bold: 'NotoSansSymbols2-Regular.ttf', italics: 'NotoSansSymbols2-Regular.ttf', bolditalics: 'NotoSansSymbols2-Regular.ttf' },
   Mono: { normal: 'NotoSansMono-Regular.ttf', bold: 'NotoSansMono-Regular.ttf', italics: 'NotoSansMono-Regular.ttf', bolditalics: 'NotoSansMono-Regular.ttf' },

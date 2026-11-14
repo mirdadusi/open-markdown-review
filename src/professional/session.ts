@@ -1,12 +1,16 @@
 import { ascii, decode, digest, jsonBytes, newId, parseJson } from './bytes';
-import { admit, fold, policyResult } from './state';
+import { admit, fold, policyResult, threadWorkflowQueue } from './state';
 import { effectiveReviewers, invitationAllowed, permittedReviewer, reviewerForInput } from './reviewer';
 import { validate, validateAnchorEvent, validateSource } from './validation';
 import { ByteCache, Storage, evidence, contentRef, publish, publishBlob } from './storage';
-import { ActorRef, AuditInventory, CREATOR_THREAD_CONTROL, Diagnostic, Event, FileEvidence, LIMITS, Manifest, Payload, Policy, ProtocolError, REVIEWER_COMPLETION, Revision, SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE, StoredContent, THREAD_ADDRESSING, Verification } from './types';
+import { ActorRef, AuditInventory, COMMENT_EDITS, CREATOR_THREAD_CONTROL, Diagnostic, Event, FileEvidence, LIMITS, Manifest, Payload, Policy, ProtocolError, REVIEWER_COMPLETION, Revision, SANITIZED_HTML_CAPABILITY, SANITIZED_HTML_PROFILE, StoredContent, THREAD_ADDRESSING, Verification } from './types';
 import { mapWithConcurrency } from '../protocol/concurrency';
 import { loadProfiles } from './profiles/registry';
 import { OperationControl, checkpoint, interruptible } from './operation';
+import { exportTemplateReceipt } from './pdfTemplateReceipt';
+import { validatePdfRenderInput } from './pdfTemplate';
+import { pdfDocumentListFromRenderer, pdfOrientationFromRenderer } from './pdfProfiles';
+import { documentOrder } from './documentOrder';
 
 export interface ActionContext { readonly session: ReviewSession; readonly revision: Revision; readonly publication: Extract<Event, { type: 'revision.created' }>; readonly actor: ActorRef }
 export interface CapturedAudit { inventory: Verification; events: Event[]; revision: Revision; manifest: Manifest; bytes: ReadonlyMap<string, Uint8Array>; frontier: string; diagnostics: Diagnostic[] }
@@ -23,6 +27,24 @@ export class ReviewSession {
   private queue: Promise<unknown> = Promise.resolve();
   private cursor = 0;
   private sourceCache = new Map<string, Map<string, string>>();
+  private readingOrders = new Map<string, string[]>();
+  private readingOrderFlights = new Map<string, Promise<void>>();
+  /** UI-only lazy preparation: native/server validation never adds a root read for ordering. */
+  async prepareReadingOrder(revision = this.revision): Promise<void> {
+    if (!revision || this.readingOrders.has(revision.id)) return;
+    let flight = this.readingOrderFlights.get(revision.id);
+    if (!flight) {
+      flight = (async () => {
+        const root = revision.documents.find(d => d.path === revision.rootDocument)!;
+        this.readingOrders.set(revision.id, documentOrder(revision.documents.map(d => d.path), revision.rootDocument, decode(await this.content(root))));
+      })();
+      this.readingOrderFlights.set(revision.id, flight);
+    }
+    try { await flight; } finally { if (this.readingOrderFlights.get(revision.id) === flight) this.readingOrderFlights.delete(revision.id); }
+  }
+  readingPaths(revision = this.revision): readonly string[] {
+    return revision ? this.readingOrders.get(revision.id) ?? documentOrder(revision.documents.map(d => d.path), revision.rootDocument) : [];
+  }
   private refreshFlight?: Promise<void>;
   private requireFullRefresh = false;
   private validatedAnchors = new Set<string>();
@@ -218,8 +240,10 @@ export class ReviewSession {
     if (this.manifest.extensions?.length) await this.sources(revision);
     this.pinnedRevisionId = id;
   }
-  context(actor: ActorRef): ActionContext {
-    const revision = this.revision, publication = this.events.find((e): e is Extract<Event, { type: 'revision.created' }> => e.type === 'revision.created' && e.revisionId === revision?.id);
+  context(actor: ActorRef, revisionId = this.pinnedRevisionId): ActionContext {
+    // A finding action may target its verified original snapshot without moving
+    // the main document view. The event remains bound to that exact publication.
+    const revision = revisionId ? this.revisions.get(revisionId) : undefined, publication = this.events.find((e): e is Extract<Event, { type: 'revision.created' }> => e.type === 'revision.created' && e.revisionId === revision?.id);
     if (!revision || !publication) throw new ProtocolError('missing', 'Choose a verified revision first.');
     return Object.freeze({ session: this, revision, publication, actor: Object.freeze({ ...(reviewerForInput(this.manifest, actor, this.events) ?? actor) }) });
   }
@@ -236,6 +260,7 @@ export class ReviewSession {
    * is deterministic client policy rather than authentication.
    */
   private assertWritePolicy(event: Event): void {
+    if (event.type === 'comment.edited' && !this.manifest.requiredCapabilities.includes(COMMENT_EDITS)) throw new ProtocolError('unsupported', 'This immutable review does not declare comment-edits-v1. Add a correction reply instead; do not rewrite its manifest or original comment.');
     if (event.type === 'reviewer.invited' && !invitationAllowed(this.manifest, event)) throw new ProtocolError('permission', 'Only the review initiator can add reviewers. This review must declare reviewer-invitations-v1.');
     if (!permittedReviewer(this.manifest, event.actor, this.events)) throw new ProtocolError('permission', 'Enter one of the reviewer email addresses specified by the review initiator.');
     const completion = fold(this.events, event.revisionId).register(`completion:${event.revisionId}:${event.actor.id}`);
@@ -247,7 +272,7 @@ export class ReviewSession {
       if (event.type === 'review.completed' && finished) throw new ProtocolError('changed', 'Your review is already finished. Reopen it to continue.');
       if (event.type === 'review.reopened' && !completion.heads.some(e => e.type === 'review.completed')) throw new ProtocolError('changed', 'Your review is already open.');
     } else if (this.manifest.requiredCapabilities.includes(REVIEWER_COMPLETION) && (completion.conflict || completion.heads.some(e => e.type === 'review.completed'))) {
-      const creatorProcessing = event.actor.id === this.manifest.createdBy.id && ['reviewer.invited', 'thread.decided', 'thread.resolved', 'thread.reopened', 'thread.addressed', 'revision.created', 'suggestion.applied'].includes(event.type);
+      const creatorProcessing = event.actor.id === this.manifest.createdBy.id && (['reviewer.invited', 'thread.decided', 'thread.resolved', 'thread.reopened', 'thread.addressed', 'revision.created', 'suggestion.applied'].includes(event.type) || event.type === 'thread.verification.recorded' && event.verdict === 'challenged');
       if (event.type !== 'export.created' && !creatorProcessing) throw new ProtocolError('changed', 'Your review is finished or has conflicting completion states. Reopen your review before adding feedback or changing your stance.');
     }
     const isLifecycle = event.type === 'thread.resolved' || event.type === 'thread.reopened';
@@ -267,7 +292,14 @@ export class ReviewSession {
     if (!('threadId' in event) || event.type === 'comment.created') return;
     const thread = fold(this.events, event.revisionId).threads.find(item => item.root.threadId === event.threadId);
     if (!thread) return; // Graph admission below reports the missing root.
-    if ((event.type === 'comment.replied' || event.type === 'thread.decided') && !thread.open) throw new ProtocolError('changed', 'This comment thread is closed. The review creator must reopen it before replies or decisions can be added.');
+    if ((event.type === 'comment.replied' || event.type === 'comment.edited' || event.type === 'thread.decided') && !thread.open) throw new ProtocolError('changed', 'This comment thread is closed. The review creator must reopen it before replies, edits or decisions can be added.');
+    if (event.type === 'comment.edited') {
+      const comment = fold(this.events, event.revisionId).comments.get(event.commentId);
+      if (!comment || comment.original.threadId !== event.threadId || comment.original.actor.id !== event.actor.id) throw new ProtocolError('permission', 'Only the original author may edit this comment or reply.');
+      if (['implemented', 'verified'].includes(threadWorkflowQueue(thread))) throw new ProtocolError('changed', 'This finding is implemented. Ask the initiator to reopen the finding before changing its wording.');
+      const observed = [...event.editPredecessors].sort(ascii), current = comment.edits.heads.map(e => e.id).sort(ascii);
+      if (JSON.stringify(observed) !== JSON.stringify(current)) throw new ProtocolError('changed', 'This comment changed while you were editing it. Your draft is retained; inspect the latest wording before editing again.');
+    }
     if (event.type === 'thread.addressed') {
       const decision = thread.decision.heads[0];
       if (thread.decision.conflict || decision?.type !== 'thread.decided' || decision.decision !== 'accepted') throw new ProtocolError('changed', 'Accept the finding unambiguously before recording its implementation.');
@@ -424,6 +456,10 @@ export class ReviewSession {
     if (event.type === 'export.created') {
       if (receipt.kind !== 'audit-export-inventory' || receipt.exportId !== event.exportId || receipt.pdf.digest !== event.pdf.digest || receipt.pdf.path !== event.pdf.path || receipt.pdf.byteLength !== event.pdf.byteLength || receipt.pdf.mediaType !== 'application/pdf' || JSON.stringify(receipt.renderer) !== JSON.stringify(event.renderer)) fail('Export identity or renderer differs.');
       const inventory = receipt as AuditInventory;
+      const templateInput = exportTemplateReceipt(inventory); // Render-only, never a revision resource.
+      pdfDocumentListFromRenderer(inventory.renderer.pdfEngine);
+      pdfOrientationFromRenderer(inventory.renderer.pdfEngine);
+      if (templateInput) validatePdfRenderInput(await this.readEvidence(templateInput, fresh), templateInput.digest);
       const expected = observed.filter(e => e.revisionId === event.revisionId).map(e => e.id).sort(ascii);
       if (JSON.stringify([...inventory.representedEventIds].sort(ascii)) !== JSON.stringify(expected)) fail('Export omits selected-revision evidence.');
       if (inventory.renderedDiagrams.length !== r!.mermaidDiagrams.length || r!.mermaidDiagrams.some(d => !inventory.renderedDiagrams.some(i => i.diagramId === d.id && i.sourceDigest === d.sourceDigest))) fail('Export diagram inventory differs.');

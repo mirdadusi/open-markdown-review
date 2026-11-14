@@ -12,7 +12,7 @@ async function fixture() {
   const catalog = { schemaVersion: 'omr-companion-catalog/2', runtime: 'go', version: '0.6.1', delivery: 'bundled-v1', toolboxDigest: `sha256:${'a'.repeat(64)}`, companionDigest: `sha256:${'b'.repeat(64)}`, targets: [] };
   for (const target of ['win32-x64', 'darwin-arm64', 'linux-x64']) {
     const filename = target === 'win32-x64' ? 'StartReview-windows-x64.exe' : target === 'darwin-arm64' ? 'StartReview-macos-arm64' : 'StartReview-linux-x64';
-    const entry = { target, build: { schemaVersion: 'omr-go-build/1', runtime: 'go', version: catalog.version, target, toolchain: 'go1.27.3', testFaults: false } };
+    const entry = { target, build: { schemaVersion: 'omr-go-build/1', runtime: 'go', version: catalog.version, target, toolchain: 'go1.27.4', testFaults: false } };
     for (const [kind, name] of [['executable', filename], ['notices', `${filename}.NOTICES.txt`]]) {
       const bytes = Buffer.from(`inert test payload ${name}`), digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
       entry[kind] = { filename: name, byteLength: bytes.length, digest };
@@ -20,7 +20,7 @@ async function fixture() {
     }
     await writeFile(path.join(source, `${filename}.build.json`), JSON.stringify(entry.build)); catalog.targets.push(entry);
   }
-  const proof = { schemaVersion: 'omr-local-qualification/1', runtime: 'go', version: catalog.version, platform: 'darwin', arch: 'arm64', toolchain: 'go1.27.3', executedAt: '2026-10-18T08:00:00Z',
+  const proof = { schemaVersion: 'omr-local-qualification/1', runtime: 'go', version: catalog.version, platform: 'darwin', arch: 'arm64', toolchain: 'go1.27.4', executedAt: '2026-10-18T08:00:00Z',
     executableDigest: catalog.targets[1].executable.digest, toolboxDigest: catalog.toolboxDigest, companionDigest: catalog.companionDigest,
     suites: ['native-browser-and-launcher', 'vscode-native-creation'].map(name => ({ name, exitCode: 0, logDigest: `sha256:${'c'.repeat(64)}` })) };
   await writeFile(path.join(source, MAC_QUALIFICATION), JSON.stringify(proof));

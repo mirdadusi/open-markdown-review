@@ -1796,7 +1796,8 @@ export function activate(context: vscode.ExtensionContext): void {
     await professional.deactivate(); await controller.switchReview(argument as ReviewArgument);
   });
   register("openMarkdownReview.setup", () => professional.active ? professional.create(true) : controller.hasActiveReview ? controller.setupReview() : professional.create());
-  register("openMarkdownReview.createRevision", () => professional.active ? professional.create(true) : controller.createRevision());
+  register("openMarkdownReview.createRevision", (argument) => professional.active || argument ? professional.create(true, argument) : controller.createRevision());
+  register("openMarkdownReview.publishUpdatedDocuments", (argument) => professional.publishUpdatedDocuments(argument));
   register("openMarkdownReview.addPortableBrowserClient", () => professional.active ? professional.installClient() : controller.addPortableBrowserClient());
   register("openMarkdownReview.openReview", () => professional.active ? professional.open(professional.active.root) : controller.openReview().then(() => undefined));
   register("openMarkdownReview.addComment", () => professional.active ? professional.forward('comment') : controller.addComment());

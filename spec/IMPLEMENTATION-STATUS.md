@@ -1,6 +1,6 @@
-# Implementation and qualification status — public 0.6.5
+# Implementation and qualification status
 
-Application version and protocol version are independent. Public application 0.6.5 implements core protocol 0.6.0, with explicit compatibility paths for older packages. This is a standard release with documented limits, not blanket professional-pilot certification.
+Application version and protocol version are independent. Public application 0.7.0 implements core protocol 0.6.0, with explicit compatibility paths for older packages. This is a standard release with documented limits, not blanket professional-pilot certification.
 
 ## Implemented reference workflow
 

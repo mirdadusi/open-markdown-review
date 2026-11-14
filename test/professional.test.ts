@@ -397,7 +397,7 @@ test('0.6 creator workbench links an accepted finding to a descendant revision a
   await assert.rejects(session.save(reviewer, unauthorized), (error: unknown) => error instanceof ProtocolError && error.code === 'permission');
   const addressed = session.makeEvent(creator, { type: 'thread.addressed', threadId, toRevisionId: target.id, document: 'a.md', sourceDigestBefore: revision.documents[0].digest, sourceDigestAfter: target.documents[0].digest, summary: 'Clarified the term in the published Markdown.', decisionIds: [accepted.id], addressingPredecessors: [] });
   await session.save(creator, addressed);
-  assert.equal(threadWorkflowQueue(fold(session.events, revision.id).threads[0]), 'awaiting-verification');
+  assert.equal(threadWorkflowQueue(fold(session.events, revision.id).threads[0]), 'implemented');
   assert.throws(() => validate('event', { ...addressed, schemaVersion: LEGACY_VERSION }), /event:/, 'A 0.5 event must not acquire 0.6 semantics.');
   const concurrentAddressing: Event = { ...addressed, id: 'addressed_parallel', operationId: 'addressed_parallel_op' };
   const concurrentGraph = admit([...session.events, concurrentAddressing], session.revisions, new Map(), actor.id, actor.id);
@@ -814,6 +814,22 @@ test('Markdown file references are audited but rendered as non-actionable', asyn
   const rendered = renderDocument(source, 'a.md', candidate).html;
   assert.match(rendered, /class="blocked-reference"/);
   assert.doesNotMatch(rendered, /href="file:/);
+});
+test('Markdown and sanitized HTML expose UNC paths as inert external references', async () => {
+  const { revision } = await fixture();
+  const unc = String.raw`\\files.example.test\Project Share\080_Quality\20_ECC`;
+  const encoded = encodeURIComponent(unc), source = `[Checklist](<${unc.replaceAll('\\', '\\\\')}>) [Encoded](${encoded}) [Internal](b.md#section)`;
+  const rendered = renderDocument(source, 'a.md', revision).html;
+  const network = [...rendered.matchAll(/<a [^>]*data-network-path=[^>]*>/g)].map(match => match[0]);
+  assert.equal(network.length, 2);
+  for (const anchor of network) {
+    assert.ok(anchor.includes(`data-network-path="${unc}"`));
+    assert.doesNotMatch(anchor, /href=|data-document-link=/);
+  }
+  assert.match(rendered, /data-document-link="b.md#section"/);
+  const html = renderDocument(`<p><a href="${unc}" onclick="ignored()">Checklist</a></p>`, 'a.md', { ...revision, renderer: { ...revision.renderer, markdownProfile: SANITIZED_HTML_PROFILE } }).html;
+  assert.ok(html.includes(`data-network-path="${unc}"`));
+  assert.doesNotMatch(html, /href=|onclick=|data-document-link=/);
 });
 test('0.6 CLI dry-run writes no package, unknown flags fail, and inspect/validate need no VS Code', async () => {
   const { request } = await authorFixture();

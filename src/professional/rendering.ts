@@ -3,7 +3,7 @@ import { digest, offsetAt, pointAt, stableId } from './bytes';
 import { inspect, markdown } from './validation';
 import { Event, MarkdownAnchor, Revision } from './types';
 import { fold } from './state';
-import { escapeHtml, renderSanitizedHtml, SANITIZED_HTML_PROFILE, scanHtml } from './html';
+import { escapeHtml, renderSanitizedHtml, SANITIZED_HTML_PROFILE, scanHtml, uncReferencePath } from './html';
 export { escapeHtml } from './html';
 export interface RenderedSource { html: string; textMaps: Map<string, number[]> }
 /** Stable source spans are independent of comments. New events update annotations, not Mermaid. */
@@ -117,7 +117,9 @@ export function renderDocument(source: string, document: string, revision: Revis
   const link = md.renderer.rules.link_open;
   md.renderer.rules.link_open = (items, i, options, env, self) => {
     const t = items[i], href = t.attrGet('href') ?? '';
+    const networkPath = uncReferencePath(href, true);
     if (t.attrGet('title')?.trim().toLowerCase() === 'review:attach') { t.attrSet('data-attachment', stableId('resource', `${document}\0${href}`)); t.attrSet('href', '#'); }
+    else if (networkPath) { t.attrSet('class', 'blocked-reference'); t.attrSet('data-network-path', networkPath); t.attrSet('title', `External network path: ${networkPath}`); const index = t.attrIndex('href'); if (index >= 0) t.attrs!.splice(index, 1); }
     else if (/^(?:https:|mailto:)/i.test(href)) { t.attrSet('rel', 'noopener noreferrer'); t.attrSet('target', '_blank'); }
     else if (/^(?![A-Za-z][A-Za-z0-9+.-]*:)(?!\/\/).+/.test(href)) { t.attrSet('data-document-link', href); t.attrSet('href', '#'); }
     else { t.attrSet('class', 'blocked-reference'); t.attrSet('title', 'This external reference is retained in the audit record but is not opened by the review client.'); t.attrSet('href', '#'); }

@@ -19,10 +19,10 @@ export function fixture() {
     for (const [kind, file] of [['executable', name], ['notices', 'THIRD-PARTY-NOTICES.txt']]) {
       const bytes = files.get(`extension/${base}/${file}`); item[kind] = { digest: hash(bytes), byteLength: bytes.length };
     }
-    item.build = { schemaVersion: 'omr-go-build/1', runtime: 'go', version: catalog.version, target, toolchain: 'go1.27.3', testFaults: false, digest: item.executable.digest, inputs: { core: catalog.companionDigest, toolbox: catalog.toolboxDigest, notices: item.notices.digest } };
+    item.build = { schemaVersion: 'omr-go-build/1', runtime: 'go', version: catalog.version, target, toolchain: 'go1.27.4', testFaults: false, digest: item.executable.digest, inputs: { core: catalog.companionDigest, toolbox: catalog.toolboxDigest, notices: item.notices.digest } };
     put(`${base}/build.json`, item.build); catalog.targets.push(item);
   }
-  put('dist/bundled-companions/darwin-arm64/qualification.json', { schemaVersion: 'omr-local-qualification/1', runtime: 'go', version: catalog.version, platform: 'darwin', arch: 'arm64', toolchain: 'go1.27.3', executedAt: '2026-10-18T08:00:00Z', executableDigest: catalog.targets[0].executable.digest, toolboxDigest: catalog.toolboxDigest, companionDigest: catalog.companionDigest, suites: ['native-browser-and-launcher', 'vscode-native-creation'].map(name => ({ name, exitCode: 0, logDigest: hash('test log') })) });
+  put('dist/bundled-companions/darwin-arm64/qualification.json', { schemaVersion: 'omr-local-qualification/1', runtime: 'go', version: catalog.version, platform: 'darwin', arch: 'arm64', toolchain: 'go1.27.4', executedAt: '2026-10-18T08:00:00Z', executableDigest: catalog.targets[0].executable.digest, toolboxDigest: catalog.toolboxDigest, companionDigest: catalog.companionDigest, suites: ['native-browser-and-launcher', 'vscode-native-creation'].map(name => ({ name, exitCode: 0, logDigest: hash('test log') })) });
   put('dist/companion-catalog.json', catalog);
   return { files, catalog };
 }

@@ -1,4 +1,4 @@
-# Go local companion — default native host in public 0.6.5
+# Go local companion — default native host
 
 The Go host embeds the trusted shared browser toolbox and the existing TypeScript
 protocol/RPC core in Goja. It does not require Node.js, Go, browser extensions,
@@ -27,7 +27,7 @@ Implementation boundaries:
 
 ## Build
 
-Use the locked npm dependencies and **Go 1.27.3**, with CGO disabled for distributed
+Use the locked npm dependencies and **Go 1.27.4**, with CGO disabled for distributed
 builds. `OMR_GO` may name an absolute Go executable. Go modules initially require
 build-host network access; all are pinned by `go.mod`/`go.sum`. No module downloads
 occur when the produced executable runs.

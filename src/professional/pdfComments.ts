@@ -1,11 +1,14 @@
 import { ProtocolError } from './types';
 
 export const PDF_COMMENT_PREFIX = 'omr-pdf-comment/';
-export interface PdfCommentReply { id: string; author: string; occurredAt: string; text: string; replyTo?: string; reviewState?: 'Completed' | 'None' | 'Accepted' | 'Rejected' }
+export type PdfReviewState = 'Accepted' | 'Rejected' | 'Cancelled' | 'Completed' | 'None';
+export interface PdfCommentStatus { value: PdfReviewState; author: string; occurredAt: string }
+export interface PdfCommentReply { id: string; author: string; occurredAt: string; text: string; replyTo?: string }
 export interface PdfComment extends PdfCommentReply {
-  documentDestination: string; subject: string; quote: string;
-  kind: 'comment' | 'suggested-edit'; strikeOut?: boolean; replies: PdfCommentReply[];
+  documentDestination: string; subject: string;
+  strikeOut?: boolean; replies: PdfCommentReply[];
   targetKind?: string;
+  reviewStatus?: PdfCommentStatus;
 }
 interface Ref { data: Record<string, unknown>; end(): void }
 interface Page { width: number; height: number; dictionary: Ref; annotations: Ref[] }
@@ -18,11 +21,23 @@ export interface BufferedPdf {
   _root: { data: { Names: { data: { Dests: { get(name: string): unknown[] | undefined } } } } };
 }
 const literal = (value: string) => new String(value); // PDFKit emits UTF-16BE for non-ASCII literals.
+// Match Acrobat's status annotations. NoView alone leaves the parent at None in Acrobat.
+// Hidden takes precedence over Print, so this record has no icon on screen or on paper.
+const ACROBAT_REVIEW_STATUS_FLAGS = 2 | 4 | 8 | 16; // Hidden | Print | NoZoom | NoRotate
 function finishComment(pdf: BufferedPdf, page: Page, reference: Ref): void {
   const bounds = reference.data.Rect as number[], left = Math.min(page.width - 230, Math.max(40, bounds[2] + 12)), bottom = Math.min(page.height - 170, Math.max(40, bounds[1]));
   const popup = pdf.ref({ Type: 'Annot', Subtype: 'Popup', Rect: [left, bottom, left + 210, bottom + 130], P: page.dictionary, Parent: reference, Open: false });
   reference.data.Popup = popup;
   page.annotations.push(reference, popup); popup.end(); reference.end();
+}
+/** ISO 32000 §12.5.6.3: a status is a separate Text reply, not text in the finding. */
+function addReviewStatus(pdf: BufferedPdf, page: Page, parent: Ref, status: PdfCommentStatus, name: string): void {
+  const top = Math.min(page.height - 16, Math.max(40, (parent.data.Rect as Rect)[3]));
+  const reference = pdf.ref({ Type: 'Annot', Subtype: 'Text', Rect: [18, top - 16, 34, top],
+    P: page.dictionary, IRT: parent, RT: 'R', F: ACROBAT_REVIEW_STATUS_FLAGS,
+    NM: literal(`${name}-review-status`), T: literal(status.author), Contents: literal(''),
+    StateModel: literal('Review'), State: literal(status.value), CreationDate: new Date(status.occurredAt), M: new Date(status.occurredAt) });
+  page.annotations.push(reference); reference.end();
 }
 type Rect = [number, number, number, number];
 function rect(value: unknown, page: Page): Rect {
@@ -86,6 +101,7 @@ export function installPdfComments(pdf: BufferedPdf, comments: readonly PdfComme
       // share the finding subject/root event, not an illegal cross-page reply.
       if (primary) data.Subj = literal(`${comment.subject} (continued on page ${pageIndex + 1})`);
       const reference = pdf.ref(data); finishComment(pdf, page, reference);
+      if (comment.reviewStatus) addReviewStatus(pdf, page, reference, comment.reviewStatus, `${comment.id}-${pageIndex}`);
       if (!primary) { primary = reference; primaryPage = page; primaryRect = bounds; }
     }
     if (!primary) {
@@ -97,10 +113,11 @@ export function installPdfComments(pdf: BufferedPdf, comments: readonly PdfComme
       const top = typeof destination?.[3] === 'number' ? Math.min(page.height - 40, destination[3]) : page.height - 45;
       primaryRect = [18, Math.max(40, top - 16), 34, Math.max(40, top - 16) + 16]; primaryPage = page;
       primary = pdf.ref({ Type: 'Annot', Subtype: 'Text', Rect: primaryRect, P: page.dictionary, F: 4,
-        Name: 'Comment', Open: false, NM: literal(comment.id), T: literal(comment.author), Subj: literal(comment.subject),
-        Contents: literal(`${comment.text}\n\nSource-only anchor (no exact visible PDF span):\n${comment.quote}`),
+        Name: 'Comment', Open: false, NM: literal(comment.id), T: literal(comment.author), Subj: literal(`${comment.subject} (source-only anchor)`),
+        Contents: literal(comment.text),
         CreationDate: new Date(comment.occurredAt), M: new Date(comment.occurredAt), C: [1, 0.84, 0.25] });
       finishComment(pdf, page, primary);
+      if (comment.reviewStatus) addReviewStatus(pdf, page, primary, comment.reviewStatus, comment.id);
     }
     const refs = new Map<string, Ref>([[comment.id, primary]]);
     if (new Set([comment.id, ...comment.replies.map(r => r.id)]).size !== comment.replies.length + 1) throw new ProtocolError('integrity', 'Duplicate PDF reply identity.');
@@ -113,8 +130,7 @@ export function installPdfComments(pdf: BufferedPdf, comments: readonly PdfComme
       const bottom = Math.min(primaryPage!.height - 40, Math.max(40, primaryRect![1])), page = primaryPage!;
       const reference = pdf.ref({ Type: 'Annot', Subtype: 'Text', Rect: [18, bottom, 34, bottom + 16], P: page.dictionary,
         F: 4, Name: 'Comment', Open: false, RT: 'R', NM: literal(reply.id), T: literal(reply.author),
-        Contents: literal(reply.text), CreationDate: new Date(reply.occurredAt), M: new Date(reply.occurredAt), C: [1, 0.84, 0.25],
-        ...(reply.reviewState ? { StateModel: literal('Review'), State: literal(reply.reviewState) } : {}) });
+        Contents: literal(reply.text), CreationDate: new Date(reply.occurredAt), M: new Date(reply.occurredAt), C: [1, 0.84, 0.25] });
       refs.set(reply.id, reference);
     }
     for (const reply of comment.replies) { const reference = refs.get(reply.id)!; reference.data.IRT = refs.get(reply.replyTo ?? comment.id)!; finishComment(pdf, primaryPage!, reference); }

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { confirmPdfOptions } from './pdfExport.helpers';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -159,7 +160,7 @@ for (const mode of ['vscode-bridge', 'browser-directory'] as const) test(`${mode
     assert.equal(await nina.locator('#actor-id').inputValue(), 'nina@example.com');
     assert.match(await nina.locator('#completion-status').innerText(), /finished/);
     await creator.locator('#refresh').click(); await creator.waitForSelector(`[data-reviewer-id="${ninaId}"][data-reviewer-status="finished"]`);
-    await creator.locator('#export').click();
+    await confirmPdfOptions(creator);
     await creator.waitForFunction(() => document.getElementById('toast')?.textContent?.includes('Saved exports/'), undefined, { timeout: 45000 });
     const exported = await creator.evaluate(() => window.omrAutomation!.session()!.events.find((event): event is Extract<Event, { type: 'export.created' }> => event.type === 'export.created'));
     assert.ok(exported);

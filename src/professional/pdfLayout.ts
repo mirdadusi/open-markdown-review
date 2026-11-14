@@ -6,6 +6,8 @@ import { offsetAt } from './bytes';
 import { MarkdownAnchor } from './types';
 import { RenderedSource } from './rendering';
 import { PDF_COMMENT_PREFIX } from './pdfComments';
+import { PdfTemplateStyle } from './pdfTemplate';
+import type { PdfOrientation } from './pdfProfiles';
 
 export const PDF_PORTRAIT_WIDTH = 505.28;
 export const PDF_LANDSCAPE_WIDTH = 751.89;
@@ -15,7 +17,7 @@ export const documentDestination = (path: string) => stableId('document', path);
 export const headingSlug = (text: string) => text.trim().toLowerCase().replace(/[^\p{L}\p{N} _-]/gu, '').replace(/\s/g, '-');
 export interface PdfDocumentLayout { path: string; host: HTMLElement; title: string; landscape: boolean }
 export interface PdfNavigation { documents: Map<string, PdfDocumentLayout>; destinations: WeakMap<Element, string>; fragments: Map<string, string> }
-export interface PdfLayoutContext { document: string; navigation: PdfNavigation; width: number; fontSize?: number; inTable?: boolean; nativeComments?: boolean; clean?: boolean; control?: OperationControl }
+export interface PdfLayoutContext { document: string; navigation: PdfNavigation; width: number; fontSize?: number; inTable?: boolean; nativeComments?: boolean; clean?: boolean; control?: OperationControl; templateStyle?: PdfTemplateStyle }
 
 /** PDF annotations are derived from the same UTF-16 source maps as the live view. */
 export function highlightPdfFindings(host: HTMLElement, rendered: RenderedSource, source: string, findings: Array<{ anchor: MarkdownAnchor; destination: string; reference: string }>, nativeComments = false): void {
@@ -46,11 +48,11 @@ export function highlightPdfFindings(host: HTMLElement, rendered: RenderedSource
   }
 }
 
-export function pdfNavigation(documents: Array<{ path: string; host: HTMLElement }>): PdfNavigation {
+export function pdfNavigation(documents: Array<{ path: string; host: HTMLElement }>, orientation: PdfOrientation = 'auto'): PdfNavigation {
   const navigation: PdfNavigation = { documents: new Map(), destinations: new WeakMap(), fragments: new Map() };
   for (const doc of documents) {
     const title = doc.host.querySelector('h1,h2')?.textContent?.trim() || doc.path.split('/').at(-1)!, used = new Map<string, number>();
-    const landscape = [...doc.host.querySelectorAll('table')].some(table => tableRows(table).some(({ row }) => [...row.children].reduce((n, cell) => n + span(cell, 'colspan'), 0) > 5));
+    const landscape = orientation === 'auto' && [...doc.host.querySelectorAll('table')].some(table => tableRows(table).some(({ row }) => [...row.children].reduce((n, cell) => n + span(cell, 'colspan'), 0) > 5));
     navigation.documents.set(doc.path, { ...doc, title, landscape });
     for (const element of doc.host.querySelectorAll('h1,h2,h3,h4,h5,h6,[data-source-bookmark]')) {
       const bookmark = element.getAttribute('data-source-bookmark'), slug = bookmark ?? headingSlug(element.textContent ?? '');
@@ -94,6 +96,25 @@ function inline(root: Node, context: PdfLayoutContext, style: PdfNode = {}): Pdf
   if (tag === 'br') return [{ text: '\n', ...style }];
   const next: PdfNode = { ...style, ...(['strong', 'b'].includes(tag) ? { bold: true } : {}), ...(['em', 'i'].includes(tag) ? { italics: true } : {}), ...(['s', 'del', 'strike'].includes(tag) ? { decoration: 'lineThrough' } : {}), ...(tag === 'u' || tag === 'ins' ? { decoration: 'underline' } : {}), ...(tag === 'sup' ? { sup: true } : {}), ...(tag === 'sub' ? { sub: true } : {}), ...(tag === 'mark' && !context.nativeComments ? { background: '#fff0ba' } : {}), ...(tag === 'code' || tag === 'kbd' ? { font: 'Mono', fontSize: (context.fontSize ?? 10) * 0.9, background: '#f1f4f8' } : {}), ...linkStyle(root, context) };
   const children = [...root.childNodes].flatMap(child => inline(child, context, next));
+  const networkPath = tag === 'a' && root.getAttribute('data-network-path');
+  if (networkPath) {
+    const label = root.textContent?.trim() ?? '';
+    const withoutFolderSeparator = (value: string) => value.endsWith('\\') ? value.slice(0, -1) : value;
+    const samePath = withoutFolderSeparator(label) === withoutFolderSeparator(networkPath);
+    const pathStyle = { font: 'Mono', fontSize: 8, bold: false, italics: false };
+    // Keep the exact destination, without a second copy of an equivalent label.
+    // Put it on its own line; only wrap when it cannot fit.
+    const width = Math.min(context.width - 3, 485), fits = pdfTextWidth(networkPath, pathStyle) <= width;
+    const pathText = { text: fits ? networkPath : wrapPdfToken(networkPath, width, pathStyle), ...pathStyle, noWrap: fits, color: '#526477' };
+    if (samePath) {
+      // A finding on the redundant label still needs a native PDF annotation.
+      const findings = new Set(children.flatMap(({ linkToDestination: marker }) =>
+        typeof marker === 'string' && marker.startsWith(PDF_COMMENT_PREFIX)
+          ? marker.slice(PDF_COMMENT_PREFIX.length).split('|')[0].split(',') : []));
+      return [{ text: '\n' }, { ...pathText, ...(findings.size ? { linkToDestination: PDF_COMMENT_PREFIX + [...findings].join(',') + '|' } : {}) }];
+    }
+    return [...children, { text: ' [External network path]\n', fontSize: 8, color: '#526477' }, pathText];
+  }
   return tag === 'a' && root.hasAttribute('data-document-link') && !next.linkToDestination ? [...children, { text: ' [target not in this archive]', fontSize: 7.5, color: '#526477', italics: true }] : children;
 }
 const span = (cell: Element, name: string) => Math.min(100, Math.max(1, Number.parseInt(cell.getAttribute(name) ?? '1', 10) || 1));
@@ -101,8 +122,8 @@ function tableRows(table: Element): Array<{ row: Element; header: boolean }> {
   return [...table.children].flatMap(child => child.localName === 'tr' ? [{ row: child, header: [...child.children].every(cell => cell.localName === 'th') }] : ['thead', 'tbody', 'tfoot'].includes(child.localName) ? [...child.children].filter(row => row.localName === 'tr').map(row => ({ row, header: child.localName === 'thead' })) : []);
 }
 /** Numeric widths deliberately do not inherit pdfmake's largest-word star minimum. */
-export function fitTableColumns(preferences: readonly number[], width: number): number[] {
-  const count = Math.max(1, preferences.length), available = Math.max(count * 0.5, width - count * 8 - (count + 1) * 0.4);
+export function fitTableColumns(preferences: readonly number[], width: number, paddingX = 4): number[] {
+  const count = Math.max(1, preferences.length), available = Math.max(count * 0.5, width - count * paddingX * 2 - (count + 1) * 0.4);
   const minimums = preferences.map(value => Math.min(70, Math.max(16, value + 5))), minimum = minimums.reduce((a, b) => a + b, 0);
   if (minimum >= available) return minimums.map(value => value * available / minimum);
   const weights = preferences.map((value, index) => Math.max(0, Math.min(320, value) - minimums[index])), sum = weights.reduce((a, b) => a + b, 0);
@@ -150,24 +171,25 @@ async function tableNode(element: Element, context: PdfLayoutContext): Promise<P
     }
   }
   if (!count || !rows.length) return [];
-  const fontSize = count > 6 ? 8.2 : 9.2, preferences = Array.from({ length: count }, () => 24);
+  const fontSize = context.templateStyle ? Math.max(8, context.templateStyle.tableSize - (count > 6 ? 1 : 0)) : count > 6 ? 8.2 : 9.2, preferences = Array.from({ length: count }, () => 24);
   for (const cell of cells) {
     const text = cell.element.textContent?.trim() ?? '', lines = text.split(/\r?\n/);
     const preferred = Math.min(320, Math.max(...lines.map(line => pdfTextWidth(line, { fontSize, bold: cell.element.localName === 'th' })), 24));
     for (let x = cell.column; x < cell.column + cell.colSpan; x++) preferences[x] = Math.max(preferences[x], preferred / cell.colSpan);
   }
-  const widths = fitTableColumns(preferences, context.width), body: PdfNode[][] = rows.map(() => Array.from({ length: count }, () => ({})));
+  const paddingX = context.templateStyle?.tablePaddingX ?? 4, paddingY = context.templateStyle?.tablePaddingY ?? 4;
+  const widths = fitTableColumns(preferences, context.width, paddingX), body: PdfNode[][] = rows.map(() => Array.from({ length: count }, () => ({})));
   if (widths.some(width => width < 14)) throw new Error('This table has too many columns for a legible PDF at its containing width. Split the source table or use fewer nested columns. No archive was published.');
   for (const cell of cells) {
-    const width = widths.slice(cell.column, cell.column + cell.colSpan).reduce((a, b) => a + b, 0) + (cell.colSpan - 1) * 8.4;
+    const width = widths.slice(cell.column, cell.column + cell.colSpan).reduce((a, b) => a + b, 0) + (cell.colSpan - 1) * (paddingX * 2 + 0.4);
     const stack = await pdfNodes(cell.element, { ...context, width, fontSize, inTable: true });
-    body[cell.row][cell.column] = { stack: stack.length ? stack : [{ text: '' }], fontSize, color: INK, fillColor: cell.element.localName === 'th' ? '#eaf0f7' : cell.row % 2 ? '#f8fafc' : '#ffffff', bold: cell.element.localName === 'th', ...(cell.colSpan > 1 ? { colSpan: cell.colSpan } : {}), ...(cell.rowSpan > 1 ? { rowSpan: cell.rowSpan } : {}) };
+    body[cell.row][cell.column] = { stack: stack.length ? stack : [{ text: '' }], fontSize, color: context.templateStyle?.textColor ?? INK, fillColor: cell.element.localName === 'th' ? context.templateStyle?.tableHeader ?? '#eaf0f7' : cell.row % 2 ? context.templateStyle?.tableStripe ?? '#f8fafc' : '#ffffff', bold: cell.element.localName === 'th', ...(cell.colSpan > 1 ? { colSpan: cell.colSpan } : {}), ...(cell.rowSpan > 1 ? { rowSpan: cell.rowSpan } : {}) };
   }
   const firstBody = rows.findIndex(item => !item.header), headerRows = firstBody < 0 ? rows.length : firstBody;
   const caption = [...element.children].find(child => child.localName === 'caption');
   return [...(caption ? [{ text: inline(caption, context), bold: true, margin: [0, 6, 0, 3] }] : []), {
-    table: { headerRows, widths, body, keepWithHeaderRows: headerRows ? 1 : 0 },
-    layout: { hLineWidth: () => 0.4, vLineWidth: () => 0.4, hLineColor: () => '#cbd7e4', vLineColor: () => '#cbd7e4', paddingLeft: () => 4, paddingRight: () => 4, paddingTop: () => 4, paddingBottom: () => 4 },
+    table: { headerRows, widths, body, keepWithHeaderRows: headerRows ? 1 : 0, ...(context.templateStyle ? { dontBreakRows: true } : {}) },
+    layout: { hLineWidth: () => 0.4, vLineWidth: () => 0.4, hLineColor: () => context.templateStyle?.borderColor ?? '#cbd7e4', vLineColor: () => context.templateStyle?.borderColor ?? '#cbd7e4', paddingLeft: () => paddingX, paddingRight: () => paddingX, paddingTop: () => paddingY, paddingBottom: () => paddingY },
     margin: [0, 7, 0, 10]
   }];
 }
@@ -181,7 +203,13 @@ export async function pdfNodes(root: Node, context: PdfLayoutContext): Promise<P
   if (tag === 'table') return [...(id ? [bookmark(id)] : []), ...await tableNode(root, context)];
   if (tag === 'pre') return [{ text: wrapPdfToken(root.textContent ?? '', context.width - 16, { font: 'Mono', fontSize: 8 }), font: 'Mono', fontSize: 8, preserveLeadingSpaces: true, background: '#f2f4f8', margin: [8, 6, 8, 8], ...(id ? { id } : {}) }];
   if (tag === 'hr') return [{ canvas: [{ type: 'line', x1: 0, x2: context.width, y1: 0, y2: 0, lineWidth: 0.5, lineColor: '#cbd7e4' }], margin: [0, 9, 0, 9] }];
-  if (/^h[1-6]$/.test(tag)) return [{ text: inline(root, { ...context, fontSize: 22 - Number(tag[1]) * 2 }), fontSize: 22 - Number(tag[1]) * 2, bold: true, color: INK, headlineLevel: Number(tag[1]), margin: [0, 12, 0, 5], ...(id ? { id } : {}) }];
+  if (/^h[1-6]$/.test(tag)) {
+    const level = Number(tag[1]), style = context.templateStyle;
+    const fontSize = style ? level === 1 ? style.h1Size : level === 2 ? style.h2Size : level === 3 ? style.h3Size : Math.max(style.bodySize, style.h3Size - level + 3) : 22 - level * 2;
+    const ruled = level === 1 && !!style?.headingRule;
+    return [{ text: inline(root, { ...context, fontSize }), fontSize, bold: true, color: style?.headingColor ?? INK, headlineLevel: level, margin: style ? [0, level === 1 ? 12 : 2, 0, ruled ? 4 : level === 1 ? 10 : 6] : [0, 12, 0, 5], ...(id ? { id } : {}) },
+      ...(ruled ? [{ canvas: [{ type: 'line', x1: 0, x2: context.width, y1: 0, y2: 0, lineWidth: style!.headingRule, lineColor: style!.headingColor }], margin: [0, 0, 0, 10] }] : [])];
+  }
   const blockSelector = 'img,svg,table,ul,ol,p,pre,blockquote,figure,div,details,dl';
   if (!root.querySelector(blockSelector) && !['article', 'figure', 'ul', 'ol'].includes(tag)) {
     const alignment = /text-align:\s*(left|center|right)/.exec(root.getAttribute('style') ?? '')?.[1];

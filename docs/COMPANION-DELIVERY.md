@@ -43,7 +43,7 @@ node scripts/companion-bundle.mjs verify
 
 The build-input downloader verifies the whole VSIX/checksum, every bundled executable, license notice and Mac receipt against the committed catalog. It does not download standalone companion release assets. Public published inputs need no maintainer credential; reading a private draft seed does.
 
-For an unreleased change, use the pinned **Go 1.27.3** compiler (or set `OMR_GO` to its absolute executable), rebuild all affected platforms, regenerate the catalog and execute the target-native qualification:
+For an unreleased change, use the pinned **Go 1.27.4** compiler (or set `OMR_GO` to its absolute executable), rebuild all affected platforms, regenerate the catalog and execute the target-native qualification:
 
 ```sh
 npm run compile

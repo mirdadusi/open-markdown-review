@@ -58,6 +58,21 @@ test('real Slidev capture → shared HTML/VS Code bundle → visual/source comme
     assert.equal(inventory.pdf.digest, digest(pdf)); assert.equal(inventory.renderedDiagrams.length, 1);
     for (const slide of profile.slides) { const resource = session.revision!.resources.find(r => r.id === slide.previewResourceId)!; assert.ok(inventory.resources.some(r => r.digest === resource.digest)); }
     assert.ok(inventory.resources.some(r => r.digest === session.manifest.extensions![0].schemaDigest));
+    const inspect = await (new Function('specifier', 'return import(specifier)')(pathToFileURL(path.resolve('scripts/inspect-pdf.mjs')).href) as Promise<{ inspectPdf(bytes: Uint8Array): Promise<any> }>);
+    for (const [mode, includeDocumentList] of [['review', false], ['clean', true]] as const) {
+      const exported = await page.evaluate(async args => window.omrAutomation!.export({ id: 'reviewer' }, args.revision!, args.operation, args.mode, { includeDocumentList: args.includeDocumentList }), { revision: created.revisionId, operation: 'slidev_list_' + mode, mode, includeDocumentList }) as { pdfPath: string };
+      const inspected = await inspect.inspectPdf(await readFile(path.join(root, exported.pdfPath)));
+      assert.deepEqual(inspected.violations, []);
+      assert.ok(inspected.images.length >= profile.slides.length, 'The list choice never drops frozen slides.');
+      if (mode === 'review') {
+        assert.ok(!inspected.links.some((link: { destination?: string }) => link.destination === 'review-documents'));
+        assert.ok(inspected.annotations.length >= 3, 'Visual/source findings and the reply remain native annotations.');
+      } else {
+        assert.equal(inspected.annotations.length, 0); assert.equal(inspected.attachments, null);
+        const targets = inspected.links.filter((link: { destination?: string }) => link.destination?.startsWith('clean-slide-'));
+        assert.equal(new Set(targets.map((link: { destination?: string }) => link.destination)).size, profile.slides.length); assert.ok(targets.every((link: { targetPage?: number }) => link.targetPage));
+      }
+    }
     await session.refresh(true); assert.ok(session.events.some(e => e.type === 'export.created')); assert.deepEqual(session.diagnostics, []);
     assert.deepEqual(requests, [], 'Participants need no network or Slidev server.'); assert.deepEqual(errors, []);
     await page.screenshot({ path: path.join(temporary, 'toolbox.png'), fullPage: true });

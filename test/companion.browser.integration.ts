@@ -1,3 +1,4 @@
+import { confirmPdfOptions } from './pdfExport.helpers';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -105,7 +106,7 @@ test('real HTTP companion: blocked picker, two independent browser participants,
     assert.equal(await sam.locator('#comment').isEnabled(), true);
     await sam.reload(); await sam.locator('#workspace').waitFor({ state: 'visible', timeout: 60000 });
     assert.equal(await sam.locator('#actor-id').inputValue(), 'sam@example.com', 'The helper remembers only the locally entered participant.');
-    await alex.locator('#export').click();
+    await confirmPdfOptions(alex);
     await alex.waitForFunction(() => document.getElementById('export-result')?.dataset.kind === 'success' || document.getElementById('export-result')?.dataset.kind === 'error', { timeout: 90000 });
     assert.equal(await alex.locator('#export-result').getAttribute('data-kind'), 'success', await alex.locator('#export-result-message').innerText());
     const verified = new ReviewSession(new NativeStorage(f.root, path.join(f.temporary, 'verification-journal'))); await verified.open();
@@ -113,13 +114,13 @@ test('real HTTP companion: blocked picker, two independent browser participants,
     const bytes = await readFile(path.join(f.root, exported.pdf.path)); assert.equal(digest(bytes), exported.pdf.digest); assert.equal(bytes.subarray(0, 5).toString(), '%PDF-');
     const download = alex.waitForEvent('download'); await alex.locator('#download-export').click(); assert.ok((await download).suggestedFilename().endsWith('.pdf'));
     assert.equal((await verified.audit(verified.context(f.creator))).inventory.policyResult, 'not-evaluated');
-    await alex.locator('#export-mode').selectOption('clean'); await alex.locator('#export').click();
+    await confirmPdfOptions(alex, 'clean');
     await alex.waitForFunction(() => document.getElementById('export-result')?.dataset.kind === 'success' || document.getElementById('export-result')?.dataset.kind === 'error', { timeout: 90000 });
     assert.equal(await alex.locator('#export-result').getAttribute('data-kind'), 'success', await alex.locator('#export-result-message').innerText());
     const cleanDownload = alex.waitForEvent('download'); await alex.locator('#download-export').click(); assert.ok((await cleanDownload).suggestedFilename().endsWith('-document.pdf'));
     await verified.refresh(); assert.equal(verified.events.filter(e => e.type === 'export.created').length, 1, 'Clean output does not falsely assert an audit archive event.');
     await alex.reload(); await alex.locator('#workspace').waitFor({ state: 'visible', timeout: 60000 });
-    await alex.locator('#export-mode').selectOption('clean'); await alex.locator('#export-result[data-kind="success"]').waitFor();
+    await alex.locator('#export-result[data-kind="success"]').waitFor();
     assert.match(await alex.locator('#export-result-message').innerText(), /clean document PDF/);
     assert.ok(verified.events.some(e => e.type === 'review.completed')); assert.ok(verified.events.some(e => e.type === 'review.reopened'));
     assert.ok(verified.events.some(e => e.type === 'review.approved')); assert.ok(verified.events.some(e => e.type === 'review.withdrawn'));
@@ -128,9 +129,23 @@ test('real HTTP companion: blocked picker, two independent browser participants,
     await alex.evaluate(() => window.scrollTo(0, 0));
     const screenshot = path.join(f.temporary, 'companion-review.png'); await alex.screenshot({ path: screenshot });
     console.log(`Local companion UI evidence: ${screenshot}`);
+    // Hold a verified refresh result until AFTER stop succeeds. Windows exposed
+    // this race naturally; make it deterministic on every host, without sleeps.
+    await sam.evaluate(() => {
+      const state = window as unknown as { stopRace: { ready: boolean; settled: boolean; release(): void } };
+      let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+      state.stopRace = { ready: false, settled: false, release };
+      const session = window.omrAutomation!.session()!, original = session.refresh.bind(session);
+      session.refresh = async () => { await original(); state.stopRace.ready = true; await gate; state.stopRace.settled = true; };
+    });
+    await sam.locator('#refresh').click();
+    await sam.waitForFunction(() => (window as unknown as { stopRace: { ready: boolean } }).stopRace.ready);
     sam.on('dialog', dialog => { void dialog.accept(); }); await sam.locator('#stop-companion').click(); await peer.closed;
     // The process exit can arrive before the browser handles the stop response.
     await sam.waitForFunction(() => document.getElementById('status')?.textContent?.includes('stopped'));
+    await sam.evaluate(() => (window as unknown as { stopRace: { release(): void } }).stopRace.release());
+    await sam.waitForFunction(() => (window as unknown as { stopRace: { settled: boolean } }).stopRace.settled);
     assert.match(await sam.locator('#status').innerText(), /stopped/);
+    assert.equal(await sam.locator('#workspace').isVisible(), false, 'A late refresh must not revive a stopped review.');
   } finally { releaseSecondDocument(); await browser.close(); await peer.close(); await f.helper.close(); }
 });

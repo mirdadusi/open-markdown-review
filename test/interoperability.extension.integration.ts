@@ -1,6 +1,8 @@
+import { confirmPdfOptions } from './pdfExport.helpers';
 import * as vscode from 'vscode';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import { staticRasterSvg } from './svg.fixture';
 import path from 'node:path';
 import os from 'node:os';
 import { chromium, Frame, Page } from 'playwright';
@@ -47,7 +49,7 @@ export async function run():Promise<void> {
   await mkdir(source);
   await writeFile(path.join(source,'index.md'),'# Cross-client review\n\nFrozen paragraph with Příliš žluťoučký kůň.\n\n[Second document](second.md)\n\n| Requirement | State |\n|---|---|\n| Shared evidence | Required |\n\n![Frozen SVG](image.svg)\n\n```mermaid\nflowchart LR\n A[Create] --> B[Review] --> C[Archive]\n```\n');
   await writeFile(path.join(source,'second.md'),'# Second document\n\nSecond document challenge target.\n');
-  await writeFile(path.join(source,'image.svg'),'<svg xmlns="http://www.w3.org/2000/svg" width="160" height="60"><rect width="160" height="60" fill="#2563a6"/></svg>');
+  await writeFile(path.join(source,'image.svg'),staticRasterSvg(160,60));
   const creator={id:'creator@example.com',displayName:'Review Initiator'},journalRoot=path.join(temporary,'vscode-private');
   const context={extensionPath:extension.extensionPath,extensionUri:vscode.Uri.file(extension.extensionPath),globalState:memento(),workspaceState:memento(),globalStorageUri:vscode.Uri.file(journalRoot)} as vscode.ExtensionContext;
   const host=new ProfessionalHost(context);
@@ -152,7 +154,7 @@ export async function run():Promise<void> {
     await view.page().screenshot({path:path.join(output,'vscode-participation.png')});
     await nodePage.screenshot({path:path.join(output,'node-participation.png')});await goPage.screenshot({path:path.join(output,'go-participation.png')});
     // Final review action: export via the real VS Code webview and native bridge.
-    await view.locator('#export').click();
+    await confirmPdfOptions(view);
     await view.waitForFunction(()=>['success','error'].includes(document.getElementById('export-result')?.dataset.kind??''),{timeout:90000});
     assert.equal(await view.locator('#export-result').getAttribute('data-kind'),'success',await view.locator('#export-result-message').innerText());
     const verified=new ReviewSession(new NativeStorage(root,path.join(temporary,'independent-audit')));await verified.open();
@@ -164,7 +166,7 @@ export async function run():Promise<void> {
     assert.equal(verified.events.filter(e=>e.type==='review.completed').length,2);assert.equal(verified.events.filter(e=>e.type==='comment.replied').length,2);
     const last=[...verified.events].sort((a,b)=>a.occurredAt.localeCompare(b.occurredAt)).at(-1)!;assert.equal(last.type,'export.created','Export is the final recorded review action.');
     const eventCount=verified.events.length;
-    await view.locator('#export-mode').selectOption('clean');await view.locator('#export').click();
+    await confirmPdfOptions(view,'clean');
     await view.locator('#export-result[data-kind="success"],#export-result[data-kind="error"]').waitFor({timeout:90000});
     assert.equal(await view.locator('#export-result').getAttribute('data-kind'),'success',await view.locator('#export-result-message').innerText());
     const cleanPdfPath=(await view.locator('#export-result-path').innerText()).match(/exports\/[a-f0-9]{64}\.pdf/)![0];

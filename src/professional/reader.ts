@@ -1,3 +1,5 @@
+import { documentOrder } from './documentOrder';
+
 /** Disposable client view state. Never writes documents, protocol events or completion. */
 export interface ReadingPosition { path: string; offset: number }
 interface Page<T> { path: string; section: HTMLElement; body: HTMLElement; value: T }
@@ -10,7 +12,7 @@ export interface ReaderOptions<T> {
   hold(): boolean;
 }
 export function readingOrder(paths: readonly string[], root: string): string[] {
-  return [root, ...paths.filter(path => path !== root)];
+  return documentOrder(paths, root);
 }
 export class DocumentReader<T> {
   private pages: Page<T>[] = [];

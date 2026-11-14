@@ -1,7 +1,8 @@
 import { ascii } from './bytes';
-import { Event, Manifest, Policy, PolicyResult, Revision, Diagnostic, LIMITS, REVIEWER_COMPLETION } from './types';
+import { Event, Manifest, Policy, PolicyResult, Revision, Diagnostic, LIMITS, REVIEWER_COMPLETION, COMMENT_EDITS } from './types';
 import { effectiveReviewers, invitationAllowed } from './reviewer';
 export function registerKey(e: Event): string | undefined {
+  if (e.type === 'comment.edited') return `comment:${e.commentId}`;
   if (e.type === 'thread.resolved' || e.type === 'thread.reopened') return `status:${e.threadId}`;
   if (e.type === 'thread.decided') return `decision:${e.threadId}`;
   if (e.type === 'thread.addressed') return `addressing:${e.threadId}`;
@@ -12,9 +13,9 @@ export function registerKey(e: Event): string | undefined {
   return undefined;
 }
 export function predecessors(e: Event): string[] {
-  return 'statusPredecessors' in e ? e.statusPredecessors : 'decisionPredecessors' in e ? e.decisionPredecessors : 'addressingPredecessors' in e ? e.addressingPredecessors : 'verificationPredecessors' in e ? e.verificationPredecessors : 'stancePredecessors' in e ? e.stancePredecessors : 'completionPredecessors' in e ? e.completionPredecessors : [];
+  return 'editPredecessors' in e ? e.editPredecessors : 'statusPredecessors' in e ? e.statusPredecessors : 'decisionPredecessors' in e ? e.decisionPredecessors : 'addressingPredecessors' in e ? e.addressingPredecessors : 'verificationPredecessors' in e ? e.verificationPredecessors : 'stancePredecessors' in e ? e.stancePredecessors : 'completionPredecessors' in e ? e.completionPredecessors : [];
 }
-export const registerValue = (e: Event): string => e.type === 'thread.decided' ? e.decision : e.type === 'thread.addressed' ? `${e.toRevisionId}:${e.sourceDigestAfter}` : e.type === 'thread.verification.recorded' ? e.verdict : e.type;
+export const registerValue = (e: Event): string => e.type === 'comment.edited' ? e.body.text : e.type === 'thread.decided' ? e.decision : e.type === 'thread.addressed' ? `${e.toRevisionId}:${e.sourceDigestAfter}` : e.type === 'thread.verification.recorded' ? e.verdict : e.type;
 export function heads(events: readonly Event[]): Event[] {
   const superseded = new Set(events.flatMap(predecessors)); return events.filter(e => !superseded.has(e.id));
 }
@@ -31,7 +32,8 @@ export function dependencies(e: Event, all: readonly Event[], revisions: Readonl
     result.push(...all.filter(p => p.type === 'revision.created' && p.revisionId === e.toRevisionId).map(p => p.id));
   }
   if ('suggestionId' in e && e.type !== 'suggestion.created') result.push(...all.filter(p => p.type === 'suggestion.created' && p.suggestionId === e.suggestionId).map(p => p.id));
-  if (e.type === 'comment.replied' && e.inReplyTo) result.push(...all.filter(p => 'commentId' in p && p.commentId === e.inReplyTo).map(p => p.id));
+  if (e.type === 'comment.replied' && e.inReplyTo) result.push(...all.filter(p => (p.type === 'comment.created' || p.type === 'comment.replied') && p.commentId === e.inReplyTo).map(p => p.id));
+  if (e.type === 'comment.edited') result.push(...all.filter(p => (p.type === 'comment.created' || p.type === 'comment.replied') && p.commentId === e.commentId).map(p => p.id));
   if (e.type === 'suggestion.applied') result.push(...e.acceptanceIds);
   return [...new Set(result)];
 }
@@ -47,11 +49,11 @@ export function admit(events: readonly Event[], revisions: ReadonlyMap<string, R
   unique(e => e.type === 'revision.created' ? e.revisionId : undefined);
   unique(e => e.type === 'comment.created' ? e.threadId : undefined);
   unique(e => e.type === 'suggestion.created' ? e.suggestionId : undefined);
-  unique(e => 'commentId' in e ? e.commentId : undefined);
+  unique(e => e.type === 'comment.created' || e.type === 'comment.replied' ? e.commentId : undefined);
   const publications = new Map(events.filter(e => e.type === 'revision.created').map(e => [e.revisionId, e]));
   const threadRoots = new Map(events.filter((e): e is Extract<Event, { type: 'comment.created' }> => e.type === 'comment.created').map(e => [e.threadId, e]));
   const suggestionRoots = new Map(events.filter((e): e is Extract<Event, { type: 'suggestion.created' }> => e.type === 'suggestion.created').map(e => [e.suggestionId, e]));
-  const comments = new Map(events.filter((e): e is Extract<Event, { type: 'comment.created' | 'comment.replied' }> => 'commentId' in e).map(e => [e.commentId, e]));
+  const comments = new Map(events.filter((e): e is Extract<Event, { type: 'comment.created' | 'comment.replied' }> => e.type === 'comment.created' || e.type === 'comment.replied').map(e => [e.commentId, e]));
   const addressing = new Map(events.filter((e): e is Extract<Event, { type: 'thread.addressed' }> => e.type === 'thread.addressed').map(e => [e.id, e]));
   const members = participation ? new Set(effectiveReviewers(participation, events).map(r => r.id)) : undefined;
   const initialMembers = new Set(participation?.reviewers?.map(r => r.id));
@@ -66,6 +68,11 @@ export function admit(events: readonly Event[], revisions: ReadonlyMap<string, R
     return false;
   };
   for (const e of events) {
+    if (e.type === 'comment.edited') {
+      const original = comments.get(e.commentId);
+      if (!participation?.requiredCapabilities.includes(COMMENT_EDITS)) bad(e, 'Comment editing requires comment-edits-v1.');
+      if (!original || original.threadId !== e.threadId || original.revisionId !== e.revisionId || original.reviewId !== e.reviewId || original.actor.id !== e.actor.id) bad(e, 'Only the original comment author may edit a comment in the same thread and snapshot.');
+    }
     if (e.type === 'reviewer.invited' && (!participation || !invitationAllowed(participation, e))) bad(e, 'Only the declared review initiator may invite reviewers, in a restricted review declaring reviewer-invitations-v1.');
     if (participation?.reviewers && e.actor.id !== participation.createdBy.id && !members!.has(e.actor.id)) bad(e, 'Actor is outside the declared reviewer email roster.');
     const needsInvitation = !!participation?.reviewers && members!.has(e.actor.id) && e.actor.id !== participation.createdBy.id && !initialMembers.has(e.actor.id);
@@ -129,6 +136,7 @@ export function admit(events: readonly Event[], revisions: ReadonlyMap<string, R
     }
     if ('suggestionId' in e && e.type !== 'suggestion.created') { const p = suggestionRoots.get(e.suggestionId); if (p) result.push(p.id); }
     if (e.type === 'comment.replied' && e.inReplyTo) { const p = comments.get(e.inReplyTo); if (p) result.push(p.id); }
+    if (e.type === 'comment.edited') { const p = comments.get(e.commentId); if (p) result.push(p.id); else bad(e, 'Missing original comment.'); }
     if (e.type === 'suggestion.applied') result.push(...e.acceptanceIds);
     return [e.id, result] as const;
   }));
@@ -160,6 +168,10 @@ export function fold(events: readonly Event[], revisionId: string) {
     if (e.type === 'suggestion.applied') { const list = applicationsBySuggestion.get(e.suggestionId) ?? []; list.push(e); applicationsBySuggestion.set(e.suggestionId, list); }
   }
   const register = (key: string) => { const history = registers.get(key) ?? []; return { history, heads: heads(history), conflict: conflicted(history) }; };
+  const comments = new Map(current.filter((e): e is Extract<Event, { type: 'comment.created' | 'comment.replied' }> => e.type === 'comment.created' || e.type === 'comment.replied').map(original => {
+    const edits = register(`comment:${original.commentId}`), latest = edits.heads[0];
+    return [original.commentId, { original, edits, body: !edits.conflict && latest?.type === 'comment.edited' ? latest.body : original.body }];
+  }));
   const threads = current.filter((e): e is Extract<Event, { type: 'comment.created' }> => e.type === 'comment.created').map(root => {
     const status = register(`status:${root.threadId}`), decision = register(`decision:${root.threadId}`), addressingBase = register(`addressing:${root.threadId}`);
     // Verification targets one exact addressing event. Even semantically equal
@@ -169,7 +181,8 @@ export function fold(events: readonly Event[], revisionId: string) {
     const verification = register(`verification:${root.threadId}:${addressed?.id ?? 'none'}`);
     // Decisions and their conflicts do not mutate the independent lifecycle
     // register. Once closed, a thread stays closed until an admitted reopen.
-    return { root, status, decision, addressing, addressed, verification, open: status.conflict || !status.heads.length || status.heads.some(e => e.type === 'thread.reopened'), replies: replies.get(root.threadId) ?? [] };
+    const comment = comments.get(root.commentId)!, replyList = replies.get(root.threadId) ?? [];
+    return { root, comment, editConflict: comment.edits.conflict || replyList.some(reply => comments.get(reply.commentId)!.edits.conflict), status, decision, addressing, addressed, verification, open: status.conflict || !status.heads.length || status.heads.some(e => e.type === 'thread.reopened'), replies: replyList };
   });
   const suggestions = current.filter((e): e is Extract<Event, { type: 'suggestion.created' }> => e.type === 'suggestion.created').map(root => {
     const decision = register(`suggestion:${root.suggestionId}`), applications = applicationsBySuggestion.get(root.suggestionId) ?? [];
@@ -179,7 +192,7 @@ export function fold(events: readonly Event[], revisionId: string) {
   });
   const stances = [...registers.keys()].filter(k => k.startsWith('stance:')).map(k => ({ actor: registers.get(k)![0].actor.id, ...register(k) }));
   const completions = [...registers.keys()].filter(k => k.startsWith('completion:')).map(k => ({ actor: registers.get(k)![0].actor.id, ...register(k) }));
-  return { threads, suggestions, stances, completions, current, register };
+  return { threads, suggestions, stances, completions, comments, current, register };
 }
 
 /** Completion is scoped to one actor and frozen revision, independently of stance. */
@@ -205,23 +218,23 @@ export function reviewerProgress(manifest: Manifest, events: readonly Event[], r
   });
 }
 
-export type ThreadWorkflowQueue = 'conflict' | 'needs-decision' | 'accepted-not-implemented' | 'awaiting-verification' | 'challenged' | 'verified' | 'disposed';
+export type ThreadWorkflowQueue = 'conflict' | 'needs-decision' | 'accepted-not-implemented' | 'implemented' | 'challenged' | 'verified' | 'disposed';
 
 /** Orthogonal discussion, disposition, implementation and verification state collapsed only for work-queue routing. */
 export function threadWorkflowQueue(thread: ReturnType<typeof fold>['threads'][number]): ThreadWorkflowQueue {
-  if (thread.status.conflict || thread.decision.conflict || thread.addressing.conflict || thread.verification.conflict) return 'conflict';
+  if (thread.editConflict || thread.status.conflict || thread.decision.conflict || thread.addressing.conflict || thread.verification.conflict) return 'conflict';
   const decision = thread.decision.heads[0];
   if (!decision || decision.type !== 'thread.decided') return 'needs-decision';
   if (decision.decision !== 'accepted') return 'disposed';
   if (!thread.addressed) return 'accepted-not-implemented';
   const verdict = thread.verification.heads[0];
-  if (!verdict || verdict.type !== 'thread.verification.recorded') return 'awaiting-verification';
+  if (!verdict || verdict.type !== 'thread.verification.recorded') return 'implemented';
   return verdict.verdict === 'challenged' ? 'challenged' : 'verified';
 }
 export function policyResult(policy: Policy, events: readonly Event[], revision: string): PolicyResult {
   if (policy.mode === 'assertions-only') return 'not-evaluated';
   const state = fold(events, revision), stances = state.stances.filter(s => policy.eligibleActorIds.includes(s.actor));
-  if (stances.some(s => s.conflict) || state.threads.some(t => t.status.conflict || t.decision.conflict || t.addressing.conflict || t.verification.conflict) || state.suggestions.some(s => s.status === 'conflicted')) return 'conflicted';
+  if (stances.some(s => s.conflict) || state.threads.some(t => t.editConflict || t.status.conflict || t.decision.conflict || t.addressing.conflict || t.verification.conflict) || state.suggestions.some(s => s.status === 'conflicted')) return 'conflicted';
   const approvals = stances.filter(s => s.heads.length && s.heads.every(e => e.type === 'review.approved')).length;
   return approvals >= policy.minimumApprovals && (!policy.blockOnRejection || !stances.some(s => s.heads.some(e => e.type === 'review.rejected'))) && (!policy.requireResolvedThreads || !state.threads.some(t => t.open)) && (!policy.requireClosedSuggestions || !state.suggestions.some(s => s.open)) ? 'satisfied' : 'unsatisfied';
 }

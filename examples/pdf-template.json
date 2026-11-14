@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "omr-pdf-template/1",
+  "id": "NeutralSpec",
+  "version": "1.0.0",
+  "label": "Neutral specification",
+  "distribution": "all",
+  "cover": true,
+  "css": ":root { --body-size: 10pt; --heading-color: #204060; --link-color: #2458a6; --table-header: #e7eef5; --margin-left: 18mm; --margin-right: 18mm; }",
+  "coverSections": [
+    { "title": "Project / Product", "fields": [
+      { "key": "project", "label": "Project name" },
+      { "key": "product", "label": "Product name / version", "placeholder": "Product 2.1" }
+    ] },
+    { "title": "Document", "fields": [
+      { "key": "documentId", "label": "Specification number", "required": true, "help": "Use the assigned document identifier.", "placeholder": "DOC-123" },
+      { "key": "author", "label": "Prepared by" },
+      { "key": "version", "label": "Document version" },
+      { "key": "date", "label": "Document date" }
+    ] }
+  ],
+  "pageFields": [
+    { "key": "title", "label": "Document title" },
+    { "key": "division", "label": "Organization" },
+    { "key": "confidentiality", "label": "Confidentiality note" }
+  ]
+}

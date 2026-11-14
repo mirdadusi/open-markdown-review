@@ -13,8 +13,8 @@ const requested = process.argv.slice(2), selected = requested.length ? requested
 if (selected.some(t => !Object.hasOwn(targets,t)) || new Set(selected).size !== selected.length) throw Error('Use darwin-arm64, linux-x64 and/or win32-x64.');
 const go = process.env.OMR_GO ?? 'go';
 function run(args, env={}) { const result = spawnSync(go,args,{cwd:directory,env:{...goDistributionEnvironment(process.env),...env},encoding:'utf8'}); if(result.error || result.status!==0) throw Error(`${go} ${args.join(' ')} failed: ${result.error ?? result.stderr}`); return result.stdout.trim(); }
-const hostToolchain = run(['version']), toolchain='go1.27.3';
-if (!hostToolchain.startsWith('go version '+toolchain+' ')) throw Error('Build requires the pinned Go 1.27.3 toolchain.');
+const hostToolchain = run(['version']), toolchain='go1.27.4';
+if (!hostToolchain.startsWith('go version '+toolchain+' ')) throw Error('Build requires the pinned Go 1.27.4 toolchain.');
 await mkdir(path.join(directory,'assets'),{recursive:true});
 await buildCompanionCore();
 await copyFile(path.join(root,'dist/companion-core.js'),path.join(directory,'assets/core.js'));

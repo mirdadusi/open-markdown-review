@@ -17,7 +17,9 @@ import { effectiveReviewers, reviewerForInput, reviewerIdentity, reviewerRoster 
 import { ReviewActivity } from '../reviewRemoval';
 import { reviewPathKey, sameReviewPath } from '../reviewPaths';
 import { mapWithConcurrency } from '../protocol/concurrency';
-import { inspectSourceBinding, relocateReviewPackage } from './relocation';
+import { relocateReviewPackage } from './relocation';
+import { chooseSourceWorkspace } from './workspaceSource';
+import { nativeSourceUri, openSourceWorkspaces, workspaceSourceUi } from './workspaceSourceUi';
 import { locateQuote } from '../protocol/anchor';
 import { verifiedExportFile } from './exportAccess';
 import type { Companion } from './companion';
@@ -28,6 +30,9 @@ import { githubCliToken } from '../updates/token';
 import { companionReleaseHost } from './companionRelease';
 import { inspectClientUpgrade, upgradeReviewClient } from './clientUpgrade';
 import { COMPANION_TARGETS } from './companionTargets';
+import { FindingPublisher, FindingSelection } from './findingPublication';
+import { findingScopeChoice } from './findingScope';
+import { checkpoint, interruptible, OperationControl } from './operation';
 
 export interface Entry { root: string; title: string; source?: string; reviewer?: ActorRef; reviewId?: string; availability?: 'available' | 'unavailable'; unavailableReason?: string }
 export class PackageItem extends vscode.TreeItem {
@@ -56,6 +61,7 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
   private readonly panelRoots = new Map<vscode.WebviewPanel, string>();
   private readonly companions = new Map<string, Companion>();
   private readonly companionStarts = new Map<string, Promise<Companion>>();
+  private readonly findingPreparations = new Map<string, { root: string; origin: string; actor: string; controller: AbortController }>();
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   get active() { return this.selected; }
   constructor(private readonly context: vscode.ExtensionContext, private readonly activity = new ReviewActivity()) {
@@ -67,6 +73,7 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
   }
   get sourceRoots(): string[] { return this.entries.flatMap(e => e.source ? [e.source] : []); }
   async closeReview(root: string): Promise<void> {
+    for (const pending of this.findingPreparations.values()) if (sameReviewPath(pending.root, root)) pending.controller.abort();
     for (const [panel, panelRoot] of this.panelRoots) if (sameReviewPath(panelRoot, root)) panel.dispose();
     const companion = this.companions.get(reviewPathKey(root)) ?? await this.companionStarts.get(reviewPathKey(root));
     if (companion) { await companion.close(); this.companions.delete(reviewPathKey(root)); }
@@ -88,7 +95,9 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
     if (!this.active) return [];
     const title = new vscode.TreeItem(this.active.title); title.description = 'Active review'; title.tooltip = this.active.root;
     title.iconPath = new vscode.ThemeIcon('pass-filled'); title.command = { command: 'openMarkdownReview.openReview', title: 'Open review toolbox' };
-    return [title, ...[['Creator workbench', 'workbench', 'tools'], ['Comments', 'threads', 'comment-discussion'], ['Suggested edits', 'suggestions', 'diff'], ['Review history', 'history', 'history']].map(([label, section, icon]) => {
+    const publish = new vscode.TreeItem('Publish updated documents…'); publish.iconPath = new vscode.ThemeIcon('cloud-upload');
+    publish.command = { command: 'openMarkdownReview.publishUpdatedDocuments', title: 'Publish updated documents', arguments: [this.active.root] };
+    return [title, publish, ...[['Creator workbench', 'workbench', 'tools'], ['Comments', 'threads', 'comment-discussion'], ['Suggested edits', 'suggestions', 'diff'], ['Review history', 'history', 'history']].map(([label, section, icon]) => {
       const item = new vscode.TreeItem(label); item.iconPath = new vscode.ThemeIcon(icon);
       item.command = { command: 'openMarkdownReview.showPackageSection', title: `Open ${label.toLowerCase()}`, arguments: [section] }; return item;
     })];
@@ -97,7 +106,7 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
   private entryFor(argument?: unknown): Entry | undefined {
     if (argument instanceof PackageItem) return this.entries.find(entry => sameReviewPath(entry.root, argument.entry.root));
     if (typeof argument === 'string') return this.entries.find(entry => sameReviewPath(entry.root, argument));
-    return this.active;
+    return argument === undefined ? this.active : undefined;
   }
   private replaceEntry(previous: Entry, replacement: Entry): void {
     this.entries = this.entries.map(entry => sameReviewPath(entry.root, previous.root) ? replacement : entry).sort(this.compareEntries);
@@ -174,7 +183,7 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
     if (this.active || generation !== this.activationGeneration) return;
     this.revisions.set(entry.root, !!session.revision); await this.select(entry, generation);
   }
-  dispose() { this.changed.dispose(); this.status.dispose(); for (const panel of this.panelRoots.keys()) panel.dispose(); for (const helper of this.companions.values()) void helper.close(); for (const pending of this.companionStarts.values()) void pending.then(helper => helper.close(), () => undefined); this.companions.clear(); }
+  dispose() { for (const pending of this.findingPreparations.values()) pending.controller.abort(); this.findingPreparations.clear(); this.changed.dispose(); this.status.dispose(); for (const panel of this.panelRoots.keys()) panel.dispose(); for (const helper of this.companions.values()) void helper.close(); for (const pending of this.companionStarts.values()) void pending.then(helper => helper.close(), () => undefined); this.companions.clear(); }
   private get journalRoot() { return path.join(this.context.globalStorageUri.fsPath, 'professional'); }
   private get artifact() { return path.join(this.context.extensionPath, 'dist', 'OpenMarkdownReview.html'); }
   /** Open the same authoritative review through a native, loopback-only host. */
@@ -250,11 +259,14 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
     return { id: id.trim(), ...(displayName?.trim() ? { displayName: displayName.trim() } : {}) };
   }
   private async revealSource(entry: Entry, revisionId: string, threadId: string): Promise<{ confidence: 'exact' | 'context' | 'quote' | 'position'; digest: string }> {
-    if (!entry.source) throw new Error('This review has no linked source workspace. Use “Link Local Source Workspace” first.');
     const session = new ReviewSession(new NativeStorage(entry.root, this.journalRoot)); await session.open(); await session.pin(revisionId);
     const root = session.events.find(event => event.type === 'comment.created' && event.revisionId === revisionId && event.threadId === threadId);
     if (root?.type !== 'comment.created') throw new Error('The selected comment is not part of this revision.');
-    const target = await contained(entry.source, root.anchor.document);
+    if (!entry.source) {
+      if (!await this.linkSourceWorkspace(entry.root, 'source-action')) throw new ProtocolError('cancelled', 'Source selection cancelled. No source file or review evidence was changed.');
+      entry = this.entryFor(entry.root)!;
+    }
+    const target = await contained(entry.source!, root.anchor.document);
     const document = await vscode.workspace.openTextDocument(vscode.Uri.file(target));
     const text = document.getText(), safePosition = (point: { line: number; character: number }) => {
       const line = Math.min(Math.max(0, point.line), Math.max(0, document.lineCount - 1));
@@ -273,6 +285,111 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
     if (confidence === 'position') void vscode.window.showWarningMessage('The original quote no longer exists in the linked source. The editor shows its last known position; reconcile it explicitly.');
     return { confidence, digest: digest(text) };
   }
+  async publishUpdatedDocuments(argument?: unknown): Promise<void> {
+    const entry = this.entryFor(argument);
+    if (!entry) throw new Error('Select a connected review first.');
+    await this.open(entry.root, entry.source);
+    const panel = this.panels.get(entry.root);
+    if (!panel) throw new Error('The selected review toolbox is unavailable.');
+    // Bind and reveal the explicitly requested panel even if a delayed focus
+    // notification from another retained webview arrived while opening it.
+    panel.reveal(vscode.ViewColumn.Active);
+    const action = { command: 'toolbox-action', buttonId: 'publication' };
+    if (this.readyPanels.has(panel)) await panel.webview.postMessage(action);
+    else this.pendingActions.set(panel, [...this.pendingActions.get(panel) ?? [], action]);
+  }
+  private async findingPublication(entry: Entry, method: string, args: unknown[], onProgress?: (requestId: string, message: string) => void): Promise<unknown> {
+    if (method === 'cancelFindingPreparation') {
+      const [origin, actor, requestId] = args, pending = typeof requestId === 'string' ? this.findingPreparations.get(requestId) : undefined;
+      if (!pending || pending.origin !== origin || !sameReviewPath(pending.root, entry.root) || !actor || typeof actor !== 'object' || (actor as ActorRef).id !== pending.actor) return false;
+      pending.controller.abort(); return true;
+    }
+    if (method === 'finishFindingPublication') {
+      const request = args[2] as { requestId?: string } | undefined;
+      const requestId = request?.requestId;
+      if (requestId !== undefined && (typeof requestId !== 'string' || !/^publish_[a-zA-Z0-9_-]{1,90}$/.test(requestId))) throw new ProtocolError('invalid', 'Invalid publication progress request.');
+      let notified = 0, lastPhase = '';
+      return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Publishing revision and recording selected fixes', cancellable: false }, progress => this.findingPublicationImpl(entry, method, args, { progress: message => {
+        const now = Date.now(), phase = message.replace(/\d+/g, '#');
+        if (phase === lastPhase && now - notified < 80) return;
+        notified = now; lastPhase = phase;
+        progress.report({ message }); if (requestId) onProgress?.(requestId, message);
+      } }));
+    }
+    if (method !== 'prepareFindingPublication') return this.findingPublicationImpl(entry, method, args);
+    const [origin, actor, supplied] = args, requestId = supplied === undefined ? newId('prepare') : supplied;
+    if (typeof origin !== 'string' || !actor || typeof actor !== 'object' || typeof (actor as ActorRef).id !== 'string' || typeof requestId !== 'string' || !/^prepare_[a-zA-Z0-9_-]{1,90}$/.test(requestId) || this.findingPreparations.has(requestId)) throw new ProtocolError('invalid', 'Invalid or duplicate preparation request.');
+    const controller = new AbortController(); this.findingPreparations.set(requestId, { root: entry.root, origin, actor: (actor as ActorRef).id, controller });
+    let notified = 0;
+    try { return await this.findingPublicationImpl(entry, method, args, { signal: controller.signal, progress: message => {
+      const now = Date.now(); if (now - notified >= 80) { notified = now; onProgress?.(requestId, message); }
+    } }); }
+    finally { this.findingPreparations.delete(requestId); }
+  }
+  private async findingPublicationImpl(entry: Entry, method: string, args: unknown[], control?: OperationControl): Promise<unknown> {
+    const [origin, candidate] = args;
+    if (typeof origin !== 'string' || !candidate || typeof candidate !== 'object') throw new ProtocolError('invalid', 'Invalid finding publication context.');
+    const actor = candidate as ActorRef;
+    checkpoint(control, 'Verifying the review and your publication context…');
+    const authority = new ReviewSession(new NativeStorage(entry.root, this.journalRoot), control?.progress); await interruptible(authority.open(), control); await interruptible(authority.pin(origin), control);
+    if (reviewerForInput(authority.manifest, actor, authority.events)?.id !== authority.manifest.createdBy.id) throw new ProtocolError('permission', 'Only the review initiator can author and record findings.');
+    if (method === 'linkFindingSource') return { canApply: await this.linkSourceWorkspace(entry.root) };
+    if (method === 'configureFindingRevision') return this.create(true, entry.root);
+    let connected = this.entryFor(entry.root)!;
+    if (!connected.source) {
+      if (method !== 'prepareFindingPublication' || !await this.linkSourceWorkspace(entry.root, 'source-action', control)) throw new ProtocolError('cancelled', 'Source selection cancelled. No revision or finding record was published.');
+      connected = this.entryFor(entry.root)!;
+    }
+    const source = connected.source!, dirty = () => vscode.workspace.textDocuments.filter(d => d.isDirty && d.uri.scheme === 'file' && (d.uri.fsPath === source || d.uri.fsPath.startsWith(source + path.sep)));
+    const publisher = new FindingPublisher({ root: entry.root, source, journalRoot: this.journalRoot, artifact: this.artifact });
+    if (method === 'retireFindingPublication') {
+      const keep = await vscode.window.showWarningMessage('Keep the published revision and stop retrying its pending finding records?', { modal: true, detail: 'No review evidence is removed and no finding is marked implemented. Use Record published fix or resolve the decision conflict manually. The exact retry intent remains in private recovery history.' }, 'Keep revision; handle findings manually');
+      if (!keep) return false;
+      const reason = await vscode.window.showInputBox({ title: 'Why will the pending findings be managed manually?', ignoreFocusOut: true, validateInput: v => !v.trim() ? 'A reason is required.' : undefined });
+      if (!reason?.trim()) return false;
+      await publisher.retire(origin, actor, String(args[2]), reason); return true;
+    }
+    if (method === 'discardFindingPublication') return publisher.discard(origin, actor, String(args[2]));
+    if (method === 'finishFindingPublication') {
+      const request = args[2] as { operationId: string; selections: FindingSelection[] };
+      if (!request || typeof request.operationId !== 'string') throw new ProtocolError('invalid', 'Invalid finding publication request.');
+      return publisher.finish(request.operationId, actor, request.selections, async () => {
+        if (dirty().length) throw new ProtocolError('changed', 'Source has unsaved editor changes. Save it, cancel this preparation, then inspect a fresh diff.');
+      }, origin, control?.progress, authority);
+    }
+    if (method !== 'prepareFindingPublication') throw new ProtocolError('invalid', 'Unknown authoring action.');
+    const pending = await publisher.pending(origin, actor, authority, control); if (pending) return pending;
+    checkpoint(control);
+    if (dirty().length) {
+      const save = await vscode.window.showWarningMessage('Publish only saved source bytes. Save modified files before inspecting the diff?', { modal: true, detail: dirty().map(d => d.uri.fsPath).join('\n') }, 'Save source');
+      if (!save) throw new ProtocolError('cancelled', 'Source editing remains private; nothing was published.');
+      if ((await Promise.all(dirty().map(d => d.save()))).some(ok => !ok)) throw new Error('Some source files could not be saved.');
+    }
+    const scopeChoice = args[3] === undefined ? undefined : findingScopeChoice(args[3]);
+    let parents: string[] | undefined = scopeChoice?.parents;
+    if (!scopeChoice && authority.heads.length !== 1) {
+      const selected = await vscode.window.showQuickPick([...authority.revisions.values()].map(r => ({ label: r.id, picked: authority.heads.some(h => h.id === r.id) })), { title: 'Choose explicit publication parents (multiple means merge)', canPickMany: true, ignoreFocusOut: true });
+      if (!selected?.length) throw new ProtocolError('cancelled', 'No publication parents selected.'); parents = selected.map(r => r.label);
+    }
+    const resourceKey = `professional.resourceRoots:${digest(`${reviewPathKey(entry.root)}\0${authority.manifest.reviewId}`).slice(7)}`;
+    let roots = this.context.globalState.get<string[]>(resourceKey);
+    const prepare = () => vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Preparing saved documents and resources for inspection', cancellable: true }, async (progress, token) => {
+      const controller = new AbortController(), subscription = token.onCancellationRequested(() => controller.abort());
+      const abort = () => controller.abort(); control?.signal?.addEventListener('abort', abort, { once: true });
+      if (token.isCancellationRequested || control?.signal?.aborted) controller.abort();
+      try { return await publisher.prepareGuided(origin, actor, parents, roots, { signal: controller.signal, progress: message => { progress.report({ message }); control?.progress?.(message); } }, scopeChoice, authority); }
+      finally { subscription.dispose(); control?.signal?.removeEventListener('abort', abort); }
+    });
+    try { return await prepare(); }
+    catch (error) {
+      if (!(error instanceof ProtocolError && error.code === 'permission' && error.message.includes('explicitly granted roots'))) throw error;
+      const choice = await vscode.window.showWarningMessage('This revision needs a resource outside the linked source folder. Grant its folder explicitly?', { modal: true }, 'Choose resource folders');
+      if (!choice) throw error;
+      const folders = await vscode.window.showOpenDialog({ title: 'Grant additional image/attachment folders', canSelectFolders: true, canSelectFiles: false, canSelectMany: true });
+      if (!folders?.length) throw error;
+      roots = folders.map(f => f.fsPath); await this.context.globalState.update(resourceKey, roots); return prepare();
+    }
+  }
   private async newSourceRoot(): Promise<string | undefined> {
     const folders = vscode.workspace.workspaceFolders ?? [];
     if (folders.length === 1) return folders[0].uri.fsPath;
@@ -288,24 +405,34 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
     }
     return (await vscode.window.showOpenDialog({ title: 'Choose Markdown source folder', canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: 'Use as source workspace' }))?.[0]?.fsPath;
   }
-  async linkSourceWorkspace(argument?: unknown): Promise<boolean> {
+  async linkSourceWorkspace(argument?: unknown, intent: 'explicit' | 'source-action' = 'explicit', control?: OperationControl): Promise<boolean> {
     const entry = this.entryFor(argument);
     if (!entry) throw new Error('Open or choose a protocol 0.5 review first.');
-    const selected = await vscode.window.showOpenDialog({ title: `Link local source workspace for “${entry.title}”`, defaultUri: entry.source ? vscode.Uri.file(entry.source) : vscode.workspace.workspaceFolders?.[0]?.uri, canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: 'Inspect source workspace' });
-    const candidate = selected?.[0]?.fsPath; if (!candidate) return false;
-    const report = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Checking local source against the frozen review', cancellable: false }, () => inspectSourceBinding(entry.root, candidate, this.journalRoot));
-    if (report.missing.length) {
-      await vscode.window.showErrorMessage(`The selected source workspace is missing ${report.missing.length} of ${report.documents} reviewed Markdown files.`, { modal: true, detail: report.missing.slice(0, 12).join('\n') + (report.missing.length > 12 ? `\n… and ${report.missing.length - 12} more` : '') });
-      return false;
-    }
-    const action = 'Link source workspace';
-    const accepted = await vscode.window.showInformationMessage(`Link this private source workspace to “${entry.title}”?`, { modal: true, detail: `${report.sourceRoot}\n\n${report.exact.length} document${report.exact.length === 1 ? '' : 's'} still match frozen evidence; ${report.changed.length} changed document${report.changed.length === 1 ? '' : 's'} can form a later revision. This native path stays in local VS Code state and is never written into the shared package.` }, action);
-    if (accepted !== action) return false;
-    const replacement = { ...entry, source: report.sourceRoot };
+    // A source action never replaces an existing private binding implicitly.
+    if (intent === 'source-action' && entry.source) return true;
+    const activeUri = vscode.window.activeTextEditor?.document.uri;
+    let result: Awaited<ReturnType<typeof chooseSourceWorkspace>>;
+    try {
+      result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Checking editable source for the review', cancellable: true }, async (progress, token) => {
+        const controller = new AbortController(), subscription = token.onCancellationRequested(() => controller.abort());
+        const abort = () => controller.abort(); control?.signal?.addEventListener('abort', abort, { once: true });
+        if (token.isCancellationRequested || control?.signal?.aborted) controller.abort();
+        try { return await chooseSourceWorkspace({ reviewRoot: entry.root, expectedReviewId: entry.reviewId, journalRoot: this.journalRoot, previousSource: entry.source,
+          workspaces: openSourceWorkspaces, activeDocument: activeUri && nativeSourceUri(activeUri) ? activeUri.fsPath : undefined,
+          reuseSingleMatch: intent === 'source-action', ui: workspaceSourceUi(controller.signal), signal: controller.signal, progress: message => { progress.report({ message }); control?.progress?.(message); } }); }
+        finally { subscription.dispose(); control?.signal?.removeEventListener('abort', abort); }
+      });
+    } catch (error) { if (error instanceof ProtocolError && error.code === 'cancelled') return false; throw error; }
+    if (!result) return false;
+    const current = this.entryFor(entry.root);
+    // An open/forget/reconnect or a competing link must not be overwritten by a
+    // late dialog result. Switching the active review alone does not retarget it.
+    if (current !== entry) throw new ProtocolError('changed', 'The review connection changed during source selection. No source link was saved; try again.');
+    const { report } = result, replacement = { ...current, reviewId: result.reviewId, source: report.sourceRoot };
     this.replaceEntry(entry, replacement); await this.persistEntries(); await this.persistSelection();
     const panel = [...this.panelRoots].find(([, root]) => sameReviewPath(root, entry.root))?.[0];
     if (panel) await panel.webview.postMessage({ command: 'source-binding', canApply: true });
-    void vscode.window.showInformationMessage(`Local source linked: ${report.sourceRoot}`);
+    void vscode.window.showInformationMessage(`${result.automatic ? 'Using workspace source' : 'Local source linked'}: ${report.sourceRoot}`);
     return true;
   }
   async publishReviewPackage(argument?: unknown): Promise<void> {
@@ -328,16 +455,17 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
     await this.open(result.destinationRoot, entry.source, undefined, entry.reviewer);
     void vscode.window.showInformationMessage(`Verified review published to ${result.destinationRoot}. ${result.files} files (${(result.byteLength / 1024 / 1024).toFixed(1)} MB) were copied. The previous package remains at ${entry.root} and is no longer connected.`);
   }
-  async create(revise = false): Promise<void> {
+  async create(revise = false, argument?: unknown): Promise<void> {
     const pending = this.context.globalState.get<AuthorRequest[]>('professional.pendingAuthoring', []);
     if (pending.length) {
       const choice = await vscode.window.showQuickPick([{ label: 'Start a new capture', description: 'Use the next empty package folder; keep earlier recovery evidence', request: undefined as AuthorRequest | undefined }, ...pending.map(request => ({ label: `Resume: ${request.title ?? path.basename(request.source)}`, description: request.store, detail: `Resume only if its acknowledged package files still exist · ${request.operationId}`, request }))], { title: 'Saved authoring operations are available', ignoreFocusOut: true });
       if (!choice) return;
       if (choice.request) { await this.runCreation(choice.request, true); return; }
     }
-    let entry = revise ? this.active : undefined;
+    let entry = revise ? this.entryFor(argument) : undefined;
+    if (revise && argument !== undefined && !entry) throw new Error('The selected review is no longer connected.');
     if (entry && !entry.source) {
-      if (!await this.linkSourceWorkspace(entry.root)) return;
+      if (!await this.linkSourceWorkspace(entry.root, 'source-action')) return;
       entry = this.entryFor(entry.root);
     }
     const source = entry?.source ?? await this.newSourceRoot();
@@ -387,7 +515,7 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
       if (!selectedParents?.length) return; parents = selectedParents.map(p => p.label);
     }
     const operationId = newId('author');
-    const request = { source, store: selected.storageRoot, title: selected.title, include: slidev ? [selected.rootDocument] : selected.documentPaths, rootDocument: selected.rootDocument, actor, operationId, parents, policy, resourceRoots, reviewerEmails: selected.reviewerEmails, companionTargets: selected.companionTargets, slidev, clientArtifact: this.artifact, journalRoot: this.journalRoot };
+    const request = { source, store: selected.storageRoot, title: selected.title, include: slidev ? [selected.rootDocument] : selected.documentPaths, rootDocument: selected.rootDocument, actor, operationId, parents, policy, resourceRoots, reviewerEmails: selected.reviewerEmails, companionTargets: selected.companionTargets, slidev, clientArtifact: this.artifact, journalRoot: this.journalRoot, ...(session ? { preserveClient: true } : {}) };
     await this.runCreation(request);
   }
   private async runCreation(request: AuthorRequest, resume = false): Promise<void> {
@@ -410,6 +538,7 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
       finally { subscription.dispose(); }
     });
     if (result.outcome === 'review-created-client-failed') throw new Error(`Revision was published, but client delivery failed: ${result.error}. Its evidence remains intact. Resume the same creation operation to finish delivery; do not create another review over this folder.`);
+    if (request.resourceRoots) await this.context.globalState.update(`professional.resourceRoots:${digest(`${reviewPathKey(result.store)}\0${result.reviewId}`).slice(7)}`, request.resourceRoots);
     await this.context.globalState.update('professional.pendingAuthoring', this.context.globalState.get<AuthorRequest[]>('professional.pendingAuthoring', []).filter(p => p.operationId !== request.operationId || p.store !== request.store));
     await this.open(result.store, request.source, undefined, request.actor);
   }
@@ -459,14 +588,14 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
     panel.webview.options = { enableScripts: true, localResourceRoots: [] };
     this.panels.set(entry.root, panel);
     this.panelRoots.set(panel, entry.root);
-    panel.onDidDispose(() => { this.panelRoots.delete(panel); if (this.panels.get(entry.root) === panel) this.panels.delete(entry.root); this.readyPanels.delete(panel); this.pendingActions.delete(panel); });
+    panel.onDidDispose(() => { for (const pending of this.findingPreparations.values()) if (sameReviewPath(pending.root, entry.root)) pending.controller.abort(); this.panelRoots.delete(panel); if (this.panels.get(entry.root) === panel) this.panels.delete(entry.root); this.readyPanels.delete(panel); this.pendingActions.delete(panel); });
     panel.onDidChangeViewState(e => { const current = this.entries.find(item => sameReviewPath(item.root, entry.root)); if (e.webviewPanel.active && current && this.panelRoots.has(panel)) void this.select(current); });
     panel.webview.onDidReceiveMessage(async message => {
       if (!message || typeof message.id !== 'string' || typeof message.method !== 'string' || !Array.isArray(message.args)) return;
       let finish = () => {};
       try {
         if (!this.panelRoots.has(panel)) throw new Error('This review toolbox has been closed. Reconnect the review to continue.');
-        if (['write', 'journalPut', 'applySuggestion', 'rememberReviewer'].includes(message.method)) finish = this.activity.begin();
+        if (['write', 'journalPut', 'applySuggestion', 'rememberReviewer', 'prepareFindingPublication', 'finishFindingPublication', 'discardFindingPublication', 'retireFindingPublication', 'linkFindingSource', 'configureFindingRevision'].includes(message.method)) finish = this.activity.begin();
         if (message.method === 'toolboxReady') {
           this.readyPanels.add(panel);
           for (const action of this.pendingActions.get(panel) ?? []) await panel.webview.postMessage(action);
@@ -483,6 +612,8 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
           this.entries = this.entries.map(e => sameReviewPath(e.root, entry.root) ? { ...e, reviewer } : e).sort(this.compareEntries);
           await this.persistEntries();
           await panel.webview.postMessage({ id: message.id, value: true });
+        } else if (['prepareFindingPublication', 'cancelFindingPreparation', 'finishFindingPublication', 'discardFindingPublication', 'retireFindingPublication', 'linkFindingSource', 'configureFindingRevision'].includes(message.method)) {
+          await panel.webview.postMessage({ id: message.id, value: await this.findingPublication(this.entryFor(entry.root)!, message.method, message.args, (requestId, text) => { void panel.webview.postMessage({ command: 'finding-preparation-progress', requestId, message: text }); }) });
         } else if (message.method === 'revealSource') {
           const connected = this.entries.find(current => sameReviewPath(current.root, entry.root));
           const [revisionId, threadId] = message.args;
@@ -511,7 +642,7 @@ export class ProfessionalHost implements vscode.TreeDataProvider<PackageItem>, v
           await panel.webview.postMessage({ id: message.id, value: await participantRpc('write', [file, Buffer.from(bytes).toString('base64'), recover]) });
         } else {
           const connected = this.entries.find(e => sameReviewPath(e.root, entry.root));
-          await panel.webview.postMessage({ id: message.id, value: message.method === 'info' ? { identity: storage.identity, writable: true, canApply: !!connected?.source, canRememberReviewer: true, canNotifyReady: true, canOpenExports: true, reviewer: connected?.reviewer } : await storageRequest(storage, message.method, message.args) });
+          await panel.webview.postMessage({ id: message.id, value: message.method === 'info' ? { identity: storage.identity, writable: true, canAuthorFindings: true, canApply: !!connected?.source, canRememberReviewer: true, canNotifyReady: true, canOpenExports: true, reviewer: connected?.reviewer } : await storageRequest(storage, message.method, message.args) });
         }
       }
       catch (error) { await panel.webview.postMessage({ id: message.id, error: error instanceof Error ? error.message : String(error), code: (error as { code?: string }).code }); }

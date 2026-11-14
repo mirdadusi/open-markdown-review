@@ -1,10 +1,18 @@
-# Open Markdown Review 0.6.5
+# Open Markdown Review 0.7.0
 
 Review Markdown in VS Code or a browser, with comments, suggested edits and an auditable history stored beside frozen documents. There is no hosted review service or central database. A review folder is the shared source of truth; OneDrive, Syncthing, Git or another filesystem transport synchronizes its files.
 
-[Install from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=mirdadusi.open-markdown-review) · [GitHub releases](https://github.com/mirdadusi/open-markdown-review/releases) · [Release notes](docs/releases/0.6.5.md) · [Protocol 0.6](spec/PROTOCOL-0.6.md)
+[Install from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=mirdadusi.open-markdown-review) · [GitHub releases](https://github.com/mirdadusi/open-markdown-review/releases) · [Release notes](docs/releases/0.7.0.md) · [Protocol 0.6](spec/PROTOCOL-0.6.md)
 
-## What 0.6.5 adds
+## What 0.7.0 adds
+
+- [PDF export options](docs/PDF-TEMPLATES.md) for a specific snapshot, A4 portrait, an optional cover, and a clickable document list. **Default** is the only bundled template; you can import your own styling.
+- Readable PDF comments and replies with native Acrobat finding statuses, plus copyable network paths.
+- [Auditable edits](docs/COMMENTS-AND-EXPORT-SNAPSHOTS.md) to your own comments and replies on compatible reviews.
+- [Guided finding processing](docs/PROCESSING-FINDINGS.md), including decision and discussion filters, progress during publication, and reusable previews of published fixes.
+- Chapter-aware reading and export, better section navigation, and rendering of self-contained SVGs with supported embedded images.
+
+## Core features
 
 - Self-contained Go browser companions for **Windows x64**, **macOS ARM64** and **Linux x64**, bundled inside every extension VSIX.
 - Invited reviewer emails, initiator-only later invitations, and independent **Finish my review / Reopen my review** progress.
@@ -13,18 +21,18 @@ Review Markdown in VS Code or a browser, with comments, suggested edits and an a
 - Continuous reading with bounded rendering, precise source navigation and compact reading controls beside **Export PDF**, without an extra document header.
 - Backed-up tooling upgrades that preserve the review manifest, frozen documents, comments, replies, approvals and completion events.
 
-The application version is **0.6.5**; its current core protocol version is **0.6.0**. Supported older packages retain their original rules. Installing a new client does not silently convert review evidence.
+The application version is **0.7.0**; its current core protocol version is **0.6.0**. Supported older packages retain their original rules. Installing a new client does not silently convert review evidence.
 
 ## Install the authoring extension
 
 Search for **Open Markdown Review**, publisher **mirdadusi**, in VS Code Extensions. Marketplace updates are handled by VS Code's native update mechanism. An extension update includes the HTML toolbox and all three Go companions together—there is no separate companion updater or participant-side download.
 
-For manual installation, download a VSIX and its matching SHA-256 file from the [release](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.6.5):
+For manual installation, download a VSIX and its matching SHA-256 file from the [release](https://github.com/mirdadusi/open-markdown-review/releases/tag/v0.7.0):
 
 | Extension host | Package |
 | --- | --- |
-| Native Windows x64 VS Code | `open-markdown-review-0.6.5-win32-x64.vsix` |
-| macOS, Linux, WSL, SSH or Dev Container | `open-markdown-review-0.6.5-portable.vsix` |
+| Native Windows x64 VS Code | `open-markdown-review-0.7.0-win32-x64.vsix` |
+| macOS, Linux, WSL, SSH or Dev Container | `open-markdown-review-0.7.0-portable.vsix` |
 
 Both packages contain all three participant platforms. The host-specific Windows package also carries its native image dependency; the portable package is the correct choice for a remote Linux extension host, even on a Windows desktop.
 
@@ -119,7 +127,7 @@ The [core protocol](spec/PROTOCOL-0.6.md), [portable review profile](spec/PORTAB
 
 ## Build and validate
 
-Development requires Node.js 22 and the locked npm dependencies. Rebuilding native companions additionally requires pinned Go 1.27.3; participant machines do not.
+Development requires Node.js 22 and the locked npm dependencies. Rebuilding native companions additionally requires pinned Go 1.27.4; participant machines do not.
 
 ```sh
 npm ci

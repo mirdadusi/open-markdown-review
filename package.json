@@ -2,7 +2,7 @@
   "name": "open-markdown-review",
   "displayName": "Open Markdown Review",
   "description": "Local-first Markdown review for VS Code and portable browser participation, with append-only review evidence.",
-  "version": "0.6.5",
+  "version": "0.7.0",
   "private": true,
   "license": "MIT",
   "publisher": "mirdadusi",
@@ -55,6 +55,7 @@
     "onCommand:openMarkdownReview.publishReviewPackage",
     "onCommand:openMarkdownReview.setup",
     "onCommand:openMarkdownReview.createRevision",
+    "onCommand:openMarkdownReview.publishUpdatedDocuments",
     "onCommand:openMarkdownReview.addPortableBrowserClient",
     "onCommand:openMarkdownReview.openReview",
     "onCommand:openMarkdownReview.openInBrowser",
@@ -158,6 +159,11 @@
         "command": "openMarkdownReview.createRevision",
         "title": "Markdown Review: Choose Documents and Create Revision",
         "icon": "$(archive)"
+      },
+      {
+        "command": "openMarkdownReview.publishUpdatedDocuments",
+        "title": "Markdown Review: Publish Updated Documents…",
+        "icon": "$(cloud-upload)"
       },
       {
         "command": "openMarkdownReview.addPortableBrowserClient",
@@ -318,6 +324,11 @@
       ],
       "view/title": [
         {
+          "command": "openMarkdownReview.publishUpdatedDocuments",
+          "when": "view == openMarkdownReview.threads && openMarkdownReview.hasRevision",
+          "group": "authoring@1"
+        },
+        {
           "command": "openMarkdownReview.openInBrowser",
           "when": "view == openMarkdownReview.threads && openMarkdownReview.hasRevision",
           "group": "navigation@1.1"
@@ -384,6 +395,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "openMarkdownReview.publishUpdatedDocuments",
+          "when": "view == openMarkdownReview.reviews && (viewItem == markdownReview05Active || viewItem == markdownReview05Inactive)",
+          "group": "authoring@1"
+        },
         {
           "command": "openMarkdownReview.openInBrowser",
           "when": "view == openMarkdownReview.reviews && (viewItem == markdownReview05Active || viewItem == markdownReview05Inactive)",
@@ -525,7 +541,7 @@
     "build:webview": "esbuild src/webview/review.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=media/review.js --minify && esbuild src/webview/setup.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=media/setup.js --minify",
     "build:portable-browser": "esbuild src/professional/toolbox.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=dist/portable-browser.js --minify --metafile=dist/toolbox-metafile.json && node scripts/dependency-inventory.mjs toolbox && node scripts/assemble-portable-browser.mjs",
     "build:extension": "esbuild src/extension.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/extension.js --external:vscode --external:sharp --minify --metafile=dist/extension-metafile.json && node scripts/copy-pdfkit-assets.mjs",
-    "build:schemas": "node scripts/verify-slidev-parser.mjs && node scripts/build-professional-schemas.mjs && node scripts/build-pdf-fonts.mjs",
+    "build:schemas": "node scripts/verify-pdf-templates.mjs && node scripts/verify-slidev-parser.mjs && node scripts/build-professional-schemas.mjs && node scripts/build-pdf-fonts.mjs",
     "build:cli": "esbuild src/professional/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:playwright --metafile=dist/cli-metafile.json",
     "build:companion": "esbuild src/professional/companionLauncher.ts --bundle --platform=node --format=cjs --target=node22 --outfile=dist/companion.js --metafile=dist/companion-launcher-metafile.json && node scripts/build-companion-core.mjs",
     "build:companion:legacy": "esbuild src/professional/companionCli.ts --bundle --platform=node --format=cjs --target=node22 --outfile=dist/companion-node-legacy.js --metafile=dist/companion-metafile.json",
@@ -541,6 +557,11 @@
     "watch": "tsc -w -p tsconfig.json",
     "test": "npm run compile && node --test out/test/*.test.js test/*.test.mjs",
     "test:browser": "npm run compile && node --test out/test/browser.integration.js",
+    "test:finding-workflow": "npm run compile && node --test out/test/findingActions.test.js out/test/findingPublication.test.js out/test/findingScope.test.js out/test/publishedFixes.test.js out/test/findingPublication.browser.integration.js out/test/findingPreparation.browser.integration.js out/test/findingScope.browser.integration.js out/test/publishedFixes.browser.integration.js out/test/findingFilters.browser.integration.js && node scripts/test-extension.mjs finding-workflow",
+    "test:publication-order": "npm run compile && node --test out/test/documentOrder.test.js out/test/findingScope.test.js out/test/findingActions.test.js out/test/findingPublication.test.js out/test/documentOrder.browser.integration.js out/test/findingPublicationDialog.browser.integration.js out/test/findingScope.browser.integration.js && node scripts/test-extension.mjs finding-workflow",
+    "test:source-workspace": "npm run compile && node --test out/test/workspaceSource.test.js && node scripts/test-extension.mjs source-workspace",
+    "test:pdf-templates": "npm run compile && node --test out/test/pdfTemplate.test.js out/test/pdfTemplate.browser.integration.js out/test/pdfSummary.browser.integration.js out/test/exportRevisions.test.js out/test/exportRevisions.browser.integration.js",
+    "test:comments-export": "npm run compile && node --test out/test/commentEdits.test.js out/test/commentEdits.browser.integration.js out/test/exportRevisions.test.js out/test/exportRevisions.browser.integration.js && node scripts/test-extension.mjs comments-export",
     "test:extension": "npm run compile && node scripts/test-extension.mjs",
     "check": "npm run test",
     "sample:pdf": "npm run compile && node scripts/export-example.mjs",
@@ -562,7 +583,9 @@
     "dompurify": "3.4.17",
     "katex": "0.18.7",
     "@azure/msal-node": "7.1.0",
-    "fast-uri": "3.1.9"
+    "fast-uri": "3.1.9",
+    "minimatch": "11.0.8",
+    "qs": "6.17.1"
   },
   "devDependencies": {
     "@open-markdown-review/slidev-parser-core": "file:third-party/slidev-parser-core",

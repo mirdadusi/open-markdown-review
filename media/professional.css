@@ -32,7 +32,64 @@
 #reviewer-guidance[data-state=needed],#reviewer-guidance[data-state=invalid]{border-color:#b66a00;background:#fff5df}
 #reviewer-guidance[data-state=ready]{border-color:#338057}
 #actor-id[aria-invalid=true]{border-color:#b66a00}
-/* Once discussions move below the document, neither side panel may stick over
-   the next grid row while the reader scrolls into those discussions. */
-@media(max-width:850px){.documents,.discussion{position:static;max-height:none}}
+#pdf-template-dialog{width:min(860px,calc(100vw - 24px));max-height:92vh;overflow:auto;padding:0;scroll-padding-top:130px;scroll-padding-bottom:80px}#pdf-template-form{padding:0 24px 16px}.pdf-dialog-header{position:sticky;top:0;z-index:2;background:var(--paper);padding:20px 0 10px;border-bottom:1px solid var(--border)}.pdf-dialog-header h2{margin:0 0 6px;font-size:20px}.pdf-dialog-header p{margin:0;overflow-wrap:anywhere;color:var(--muted)}#pdf-template-dialog p,#pdf-template-dialog small{font-size:12px;line-height:1.5}.pdf-options-grid,.pdf-metadata-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px}.pdf-options-grid label,.pdf-metadata-grid label{min-width:0;margin:8px 0}.pdf-metadata-grid input,.pdf-options-grid select{width:100%;box-sizing:border-box;min-height:38px}.pdf-options-grid{margin-top:10px}.pdf-help{color:var(--muted);margin:9px 0}#pdf-template-dialog fieldset{min-inline-size:0;margin:16px 0;padding:10px 14px 14px;border:1px solid var(--border);border-radius:6px}#pdf-template-dialog legend{padding:0 5px;font-weight:650;font-size:14px}#pdf-template-dialog .pdf-cover-choice{display:flex;flex-direction:row;align-items:start;gap:8px;margin:16px 0 8px;font-size:13px;line-height:1.5}.pdf-cover-choice input{margin:3px 0;accent-color:var(--blue)}#pdf-template-dialog details{padding:10px 12px;border:1px solid var(--border);border-radius:6px}#pdf-template-dialog summary{cursor:pointer;font-size:12px;font-weight:600}#pdf-template-error{color:#a12920;overflow-wrap:anywhere}#pdf-template-file{max-width:100%}#pdf-template-dialog footer{position:sticky;bottom:0;z-index:3;background:var(--paper);padding:12px 0;margin:14px 0 0;border-top:1px solid var(--border)}#pdf-template-dialog footer button{min-height:40px;min-width:100px}@media(max-width:560px){#pdf-template-form{padding:0 14px 12px}.pdf-options-grid,.pdf-metadata-grid{grid-template-columns:minmax(0,1fr)}#pdf-template-dialog fieldset{padding:8px 10px}.pdf-dialog-header{padding-top:14px}}
+@media(max-width:850px){.discussion{position:static;max-height:none}.documents{top:var(--review-toolbar-height,180px)}}
 @media(max-width:540px){.documents{position:static;max-height:230px}#reviewer-guidance{max-width:100%}}
+.pdf-required{font-size:11px;color:var(--muted);font-weight:normal}.pdf-metadata-grid small{display:block;margin-top:4px;overflow-wrap:anywhere}.pdf-metadata-grid input[aria-invalid="true"]{border-color:#a12920;outline:1px solid #a12920}
+/* Creator publication and comparison use the same bounded, native dialog in all clients. */
+.finding-more{margin-top:12px}.finding-more summary{cursor:pointer;color:var(--muted);font-size:13px}.finding-more>p{font-size:12px;color:var(--muted)}
+#finding-preparation-dialog{width:min(520px,92vw);max-width:92vw;overflow-wrap:anywhere}#finding-preparation-dialog progress{display:block;width:100%;height:12px;margin:16px 0}#finding-preparation-dialog footer{margin-top:18px;display:flex;justify-content:flex-end}#finding-preparation-dialog [data-phase]{min-height:3em}#finding-preparation-dialog [data-error]{color:#a12920}
+#finding-publication-dialog,#fix-inspection{width:min(1100px,94vw);max-width:94vw;max-height:90vh;overflow:auto;overflow-wrap:anywhere}
+#finding-publication-dialog dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 16px}
+#finding-publication-dialog dd{margin:0}
+.publication-diff{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin:12px 0}
+.publication-diff>section{min-width:0}
+.publication-diff pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:24rem;overflow:auto;font-size:12px;line-height:1.6}
+.publication-finding,.finding-next{border-top:1px solid var(--border);padding-top:12px;margin-top:12px}
+.publication-finding input[data-summary]{width:100%}
+.publication-finding>label:first-child{flex-direction:row;align-items:flex-start;gap:8px}
+.publication-finding [data-selected]{flex:0 0 auto;width:16px;min-width:16px;margin-top:3px}
+.publication-finding small,.publication-completed small{display:block;color:var(--muted);font-size:12px;margin-top:4px}
+.publication-quote,.publication-excerpt{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.publication-excerpt{font-size:13px;color:var(--muted);margin:6px 0}
+[data-finding-group],[data-completed-findings]{margin:12px 0}
+[data-finding-group]>summary,[data-completed-findings]>summary{cursor:pointer}
+.publication-completed{font-size:13px;border-top:1px solid var(--border);padding-top:8px}
+.publication-completed strong{font-weight:500}
+#finding-publication-dialog fieldset{min-inline-size:0}
+#finding-scope-dialog{width:min(900px,94vw);max-width:94vw;max-height:90vh;overflow:auto;overflow-wrap:anywhere}
+#finding-scope-dialog .scope-document{display:flex;flex-direction:row;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)}
+#finding-scope-dialog .scope-document input{width:16px;min-width:16px;flex:0 0 auto;margin-top:3px}
+#finding-scope-dialog small{display:block;color:var(--muted);font-size:12px;margin-top:4px}
+#finding-scope-dialog [data-scope-problems] li{margin:6px 0}
+#finding-scope-dialog footer{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+#finding-publication-dialog footer,#fix-inspection footer{flex-wrap:wrap}
+#finding-publication-dialog footer button,#fix-inspection footer button{max-width:100%}
+.thread h3 .badge{text-transform:none;font-size:12px;display:inline-block;padding:3px 6px;border-radius:4px;margin:3px 0}
+[data-change-state="accepted-not-implemented"],[data-change-state="challenged"]{background:#fff1d9;color:#81501a}
+[data-change-state="implemented"],[data-change-state="verified"]{background:#e4f4e9;color:#245a37}
+@media(max-width:700px){.publication-diff{grid-template-columns:minmax(0,1fr)}#finding-publication-dialog dl{grid-template-columns:minmax(0,1fr)}}
+.inspection-controls{display:flex;flex-wrap:wrap;gap:12px}.inspection-controls label{min-width:0;flex:1}.inspection-controls select{max-width:100%}
+#fix-inspection .markdown-body{min-width:0;overflow:auto}#fix-inspection img,#fix-inspection svg{max-width:100%;height:auto}
+.finding-origin,#finding-snapshot-notice{font-size:12px;color:var(--muted)}#finding-snapshot-notice button{display:block;margin-top:8px}
+.comment-body,.comment-history p{white-space:pre-wrap;overflow-wrap:anywhere}.comment-edit{margin:0 0 8px}.comment-history{font-size:12px;margin:6px 0 10px}.comment-history>div{border-top:1px solid var(--border);margin-top:6px;padding-top:6px}
+#pdf-revision{width:100%;min-width:0}#pdf-revision-help{overflow-wrap:anywhere}
+#composer:has(#published-fix-summary){width:min(850px,94vw);max-width:94vw;max-height:90vh;overflow:auto;overflow-wrap:anywhere}
+#composer #choice{max-width:100%;min-width:0}
+#published-fix-summary{font-size:13px;border:1px solid var(--border);border-radius:8px;padding:12px;margin:12px 0}
+#published-fix-summary h3{margin-top:0}#published-fix-summary small{display:block;color:var(--muted)}
+#published-fix-summary details{margin:10px 0}#published-fix-summary summary{cursor:pointer}
+#published-fix-summary code{white-space:normal;overflow-wrap:anywhere}.snapshot-fix{border-top:1px solid var(--border);padding:8px 0}
+/* Stacked side panels must not float over each other's controls in a narrow webview. */
+@media(max-width:850px){.documents,.discussion{position:static;max-height:none;overflow:visible;overscroll-behavior:auto}}
+/* A wrapped toolbar must not cover the review in a short or narrow viewport. */
+@media(max-width:850px),(max-height:600px){
+  #toolbar{box-sizing:border-box;max-height:35vh;max-height:35dvh;overflow:auto;align-content:start}
+}
+.comment-edit{scroll-margin-top:calc(var(--review-toolbar-height,130px) + 12px)}
+#toast{pointer-events:none}
+.finding-filters { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.5rem; }
+.finding-filters select { width:100%; min-width:0; }
+.publication-progress { border:1px solid var(--border,#cad3df); border-radius:.5rem; padding:1rem; margin:1rem 0; overflow-wrap:anywhere; }
+.publication-progress progress { width:100%; }
+.publication-progress p { margin:.5rem 0; }

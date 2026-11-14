@@ -1,0 +1,54 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { readFile, writeFile } from 'node:fs/promises';
+import { chromium } from 'playwright';
+import { commentFixture, initiator, owner } from './commentEdits.fixture';
+import { authorReview } from '../src/professional/authoring';
+import { storageResponse } from '../src/professional/bridge';
+import { startCompanion, startNativeCompanion } from './companionHost';
+
+test('PDF dialog selects a concrete snapshot and shows current discussion without changing the view or dropping edit evidence', { timeout: 180000 }, async () => {
+  const f = await commentFixture(); await writeFile(path.join(f.source, 'index.md'), '# Latest publication\n\nLATEST_SNAPSHOT_ONLY_CONTENT.\n');
+  const next = await authorReview({ source: f.source, store: f.root, rootDocument: 'index.md', actor: initiator, operationId: 'export_browser_next', parents: [f.origin], journalRoot: f.journal, clientArtifact: path.resolve('dist/OpenMarkdownReview.html') });
+  const edit = f.edit('EDITED_COMMENT_PDF_CONTENT.');
+  await f.session.save(f.session.context(owner, f.origin), edit);
+  const options = { root: f.root, journalRoot: path.join(f.temp, 'export-client'), html: await readFile(path.resolve('dist/OpenMarkdownReview.html'), 'utf8') };
+  const helper = process.env.OMR_TEST_COMPANION ? await startNativeCompanion(options, process.env.OMR_TEST_COMPANION) : process.env.OMR_GO_COMPANION ? await startCompanion(options) : undefined;
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+  try {
+    browser = await chromium.launch({ headless: true, ...(process.env.OMR_TEST_BROWSER ? { executablePath: process.env.OMR_TEST_BROWSER } : {}) });
+    const page = await browser.newPage({ viewport: { width: 1200, height: 950 } });
+    if (!helper) await page.exposeFunction('omrHost', (method: string, args: unknown[]) => storageResponse(f.store, method, args));
+    await page.goto(helper?.url ?? pathToFileURL(path.resolve('dist/OpenMarkdownReview.html')).href); await page.locator('#workspace').waitFor(); await page.locator('#actor-id').fill(owner.id);
+    await page.locator('#revisions').selectOption(f.origin); const before = (await f.store.list('events')).length;
+    await page.locator('#export').click(); await page.locator('#pdf-template-dialog').waitFor(); assert.equal(await page.locator('#pdf-revision').inputValue(), next.revisionId);
+    assert.match(await page.locator('#pdf-export-scope').innerText(), /0 comment/);
+    await page.locator('#pdf-template-cancel').click(); assert.equal((await f.store.list('events')).length, before);
+    await page.locator('#export').click(); await page.locator('#pdf-template-dialog').waitFor(); await page.locator('#pdf-revision').selectOption(f.origin);
+    assert.match(await page.locator('#pdf-export-scope').innerText(), /1 comment.*2 reply/);
+    await page.locator('#pdf-export-confirm').click(); await page.locator('#export-result[data-kind=success],#export-result[data-kind=error]').waitFor({ timeout: 90000 });
+    assert.equal(await page.locator('#export-result').getAttribute('data-kind'), 'success', await page.locator('#export-result-message').innerText());
+    await f.session.refresh(); const event = f.session.events.filter(e => e.type === 'export.created').at(-1)!; assert.ok(event.type === 'export.created'); assert.equal(event.revisionId, f.origin);
+    assert.equal(await page.locator('#revisions').inputValue(), f.origin);
+    const inspect = await (new Function('specifier', 'return import(specifier)')(pathToFileURL(path.resolve('scripts/inspect-pdf.mjs')).href) as Promise<{ inspectPdf(bytes: Uint8Array): Promise<any> }>);
+    const oldPdf = await inspect.inspectPdf(await readFile(path.join(f.root, event.pdf.path)));
+    assert.ok(oldPdf.pages.some((p: { text: string }) => p.text.includes('Original reviewed sentence.')));
+    assert.ok(!oldPdf.pages.some((p: { text: string }) => p.text.includes('LATEST_SNAPSHOT_ONLY_CONTENT')));
+    assert.deepEqual(oldPdf.annotations.map((a: { contents: string }) => a.contents).sort(), ['EDITED_COMMENT_PDF_CONTENT.', 'Original reply wording.', 'Another reviewer reply.'].sort());
+    const inventory = JSON.parse(await readFile(path.join(f.root, event.inventory.path), 'utf8'));
+    assert.ok(inventory.representedEventIds.includes(edit.id) && inventory.representedEventIds.includes(f.comment.id), 'Both original and edited wording remain in the archived event evidence.');
+    await page.locator('#export').click(); await page.locator('#pdf-template-dialog').waitFor(); assert.equal(await page.locator('#pdf-revision').inputValue(), next.revisionId, 'An older export choice must not replace the latest default next time.');
+    await page.locator('#export-mode').selectOption('clean'); await page.locator('#pdf-export-confirm').click(); await page.locator('#export-result[data-kind=success],#export-result[data-kind=error]').waitFor({ timeout: 90000 });
+    assert.equal(await page.locator('#export-result').getAttribute('data-kind'), 'success', await page.locator('#export-result-message').innerText());
+    const relative = (await page.locator('#export-result-path').innerText()).match(/exports\/[a-f0-9]{64}\.pdf/)![0], latestPdf = await inspect.inspectPdf(await readFile(path.join(f.root, relative)));
+    assert.ok(latestPdf.pages.some((p: { text: string }) => p.text.includes('LATEST_SNAPSHOT_ONLY_CONTENT'))); assert.equal(latestPdf.annotations.length, 0);
+    assert.equal(await page.locator('#revisions').inputValue(), f.origin);
+    await writeFile(path.join(f.source, 'index.md'), '# Competing branch\n');
+    await authorReview({ source: f.source, store: f.root, rootDocument: 'index.md', actor: initiator, operationId: 'export_branch', parents: [f.origin], journalRoot: f.journal, clientArtifact: path.resolve('dist/OpenMarkdownReview.html') });
+    await page.locator('#refresh').click(); await page.waitForFunction(() => document.querySelectorAll('#revisions option').length === 3);
+    await page.locator('#export').click(); await page.locator('#pdf-template-dialog').waitFor(); assert.equal(await page.locator('#pdf-revision').inputValue(), ''); assert.equal(await page.locator('#pdf-export-confirm').isDisabled(), true);
+    await page.locator('#pdf-revision').selectOption(next.revisionId!); assert.equal(await page.locator('#pdf-export-confirm').isEnabled(), true); await page.locator('#pdf-template-cancel').click();
+  } finally { await browser?.close(); await helper?.close(); }
+});

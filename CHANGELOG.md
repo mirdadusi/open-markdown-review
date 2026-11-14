@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0
+
+- Export a specific snapshot in A4 portrait, with optional cover and document list. The generic Default theme is the only bundled template.
+- Export readable discussion threads and native Acrobat finding statuses, while preserving exact review evidence. Show UNC references as copyable external paths.
+- Edit your own comments and replies where the package declares the capability. Earlier wording remains auditable.
+- Filter findings across snapshots, preview and reuse published fixes, and publish updated documents with progress.
+- Follow chapter links in the reader and exported PDF. Improve section navigation and support self-contained SVG with validated embedded raster images.
+
 ## 0.6.5
 
 This public release brings the 0.6 workflow to the VS Code extension and shared browser toolbox. The core wire version is 0.6.0; existing review evidence is not silently migrated.

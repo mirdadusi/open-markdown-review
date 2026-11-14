@@ -9,7 +9,7 @@ assert.equal(process.arch, 'arm64', 'Mac qualification requires an Apple Silicon
 const catalog = JSON.parse(await readFile('companions/catalog.json', 'utf8'));
 const mac = catalog.targets.find(item => item.target === 'darwin-arm64');
 assert.equal(catalog.runtime, 'go');
-assert.equal(mac.build.toolchain, 'go1.27.3');
+assert.equal(mac.build.toolchain, 'go1.27.4');
 assert.equal(mac.build.testFaults, false);
 assert.equal(await fileHash('dist/companion-go/darwin-arm64/StartReview'), mac.executable.digest);
 const logs = path.resolve('output/macos-qualification', catalog.version); await mkdir(logs, { recursive: true });
